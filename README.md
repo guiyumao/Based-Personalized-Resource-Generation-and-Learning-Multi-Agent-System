@@ -1,3 +1,5 @@
+# Based-Personalized-Resource-Generation-and-Learning-Multi-Agent-System
+
 # 基于大模型的个性化资源生成与学习多智能体系统
 
 当前后端已开始切换为 `Java 17 + Spring Boot 3`。
