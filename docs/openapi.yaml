@@ -1,0 +1,235 @@
+openapi: 3.1.0
+info:
+  title: Personalized Learning Multi-Agent System API
+  version: 0.1.0
+  description: OpenAPI document covering the main endpoints of all planned microservices.
+servers:
+  - url: http://localhost
+tags:
+  - name: user-service
+  - name: agent-service
+  - name: resource-service
+  - name: evaluation-service
+  - name: teacher-service
+  - name: system-service
+paths:
+  /api/users/users:
+    post:
+      tags: [user-service]
+      summary: Create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRead'
+  /api/users/users/{user_id}:
+    get:
+      tags: [user-service]
+      summary: Get user detail
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: User detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRead'
+  /api/users/users/{user_id}/profile:
+    get:
+      tags: [user-service]
+      summary: Get user profile
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Profile detail
+  /api/agents/agents/coordinate:
+    post:
+      tags: [agent-service]
+      summary: Execute coordinator workflow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CoordinationRequest'
+      responses:
+        "200":
+          description: Coordination result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CoordinationResponse'
+  /api/agents/graph/dependencies:
+    post:
+      tags: [agent-service]
+      summary: Query dependency path
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GraphQueryRequest'
+      responses:
+        "200":
+          description: Dependency path response
+  /api/agents/graph/related-resources/{knowledge_point}:
+    get:
+      tags: [agent-service]
+      summary: Query related resources
+      parameters:
+        - in: path
+          name: knowledge_point
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Related resources
+  /api/agents/resources/generate:
+    post:
+      tags: [agent-service]
+      summary: Generate personalized resource
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceGenerationRequest'
+      responses:
+        "200":
+          description: Resource generated
+  /resource-service/resources:
+    get:
+      tags: [resource-service]
+      summary: List generated resources
+      responses:
+        "200":
+          description: Resource list
+  /evaluation-service/reports/{user_id}:
+    get:
+      tags: [evaluation-service]
+      summary: Get user learning reports
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Learning reports
+  /teacher-service/classes/{class_id}/dashboard:
+    get:
+      tags: [teacher-service]
+      summary: Teacher dashboard
+      parameters:
+        - in: path
+          name: class_id
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Dashboard info
+  /system-service/admin/users:
+    get:
+      tags: [system-service]
+      summary: Admin user list
+      responses:
+        "200":
+          description: User list
+components:
+  schemas:
+    UserCreate:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        role:
+          type: string
+        email:
+          type: string
+          nullable: true
+    UserRead:
+      type: object
+      properties:
+        id:
+          type: integer
+        username:
+          type: string
+        role:
+          type: string
+        email:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    CoordinationRequest:
+      type: object
+      required: [user_id, intent]
+      properties:
+        user_id:
+          type: integer
+        intent:
+          type: string
+        knowledge_point:
+          type: string
+          nullable: true
+        payload:
+          type: object
+    CoordinationResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        selected_agents:
+          type: array
+          items:
+            type: string
+        route_reason:
+          type: string
+        outputs:
+          type: object
+    GraphQueryRequest:
+      type: object
+      properties:
+        knowledge_point:
+          type: string
+        max_depth:
+          type: integer
+    ResourceGenerationRequest:
+      type: object
+      required: [user_id, knowledge_point]
+      properties:
+        user_id:
+          type: integer
+        knowledge_point:
+          type: string
+        resource_style:
+          type: string
+        resource_type:
+          type: string
+        learner_profile:
+          type: object
