@@ -2,78 +2,90 @@
 
 # 基于大模型的个性化资源生成与学习多智能体系统
 
-当前后端已开始切换为 `Java 17 + Spring Boot 3`。
+一个面向学生、教师和管理员的多智能体个性化学习平台。当前主联调链路以 Python 服务为准，仓库中同时保留了正在迁移中的 `Java 17 + Spring Boot 3` 骨架。
 
 ## 当前状态
 
-- 前端仍为 `Vue 3 + Element Plus`
-- 新增 `Java Spring Boot` monorepo 骨架
-- 已落地可运行骨架：
-  - `java-services/common`
-  - `java-services/user-service`
-  - `java-services/agent-service`
-- 现有 Python 服务代码暂未删除，作为旧版本保留
+- 前端：`Vue 3 + Element Plus`
+- 当前主联调后端：`FastAPI`
+- 预研迁移骨架：`java-services/common`、`java-services/user-service`、`java-services/agent-service`
+- 学生端支持学习路径、课件学习、课件多版本切换、课后自测、错题本、重练题、学习报告、知识图谱与智能答疑
+- 智能答疑优先调用 DeepSeek，返回具体教学讲解正文
 
-## 新后端目录
+## 核心能力
 
-```text
-java-services/
-  common/
-  user-service/
-  agent-service/
-pom.xml
-```
+### 用户认证
 
-## 已迁移的核心接口
-
-### user-service
-
-- `GET /health`
-- `POST /users`
 - `POST /users/register`
 - `POST /users/login`
 - `GET /users/me`
-- `GET /users/{userId}`
-- `GET /users/{userId}/profile`
-- `GET /users/{userId}/profile/dashboard`
-- `POST /users/{userId}/token`
 
-### agent-service
+本地默认管理员账号：
 
-- `GET /health`
-- `POST /agents/coordinate`
+- 用户名：`admin`
+- 密码：`admin123`
+
+### 学习资源与路径
+
 - `POST /resources/generate`
 - `POST /paths/generate`
 - `POST /exercises/generate`
-- `POST /graph/dependencies`
-- `POST /graph/visualization`
-- `GET /graph/related-resources/{knowledgePoint}`
 
-## 环境要求
+课件生成能力说明：
 
-- JDK 17
-- Maven 3.9+
-- Node.js 20+
+- 一次请求可返回多份候选课件
+- 当前会返回 `interactive`、`concise`、`case` 三类版本
+- 前端可直接切换不同课件版本继续学习
 
-## 启动方式
+### 智能答疑
 
-### 1. 启动 user-service
+- `POST /qa/analyze`
 
-```bash
-mvn -pl java-services/user-service spring-boot:run
+答疑能力说明：
+
+- 优先调用 DeepSeek 生成具体教师讲解
+- 同时返回结构化分析，供系统更新学习建议、知识漏洞和错题本
+
+## 目录结构
+
+```text
+common/
+docs/
+java-services/
+prompts/
+scripts/
+services/
+tests/
+web-app/
 ```
 
-默认端口：`8001`
+## 本地启动
 
-### 2. 启动 agent-service
+推荐直接使用脚本：
 
-```bash
-mvn -pl java-services/agent-service spring-boot:run
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start_local_services.ps1
 ```
 
-默认端口：`8002`
+该脚本会尝试启动：
 
-### 3. 启动前端
+- `user-service`：`8001`
+- `agent-service`：`8002`
+- `evaluation-service`：`8004`
+- `teacher-service`：`8005`
+- `system-service`：`8006`
+- `agent-service-qa-compat`：`8007`
+- `web-app`：`5175`
+
+启动后可访问：
+
+- 前端：`http://127.0.0.1:5175`
+- 用户服务健康检查：`http://127.0.0.1:8001/health`
+- 智能体服务健康检查：`http://127.0.0.1:8002/health`
+
+## 手动启动
+
+### 前端
 
 ```bash
 cd web-app
@@ -81,31 +93,28 @@ npm install
 npm run dev
 ```
 
-默认地址：`http://127.0.0.1:5175`
+### Python 服务
+
+```bash
+python -m uvicorn services.user_service.app.main:app --host 127.0.0.1 --port 8001
+python -m uvicorn services.agent_service.app.main:app --host 127.0.0.1 --port 8002
+python -m uvicorn services.evaluation_service.app.main:app --host 127.0.0.1 --port 8004
+python -m uvicorn services.teacher_service.app.main:app --host 127.0.0.1 --port 8005
+python -m uvicorn services.system_service.app.main:app --host 127.0.0.1 --port 8006
+```
+
+## 环境要求
+
+- Python 3.12+
+- Node.js 20+
+- 可选：JDK 17、Maven 3.9+
+
+## 文档
+
+- 功能说明：[docs/functionality.md](docs/functionality.md)
+- OpenAPI 草案：[docs/openapi.yaml](docs/openapi.yaml)
 
 ## 说明
 
-- 当前机器上未检测到 `mvn`，所以还没有完成本地 Java 编译验证。
-- 如果你安装了 Maven，优先先跑：
-
-```bash
-mvn -DskipTests package
-```
-
-- 现阶段是“新增 Java 版后端骨架”，不是“所有 Python 服务已经全部迁完”。
-- 下一步建议继续迁移：
-  - `evaluation-service`
-  - `teacher-service`
-  - `system-service`
-  - PostgreSQL / JPA 持久化
-  - Spring Security + JWT 过滤器
-  - RabbitMQ / Neo4j / Redis 集成
-
-## 前端联调说明
-
-前端当前仍然访问：
-
-- `http://127.0.0.1:8001`
-- `http://127.0.0.1:8002`
-
-所以只要先把新的 `user-service` 和 `agent-service` 跑起来，登录、课件、自测、路径、图谱这些核心页面就可以继续联调。
+- 当前仓库中存在一部分中文乱码历史内容，本轮已优先修正关键启动说明和功能文档。
+- 如果后续继续扩展接口或页面，建议同步更新 `docs/functionality.md` 和 `README.md`。
