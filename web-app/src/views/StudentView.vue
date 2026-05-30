@@ -238,19 +238,30 @@ const asyncStatusTimers: Partial<Record<AsyncStatusKey, ReturnType<typeof setInt
 let coursewareRequestVersion = 0
 let exerciseRequestVersion = 0
 
+const DEFAULT_SUBJECT = 'Python 程序设计'
+const DEFAULT_TOPIC = 'Python 循环'
+const DEFAULT_GRADE = '大一'
+const DEFAULT_QA_PROMPT = `我想学习 ${DEFAULT_TOPIC}，请先帮我讲清楚核心概念。`
+
+const learningRequestForm = reactive({
+  subject: DEFAULT_SUBJECT,
+  topic: DEFAULT_TOPIC,
+  goal: '先理解核心概念，再生成配套课件和自测题。',
+})
+
 const coordinationForm = reactive<CoordinationPayload>({
   user_id: authStore.user?.userId ?? 1,
-  intent: '请生成 Python 循环的个性化课件、练习题和学习路径建议。',
-  knowledge_point: 'Python 循环',
+  intent: `请围绕 ${DEFAULT_SUBJECT} 中的“${DEFAULT_TOPIC}”生成个性化课件、练习题和学习路径建议。`,
+  knowledge_point: DEFAULT_TOPIC,
   payload: {
-    subject: 'Python 程序设计',
-    grade: '大一',
+    subject: DEFAULT_SUBJECT,
+    grade: DEFAULT_GRADE,
   },
 })
 
 const resourceForm = reactive<ResourcePayload>({
   user_id: authStore.user?.userId ?? 1,
-  knowledge_point: 'Python 循环',
+  knowledge_point: DEFAULT_TOPIC,
   resource_style: 'interactive',
   resource_type: 'courseware',
   learner_profile: {
@@ -262,8 +273,8 @@ const resourceForm = reactive<ResourcePayload>({
 
 const pathForm = reactive<LearningPathPayload>({
   user_id: authStore.user?.userId ?? 1,
-  subject: 'Python 程序设计',
-  knowledge_point: 'Python 循环',
+  subject: DEFAULT_SUBJECT,
+  knowledge_point: DEFAULT_TOPIC,
   daily_minutes: 45,
   learner_profile: {
     learning_style: 'visual',
@@ -273,7 +284,7 @@ const pathForm = reactive<LearningPathPayload>({
 
 const exerciseForm = reactive<ExerciseGenerationPayload>({
   user_id: authStore.user?.userId ?? 1,
-  knowledge_point: 'Python 循环',
+  knowledge_point: DEFAULT_TOPIC,
   resource_style: 'interactive',
   learner_profile: {
     learning_style: 'visual',
@@ -286,12 +297,12 @@ const exerciseForm = reactive<ExerciseGenerationPayload>({
 
 const qaForm = reactive<QARequestPayload>({
   student_id: String(authStore.user?.userId ?? 1),
-  subject: 'Python 程序设计',
-  grade: '大一',
-  question: '我不太明白 while 循环为什么会死循环，能不能结合一个例子讲一下？',
+  subject: DEFAULT_SUBJECT,
+  grade: DEFAULT_GRADE,
+  question: DEFAULT_QA_PROMPT,
   student_answer: '',
   wrong_answer: '',
-  current_knowledge_points: ['Python 循环'],
+  current_knowledge_points: [DEFAULT_TOPIC],
   learning_route: {},
   error_book: {},
   learning_history: {},
@@ -949,11 +960,72 @@ function markTaskCompleted(taskType: string) {
   }
 }
 
+function buildCoordinationIntent(subject: string, topic: string, goal: string) {
+  const cleanGoal = goal.trim()
+  return cleanGoal
+    ? `请围绕 ${subject} 中的“${topic}”生成个性化学习路径、学习课件和练习题，学习目标是：${cleanGoal}`
+    : `请围绕 ${subject} 中的“${topic}”生成个性化学习路径、学习课件和练习题。`
+}
+
+function applyLearningRequestToForms() {
+  const subject = learningRequestForm.subject.trim() || DEFAULT_SUBJECT
+  const topic = learningRequestForm.topic.trim() || DEFAULT_TOPIC
+  const goal = learningRequestForm.goal.trim()
+
+  learningRequestForm.subject = subject
+  learningRequestForm.topic = topic
+
+  coordinationForm.knowledge_point = topic
+  coordinationForm.intent = buildCoordinationIntent(subject, topic, goal)
+  coordinationForm.payload.subject = subject
+  coordinationForm.payload.grade = qaForm.grade
+
+  resourceForm.knowledge_point = topic
+  pathForm.subject = subject
+  pathForm.knowledge_point = topic
+  exerciseForm.knowledge_point = topic
+
+  qaForm.subject = subject
+  qaForm.current_knowledge_points = [topic]
+  if (!qaForm.question.trim() || qaForm.question === DEFAULT_QA_PROMPT) {
+    qaForm.question = `我想学习 ${topic}，请先帮我讲清楚核心概念。`
+  }
+}
+
 function syncFormsWithKnowledgePoint(knowledgePoint: string) {
   coordinationForm.knowledge_point = knowledgePoint
   resourceForm.knowledge_point = knowledgePoint
   pathForm.knowledge_point = knowledgePoint
   exerciseForm.knowledge_point = knowledgePoint
+  learningRequestForm.topic = knowledgePoint
+  coordinationForm.intent = buildCoordinationIntent(pathForm.subject, knowledgePoint, learningRequestForm.goal)
+  qaForm.current_knowledge_points = [knowledgePoint]
+}
+
+async function startLearningPlan() {
+  if (loading.path || loading.courseware || loading.exercises || loading.coordinate) {
+    return
+  }
+  if (!learningRequestForm.subject.trim() || !learningRequestForm.topic.trim()) {
+    ElMessage.warning('请先填写学科和想学习的内容。')
+    return
+  }
+
+  applyLearningRequestToForms()
+  activeTaskId.value = ''
+  learningPath.value = null
+  resourceResult.value = null
+  exerciseSet.value = null
+  graphResult.value = null
+  graphVisualization.value = null
+  selectedCoursewareVariantId.value = ''
+  coursewareGenerationError.value = ''
+  exerciseGenerationError.value = ''
+
+  await Promise.all([
+    generateLearningPath(),
+    generateCourseware(),
+  ])
 }
 
 function scrollToCoursewareSection(anchor: string) {
@@ -1237,6 +1309,7 @@ async function runCoordination() {
   loading.coordinate = true
   startAsyncStatus('coordinate', '协同计划')
   try {
+    applyLearningRequestToForms()
     const { data } = await agentApi.post('/agents/coordinate', coordinationForm)
     coordinationResult.value = data as CoordinationResult
     ElMessage.success('学习协同计划已生成。')
@@ -1252,6 +1325,7 @@ async function generateLearningPath() {
   loading.path = true
   startAsyncStatus('path', '学习路径')
   try {
+    applyLearningRequestToForms()
     const { data } = await agentApi.post<LearningPathResponse>('/paths/generate', pathForm)
     learningPath.value = data
     activeTaskId.value = data.stages[0]?.tasks[0]?.task_id ?? ''
@@ -1530,17 +1604,32 @@ function buildQaLearningHistory() {
 
 function buildFallbackQaResponse(): QAResponsePayload {
   const question = qaForm.question.trim()
-  const knowledgePoint = pathForm.knowledge_point || exerciseForm.knowledge_point || '当前知识点'
+  const knowledgePoint =
+    qaForm.current_knowledge_points[0] ||
+    pathForm.knowledge_point ||
+    exerciseForm.knowledge_point ||
+    '当前问题'
   const lowerQuestion = question.toLowerCase()
+  const hasLearningContext = /python|循环|for|while|if|代码|编程|函数|算法|题目|错题|学习/.test(lowerQuestion)
+  const hasWrongContext = Boolean(qaForm.student_answer?.trim() || qaForm.wrong_answer?.trim())
+  const shouldAddMistake = hasWrongContext && /题|错|答案|作业|解析|复盘/.test(question)
 
-  let studentResponse = `你提到的问题和“${knowledgePoint}”有关。先不要急着记结论，我们先把这个知识点拆开理解：它解决什么问题、什么时候使用、最容易错在哪里。`
-  let knowledgeGaps = [knowledgePoint]
-  let misconceptions = ['当前理解还停留在现象层面，需要把概念、条件和执行过程连起来。']
-  let nextActions = ['先回看课件中的核心概念，再结合 2-3 道基础题巩固。']
-  let routeAction = '先补概念理解，再做同类基础练习。'
-  let routeReason = '当前问题暴露出核心概念和执行逻辑还不够稳定。'
+  let studentResponse = hasLearningContext
+    ? `你提到的问题目前更像一个学习问题，我会先围绕问题本身讲解；如果你愿意继续做学习分析，可以再补充题目背景、你的思路或者错误答案。`
+    : `你刚刚问的是：“${question}”。这个问题本身不一定属于错题复盘或知识漏洞诊断场景，所以我不会强行把它归到当前课件知识点上。若你想继续做学习分析，可以补充题目或作答过程。`
+  let knowledgeGaps = hasLearningContext ? [knowledgePoint] : []
+  let misconceptions = hasLearningContext
+    ? ['当前理解还需要把概念、条件和执行过程连起来。']
+    : ['当前问题未明显暴露具体知识漏洞，暂不强行归因。']
+  let nextActions = hasLearningContext
+    ? ['先听讲解，再根据是否有错误作答决定要不要继续复盘。']
+    : ['如果你希望继续做学习分析，可以补充题目背景、作答思路或错误答案。']
+  let routeAction = hasLearningContext ? '先完成问题讲解，再决定是否进入专项复盘。' : '当前不强制调整学习路线。'
+  let routeReason = hasLearningContext ? '当前提问有学习语境，但是否属于明确错题还需要更多上下文。' : '当前更像一般提问。'
   let wrongReason = '当前没有提供完整错误作答过程，无法进一步定位到某一步骤。'
-  let correctApproach = '建议先梳理题目考查的核心概念，再逐步解释每一步为什么这样执行。'
+  let correctApproach = shouldAddMistake
+    ? '结合错误答案和正确思路逐步对照，提炼成可复用的改错规则。'
+    : '如果这是错题复盘，请补充错误答案或完整思路，再定位具体错因。'
 
   if (lowerQuestion.includes('while') || lowerQuestion.includes('死循环')) {
     studentResponse = [
@@ -1631,7 +1720,7 @@ function buildFallbackQaResponse(): QAResponsePayload {
       ],
       study_suggestions: nextActions,
       mistake_book_update: {
-        should_add: false,
+        should_add: shouldAddMistake,
         question_summary: question || `关于 ${knowledgePoint} 的提问`,
         wrong_reason: wrongReason,
         correct_approach: correctApproach,
@@ -1722,6 +1811,7 @@ function resetGenerationProgress(kind?: GenerationKind) {
 
 async function generateCourseware() {
   const requestVersion = ++coursewareRequestVersion
+  applyLearningRequestToForms()
   loading.courseware = true
   startGenerationProgress('courseware', '正在生成学习课件，预计等待 3-8 秒。')
   coursewareGenerationError.value = ''
@@ -1853,6 +1943,7 @@ function buildExerciseContext(content?: string) {
 
 async function generateExercises() {
   const requestVersion = ++exerciseRequestVersion
+  applyLearningRequestToForms()
   loading.exercises = true
   startGenerationProgress('exercises', '正在生成课后自测，预计等待 3-8 秒。')
   exerciseGenerationError.value = ''
@@ -1924,6 +2015,7 @@ async function queryGraph() {
   loading.graph = true
   startAsyncStatus('graph', '知识图谱查询')
   try {
+    applyLearningRequestToForms()
     const payload = {
       knowledge_point: pathForm.knowledge_point,
       max_depth: 3,
@@ -2194,6 +2286,7 @@ async function askQaAgent() {
   if (loading.qa) {
     return
   }
+  applyLearningRequestToForms()
   if (!qaForm.question.trim()) {
     qaError.value = '请先输入你的问题，再开始智能讲解。'
     return
@@ -2207,7 +2300,11 @@ async function askQaAgent() {
   try {
     qaForm.student_id = String(authStore.user?.userId ?? exerciseForm.user_id)
     qaForm.subject = pathForm.subject
-    qaForm.current_knowledge_points = [pathForm.knowledge_point]
+    qaForm.current_knowledge_points = [
+      pathForm.knowledge_point,
+      exerciseForm.knowledge_point,
+      resourceResult.value?.knowledge_point,
+    ].filter((item): item is string => Boolean(item && item.trim()))
     qaForm.learning_route = learningPath.value ?? {}
     qaForm.error_book = mistakeNotebook.value ?? {}
     qaForm.learning_history = buildQaLearningHistory()
@@ -2258,6 +2355,7 @@ async function logout() {
 onMounted(async () => {
   void checkHealth()
   await fetchCurrentUser()
+  applyLearningRequestToForms()
   await Promise.all([
     generateLearningPath(),
     generateCourseware(),
@@ -2337,6 +2435,35 @@ onUnmounted(() => {
         </div>
         <p>{{ globalStatusView.detail }}</p>
       </div>
+
+      <section class="workspace-panel wide learning-request-panel">
+        <div class="panel-heading">
+          <div>
+            <div class="panel-kicker">学习入口</div>
+            <h2>先告诉系统你想学什么</h2>
+          </div>
+          <School class="panel-icon" />
+        </div>
+        <p class="panel-text">
+          这里不再只固定围绕 Python 课件。你可以自由输入学科、想学习的内容和学习目标，再生成对应的学习路径、课件和练习题。
+        </p>
+        <div class="learning-request-grid">
+          <el-input v-model="learningRequestForm.subject" placeholder="例如：Python 程序设计 / 高等数学 / 英语阅读" />
+          <el-input v-model="learningRequestForm.topic" placeholder="例如：递归、极限、虚拟语气、牛顿第二定律" />
+        </div>
+        <el-input
+          v-model="learningRequestForm.goal"
+          type="textarea"
+          :rows="3"
+          placeholder="可选：填写你的学习目标，例如准备考试、先学基础、需要更多例题。"
+        />
+        <div class="action-row">
+          <el-button type="primary" :loading="loading.path || loading.courseware" @click="startLearningPlan">
+            开始生成学习内容
+          </el-button>
+          <el-button :loading="loading.coordinate" @click="runCoordination">生成协同计划</el-button>
+        </div>
+      </section>
 
       <section class="workspace-panel wide">
         <div class="panel-heading">
@@ -3433,5 +3560,24 @@ onUnmounted(() => {
   border-color: rgba(191, 116, 63, 0.42);
   background: rgba(255, 246, 236, 0.96);
   box-shadow: 0 12px 28px rgba(191, 116, 63, 0.12);
+}
+
+.learning-request-panel {
+  background:
+    radial-gradient(circle at top right, rgba(191, 116, 63, 0.14), transparent 34%),
+    linear-gradient(135deg, rgba(255, 250, 244, 0.98), rgba(255, 255, 255, 0.94));
+}
+
+.learning-request-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 12px;
+}
+
+@media (max-width: 760px) {
+  .learning-request-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
