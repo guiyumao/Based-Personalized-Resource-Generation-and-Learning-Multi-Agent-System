@@ -1,8 +1,23 @@
 export function extractErrorMessage(error: unknown, fallback: string): string {
-  const response = (error as { response?: { data?: unknown } })?.response
+  const axiosError = error as {
+    code?: string
+    message?: string
+    response?: { data?: unknown }
+  }
+  const response = axiosError.response
   const data = response?.data as
     | { detail?: string | Array<{ msg?: string }> }
     | undefined
+
+  if (!response) {
+    if (axiosError.code === 'ECONNABORTED') {
+      return '请求超时，请确认后端服务已启动'
+    }
+    if (axiosError.message?.includes('Network Error')) {
+      return '无法连接到后端服务，请先启动 8001 用户服务'
+    }
+    return fallback
+  }
 
   if (!data) {
     return fallback

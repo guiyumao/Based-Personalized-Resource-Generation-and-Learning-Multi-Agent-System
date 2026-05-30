@@ -33,6 +33,8 @@ function createHttpClient(baseURL: string) {
 
 export const userApi = createHttpClient(userBaseUrl)
 export const agentApi = createHttpClient(agentBaseUrl)
+export const qaApi = createHttpClient(agentBaseUrl)
+export const contentApi = createHttpClient(agentBaseUrl)
 export const evaluationApi = createHttpClient(evaluationBaseUrl)
 export const teacherApi = createHttpClient(teacherBaseUrl)
 export const systemApi = createHttpClient(systemBaseUrl)

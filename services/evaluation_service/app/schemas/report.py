@@ -49,6 +49,7 @@ class PracticeFeedback(BaseModel):
     feedback: str
     suggested_action: str
     analysis: str
+    mastery_after_update: int | None = Field(default=None, ge=0, le=100)
 
 
 class MistakeItem(BaseModel):

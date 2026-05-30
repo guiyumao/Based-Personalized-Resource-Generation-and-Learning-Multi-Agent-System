@@ -1,5 +1,6 @@
 """Unit tests for the student learning workspace backend helpers."""
 
+from common.schemas.agent import ExerciseGenerationRequest
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
 from services.agent_service.app.services.learning_path import LearningPathService
 from services.evaluation_service.app.schemas.report import PracticeSubmission
@@ -34,40 +35,40 @@ def test_generate_structured_exercises() -> None:
 
     service = ExerciseGenerationService()
     response = service.generate_exercises(
-        type(
-            "Payload",
-            (),
-            {
-                "user_id": 1,
-                "knowledge_point": "Python 循环",
-                "resource_style": "interactive",
-                "learner_profile": {"style": "visual"},
-                "exercise_count": 5,
-            },
-        )()
+        ExerciseGenerationRequest(
+            user_id=1,
+            knowledge_point="Python 循环",
+            resource_style="interactive",
+            learner_profile={"learning_style": "visual"},
+            exercise_count=5,
+            generation_mode="self_test",
+            courseware_content="## 学完后自测\n- 区分 for 和 while\n- 识别死循环原因",
+        )
     )
 
     assert response["knowledge_point"] == "Python 循环"
     assert len(response["exercises"]) == 5
     assert response["exercises"][0]["prompt"]
+    assert "personalization" in response
 
 
-def test_practice_submission_returns_feedback() -> None:
+def test_practice_submission_returns_feedback(db_session, test_user) -> None:
     """Practice submissions should produce immediate evaluation feedback."""
 
-    service = ReportService()
+    service = ReportService(db_session)
     feedback = service.evaluate_practice(
         PracticeSubmission(
-            user_id=1,
-            exercise_id=1,
+            user_id=test_user.id,
+            exercise_id=100000 + test_user.id,
             knowledge_point="Python 循环",
             question_type="choice",
             user_answer="B",
             correct_answer="B",
-            analysis="循环用于重复执行。",
+            analysis="循环用于按照规则重复执行任务。",
             time_spent=12,
         )
     )
 
     assert feedback.is_correct is True
     assert feedback.score == 100
+    assert feedback.mastery_after_update is not None

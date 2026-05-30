@@ -33,6 +33,30 @@ class ResourceGenerationRequest(BaseModel):
     learner_profile: dict[str, Any] = Field(default_factory=dict)
 
 
+class ResourceVariant(BaseModel):
+    """One selectable courseware variant returned to the frontend."""
+
+    variant_id: str
+    title: str
+    summary: str
+    resource_style: Literal["concise", "case", "interactive"]
+    content: str
+    is_recommended: bool = False
+
+
+class ResourceGenerationResponse(BaseModel):
+    """Response for personalized learning resource generation."""
+
+    user_id: int
+    knowledge_point: str
+    resource_type: str
+    resource_style: str
+    references: list[dict[str, Any]] = Field(default_factory=list)
+    personalization: dict[str, Any] = Field(default_factory=dict)
+    content: str
+    variants: list[ResourceVariant] = Field(default_factory=list)
+
+
 class GraphQueryRequest(BaseModel):
     """Payload for graph query operations."""
 
@@ -138,6 +162,7 @@ class ExerciseGenerationResponse(BaseModel):
     user_id: int
     knowledge_point: str
     summary: str
+    personalization: dict[str, Any] = Field(default_factory=dict)
     exercises: list[ExerciseItem]
 
 

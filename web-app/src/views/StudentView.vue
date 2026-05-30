@@ -17,7 +17,9 @@ import { DataSet, Network } from 'vis-network/standalone'
 
 import {
   agentApi,
+  contentApi,
   evaluationApi,
+  qaApi,
   userApi,
   type ApiEnvelope,
   type CoordinationPayload,
@@ -28,6 +30,7 @@ import {
   type LearningPathPayload,
   type LearningPathResponse,
   type MistakeNotebook,
+  type PersonalizationContext,
   type PracticeFeedback,
   type PracticeSubmissionPayload,
   type QARequestPayload,
@@ -35,6 +38,8 @@ import {
   type RemedialExerciseSet,
   type ReportDetail,
   type ResourcePayload,
+  type ResourceResult,
+  type ResourceVariant,
 } from '../api'
 import { useAuthStore } from '../stores/auth'
 
@@ -43,21 +48,6 @@ type CoordinationResult = {
   selected_agents?: string[]
   route_reason?: string
   outputs?: Record<string, { queue?: string; message?: string }>
-}
-
-type ResourceReference = {
-  id?: string
-  content?: string
-  metadata?: Record<string, unknown>
-}
-
-type ResourceResult = {
-  user_id?: number
-  knowledge_point?: string
-  resource_type?: string
-  resource_style?: string
-  references?: ResourceReference[]
-  content?: string
 }
 
 type GraphDependency = {
@@ -98,10 +88,56 @@ type SubmittedExerciseState = {
 type EnvelopeLike<T> = T | ApiEnvelope<T>
 
 type GenerationKind = 'courseware' | 'exercises'
+type AsyncStatusKey = 'profile' | 'graph' | 'mistakes' | 'remedial' | 'reports' | 'qa' | 'path' | 'coordinate'
+
+type GenerationPhaseStatus = 'idle' | 'running' | 'background' | 'done' | 'fallback'
+type AsyncPhaseStatus = 'idle' | 'waiting' | 'slow' | 'stalled'
 
 type GenerationProgressState = {
   hint: string
   progress: number
+  startedAt: number | null
+  elapsedSeconds: number
+  status: GenerationPhaseStatus
+}
+
+type GenerationStageDefinition = {
+  threshold: number
+  title: string
+  description: string
+}
+
+type GenerationProgressStepView = {
+  index: number
+  title: string
+  description: string
+  state: 'completed' | 'current' | 'pending'
+}
+
+type GenerationProgressView = {
+  title: string
+  detail: string
+  stageIndex: number
+  totalStages: number
+  elapsedLabel: string
+  remainingLabel: string
+  statusLabel: string
+  steps: GenerationProgressStepView[]
+}
+
+type AsyncRequestState = {
+  active: boolean
+  label: string
+  startedAt: number | null
+  elapsedSeconds: number
+  phase: AsyncPhaseStatus
+}
+
+type AsyncStatusView = {
+  title: string
+  detail: string
+  elapsedLabel: string
+  tone: 'info' | 'warning' | 'danger'
 }
 
 const router = useRouter()
@@ -143,15 +179,33 @@ const lastQaRequest = ref<Record<string, unknown> | null>(null)
 const lastQaRawResponse = ref<unknown>(null)
 const coursewareDeliveryMode = ref<'remote' | 'fallback' | 'upgrading'>('remote')
 const exerciseDeliveryMode = ref<'remote' | 'fallback' | 'upgrading'>('remote')
+const selectedCoursewareVariantId = ref('')
 const generationStatus = reactive<Record<GenerationKind, GenerationProgressState>>({
   courseware: {
     hint: '',
     progress: 0,
+    startedAt: null,
+    elapsedSeconds: 0,
+    status: 'idle',
   },
   exercises: {
     hint: '',
     progress: 0,
+    startedAt: null,
+    elapsedSeconds: 0,
+    status: 'idle',
   },
+})
+
+const asyncRequestStatus = reactive<Record<AsyncStatusKey, AsyncRequestState>>({
+  profile: { active: false, label: '', startedAt: null, elapsedSeconds: 0, phase: 'idle' },
+  graph: { active: false, label: '', startedAt: null, elapsedSeconds: 0, phase: 'idle' },
+  mistakes: { active: false, label: '', startedAt: null, elapsedSeconds: 0, phase: 'idle' },
+  remedial: { active: false, label: '', startedAt: null, elapsedSeconds: 0, phase: 'idle' },
+  reports: { active: false, label: '', startedAt: null, elapsedSeconds: 0, phase: 'idle' },
+  qa: { active: false, label: '', startedAt: null, elapsedSeconds: 0, phase: 'idle' },
+  path: { active: false, label: '', startedAt: null, elapsedSeconds: 0, phase: 'idle' },
+  coordinate: { active: false, label: '', startedAt: null, elapsedSeconds: 0, phase: 'idle' },
 })
 
 const activeTaskId = ref('')
@@ -176,8 +230,11 @@ const loading = reactive({
 
 const answerStartAt = ref<number | null>(null)
 const graphCanvas = ref<HTMLDivElement | null>(null)
+const exerciseResultAnchor = ref<HTMLElement | null>(null)
+const qaResultAnchor = ref<HTMLElement | null>(null)
 let graphNetwork: Network | null = null
 const generationProgressTimers: Partial<Record<GenerationKind, ReturnType<typeof setInterval>>> = {}
+const asyncStatusTimers: Partial<Record<AsyncStatusKey, ReturnType<typeof setInterval>>> = {}
 let coursewareRequestVersion = 0
 let exerciseRequestVersion = 0
 
@@ -325,15 +382,27 @@ const qaRouteUpdates = computed(() => qaResult.value?.structured_analysis.learni
 const qaKnowledgeGaps = computed(() => qaResult.value?.structured_analysis.identified_knowledge_gaps ?? [])
 const qaMisconceptions = computed(() => qaResult.value?.structured_analysis.misconceptions ?? [])
 const qaStudySuggestions = computed(() => qaResult.value?.structured_analysis.study_suggestions ?? [])
+const coursewareVariants = computed<ResourceVariant[]>(() => resourceResult.value?.variants ?? [])
+const activeCoursewareVariant = computed<ResourceVariant | null>(() => {
+  const variants = coursewareVariants.value
+  if (!variants.length) {
+    return null
+  }
+  return (
+    variants.find((item) => item.variant_id === selectedCoursewareVariantId.value) ??
+    variants.find((item) => item.is_recommended) ??
+    variants[0]
+  )
+})
 
 const coursewareTitle = computed(() => {
-  const raw = resourceResult.value?.content?.trim()
+  const raw = activeCoursewareVariant.value?.content?.trim() ?? resourceResult.value?.content?.trim()
   const firstLine = raw?.split(/\r?\n/)[0] ?? ''
   return firstLine.startsWith('# ') ? firstLine.replace(/^#\s+/, '') : '学习课件'
 })
 
 const resourceSections = computed<CoursewareSection[]>(() => {
-  const content = resourceResult.value?.content?.trim()
+  const content = activeCoursewareVariant.value?.content?.trim() ?? resourceResult.value?.content?.trim()
   if (!content) {
     return []
   }
@@ -354,6 +423,91 @@ const resourceSections = computed<CoursewareSection[]>(() => {
 })
 
 const coursewareOutline = computed(() => resourceSections.value.map((section) => section.heading))
+const coursewarePersonalization = computed(() => resourceResult.value?.personalization ?? null)
+const exercisePersonalization = computed(() => exerciseSet.value?.personalization ?? null)
+const coursewareProgressView = computed(() => buildGenerationProgressView('courseware'))
+const exerciseProgressView = computed(() => buildGenerationProgressView('exercises'))
+const pathStatusView = computed(() => buildAsyncStatusView('path'))
+const coordinationStatusView = computed(() => buildAsyncStatusView('coordinate'))
+const profileStatusView = computed(() => buildAsyncStatusView('profile'))
+const graphStatusView = computed(() => buildAsyncStatusView('graph'))
+const mistakeStatusView = computed(() => buildAsyncStatusView(asyncRequestStatus.remedial.active ? 'remedial' : asyncRequestStatus.mistakes.active ? 'mistakes' : null))
+const reportStatusView = computed(() => buildAsyncStatusView('reports'))
+const qaStatusView = computed(() => buildAsyncStatusView('qa'))
+const globalStatusView = computed(() => {
+  return (
+    buildGenerationStatusView('courseware', '学习课件') ??
+    buildGenerationStatusView('exercises', '练习题') ??
+    pathStatusView.value ??
+    coordinationStatusView.value ??
+    profileStatusView.value ??
+    graphStatusView.value ??
+    mistakeStatusView.value ??
+    qaStatusView.value ??
+    reportStatusView.value
+  )
+})
+
+const questionTypeLabelMap: Record<string, string> = {
+  choice: '选择题',
+  blank: '填空题',
+  judge: '判断题',
+  short_answer: '简答题',
+  programming: '编程题',
+}
+
+const difficultyLabelMap: Record<string, string> = {
+  foundation: '基础',
+  intermediate: '进阶',
+  advanced: '拓展',
+}
+
+const generationStageDefinitions: Record<GenerationKind, GenerationStageDefinition[]> = {
+  courseware: [
+    {
+      threshold: 0,
+      title: '读取学习任务',
+      description: '正在确认当前知识点、课件风格和学习目标。',
+    },
+    {
+      threshold: 20,
+      title: '整理个性化依据',
+      description: '正在汇总掌握度、错题记录和学习偏好。',
+    },
+    {
+      threshold: 52,
+      title: '生成讲解内容',
+      description: '正在组织导入、知识讲解、示例和课堂小结。',
+    },
+    {
+      threshold: 80,
+      title: '整理章节返回',
+      description: '正在组装课件结构并返回给页面。',
+    },
+  ],
+  exercises: [
+    {
+      threshold: 0,
+      title: '读取课件上下文',
+      description: '正在提取当前课件重点和目标知识点。',
+    },
+    {
+      threshold: 20,
+      title: '整理薄弱点',
+      description: '正在汇总掌握度、错题记录和弱项题型。',
+    },
+    {
+      threshold: 52,
+      title: '生成题目与解析',
+      description: '正在生成题干、答案和详细解析。',
+    },
+    {
+      threshold: 80,
+      title: '组装题组返回',
+      description: '正在整理题组顺序并返回给页面。',
+    },
+  ],
+}
 
 function unwrapApiData<T>(payload: EnvelopeLike<T>): T {
   if (
@@ -376,6 +530,23 @@ async function postWithTimeout<T>(
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     return await agentApi.post<T>(url, payload, {
+      signal: controller.signal,
+      timeout: timeoutMs,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function postContentWithTimeout<T>(
+  url: string,
+  payload: unknown,
+  timeoutMs: number,
+): Promise<{ data: T }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await contentApi.post<T>(url, payload, {
       signal: controller.signal,
       timeout: timeoutMs,
     })
@@ -790,6 +961,228 @@ function scrollToCoursewareSection(anchor: string) {
   target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+function formatQuestionTypeLabel(value?: string) {
+  if (!value) {
+    return '未标注题型'
+  }
+  return questionTypeLabelMap[value] ?? value
+}
+
+function formatDifficultyLabel(value?: string) {
+  if (!value) {
+    return '未标注难度'
+  }
+  return difficultyLabelMap[value] ?? value
+}
+
+function formatDurationLabel(seconds: number) {
+  if (seconds < 60) {
+    return `${seconds} 秒`
+  }
+  const minutes = Math.floor(seconds / 60)
+  const remain = seconds % 60
+  return remain ? `${minutes} 分 ${remain} 秒` : `${minutes} 分钟`
+}
+
+function stopAsyncStatus(key: AsyncStatusKey) {
+  const timer = asyncStatusTimers[key]
+  if (timer) {
+    clearInterval(timer)
+    delete asyncStatusTimers[key]
+  }
+}
+
+function resetAsyncStatus(key?: AsyncStatusKey) {
+  if (key) {
+    stopAsyncStatus(key)
+    asyncRequestStatus[key].active = false
+    asyncRequestStatus[key].label = ''
+    asyncRequestStatus[key].startedAt = null
+    asyncRequestStatus[key].elapsedSeconds = 0
+    asyncRequestStatus[key].phase = 'idle'
+    return
+  }
+
+  ;(['profile', 'graph', 'mistakes', 'remedial', 'reports', 'qa', 'path', 'coordinate'] as AsyncStatusKey[]).forEach((item) => {
+    stopAsyncStatus(item)
+    asyncRequestStatus[item].active = false
+    asyncRequestStatus[item].label = ''
+    asyncRequestStatus[item].startedAt = null
+    asyncRequestStatus[item].elapsedSeconds = 0
+    asyncRequestStatus[item].phase = 'idle'
+  })
+}
+
+function startAsyncStatus(key: AsyncStatusKey, label: string) {
+  resetAsyncStatus(key)
+  asyncRequestStatus[key].active = true
+  asyncRequestStatus[key].label = label
+  asyncRequestStatus[key].startedAt = Date.now()
+  asyncRequestStatus[key].elapsedSeconds = 0
+  asyncRequestStatus[key].phase = 'waiting'
+  asyncStatusTimers[key] = setInterval(() => {
+    if (!asyncRequestStatus[key].startedAt) {
+      return
+    }
+    const elapsedSeconds = Math.max(
+      0,
+      Math.floor((Date.now() - asyncRequestStatus[key].startedAt!) / 1000),
+    )
+    asyncRequestStatus[key].elapsedSeconds = elapsedSeconds
+    if (elapsedSeconds >= 18) {
+      asyncRequestStatus[key].phase = 'stalled'
+    } else if (elapsedSeconds >= 8) {
+      asyncRequestStatus[key].phase = 'slow'
+    } else {
+      asyncRequestStatus[key].phase = 'waiting'
+    }
+  }, 1000)
+}
+
+function buildAsyncStatusView(key: AsyncStatusKey | null): AsyncStatusView | null {
+  if (!key) {
+    return null
+  }
+  const state = asyncRequestStatus[key]
+  if (!state.active) {
+    return null
+  }
+
+  if (state.phase === 'stalled') {
+    return {
+      title: `${state.label}可能卡住了`,
+      detail: '如果继续超过 20 秒没有变化，建议重新点击一次。页面当前仍在等待服务返回。',
+      elapsedLabel: formatDurationLabel(state.elapsedSeconds),
+      tone: 'danger',
+    }
+  }
+
+  if (state.phase === 'slow') {
+    return {
+      title: `${state.label}正在等待服务响应`,
+      detail: '服务响应比平时慢一些，但请求还在继续处理中。',
+      elapsedLabel: formatDurationLabel(state.elapsedSeconds),
+      tone: 'warning',
+    }
+  }
+
+  return {
+    title: `${state.label}处理中`,
+    detail: '请求已经发出，页面正在等待服务返回。',
+    elapsedLabel: formatDurationLabel(state.elapsedSeconds),
+    tone: 'info',
+  }
+}
+
+function buildGenerationStatusView(kind: GenerationKind, label: string): AsyncStatusView | null {
+  const state = generationStatus[kind]
+  if (!state.startedAt || !state.hint) {
+    return null
+  }
+
+  if (state.status === 'idle' || state.status === 'done' || state.status === 'fallback') {
+    return null
+  }
+
+  const progressView = buildGenerationProgressView(kind)
+
+  if (state.status === 'background') {
+    return {
+      title: `${label}已进入后台增强`,
+      detail: '页面上已经先展示了一版可用内容，你可以继续学习；系统仍在后台补充更完整的正式结果。',
+      elapsedLabel: progressView.elapsedLabel,
+      tone: 'warning',
+    }
+  }
+
+  if (state.elapsedSeconds >= 18) {
+    return {
+      title: `${label}生成时间偏长`,
+      detail: `当前还在“${progressView.title}”阶段等待服务返回。如果继续超过 20 秒没有变化，建议重新点击一次。`,
+      elapsedLabel: progressView.elapsedLabel,
+      tone: 'danger',
+    }
+  }
+
+  if (state.elapsedSeconds >= 8) {
+    return {
+      title: `${label}还在生成`,
+      detail: `当前已进入“${progressView.title}”阶段，服务比平时慢一些，但请求仍在处理中。`,
+      elapsedLabel: progressView.elapsedLabel,
+      tone: 'warning',
+    }
+  }
+
+  return {
+    title: `${label}正在生成`,
+    detail: `当前阶段：${progressView.title}。${progressView.remainingLabel}`,
+    elapsedLabel: progressView.elapsedLabel,
+    tone: 'info',
+  }
+}
+
+function buildGenerationProgressView(kind: GenerationKind): GenerationProgressView {
+  const state = generationStatus[kind]
+  const steps = generationStageDefinitions[kind]
+  const totalStages = steps.length
+  const currentIndex = steps.reduce((activeIndex, step, index) => {
+    return state.progress >= step.threshold ? index : activeIndex
+  }, 0)
+  const currentStep = steps[currentIndex] ?? steps[0]
+  const elapsedLabel = formatDurationLabel(state.elapsedSeconds)
+
+  let remainingLabel = '等待开始'
+  let statusLabel = '未开始'
+  let detail = currentStep.description
+
+  if (state.status === 'running') {
+    statusLabel = `第 ${currentIndex + 1}/${totalStages} 步`
+    if (state.elapsedSeconds < 3) {
+      remainingLabel = '预计还需 3-8 秒'
+    } else if (state.elapsedSeconds < 8) {
+      remainingLabel = `预计还需 ${Math.max(1, 8 - state.elapsedSeconds)} 秒`
+    } else {
+      remainingLabel = '已超过常规时长，仍在继续生成'
+    }
+  } else if (state.status === 'background') {
+    statusLabel = '已切到后台增强'
+    remainingLabel = '你可以先学习，后台仍在完善正式结果'
+    detail = '快速版内容已经可用，系统正在继续请求更完整的正式内容。'
+  } else if (state.status === 'done') {
+    statusLabel = '已完成'
+    remainingLabel = '结果已经返回页面'
+    detail = '课件或题组已经生成完成，可以直接继续学习。'
+  } else if (state.status === 'fallback') {
+    statusLabel = '已切换快速版'
+    remainingLabel = '当前先使用快速版结果'
+    detail = '远程生成较慢或失败，页面已切换为可直接使用的快速版。'
+  }
+
+  return {
+    title: currentStep.title,
+    detail,
+    stageIndex: currentIndex + 1,
+    totalStages,
+    elapsedLabel,
+    remainingLabel,
+    statusLabel,
+    steps: steps.map((step, index) => ({
+      index: index + 1,
+      title: step.title,
+      description: step.description,
+      state: index < currentIndex ? 'completed' : index === currentIndex ? 'current' : 'pending',
+    })),
+  }
+}
+
+function scrollToExerciseResult() {
+  exerciseResultAnchor.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+function scrollToQaResult() {
+  qaResultAnchor.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 async function checkHealth() {
   try {
     await userApi.get('/health')
@@ -828,17 +1221,21 @@ async function fetchCurrentUser() {
 }
 
 async function fetchProfileDashboard(userId = exerciseForm.user_id) {
+  startAsyncStatus('profile', '学习画像')
   try {
     const { data } = await userApi.get<LearnerProfileDashboard>(`/users/${userId}/profile/dashboard`)
     syncLearnerFromDashboard(data)
   } catch {
     syncLearnerFromDashboard(buildFallbackProfileDashboard(userId))
     announceFallback('profile-dashboard', '学习画像服务暂不可用，已切换到本地画像模式。')
+  } finally {
+    resetAsyncStatus('profile')
   }
 }
 
 async function runCoordination() {
   loading.coordinate = true
+  startAsyncStatus('coordinate', '协同计划')
   try {
     const { data } = await agentApi.post('/agents/coordinate', coordinationForm)
     coordinationResult.value = data as CoordinationResult
@@ -847,11 +1244,13 @@ async function runCoordination() {
     ElMessage.error('协调调度失败。')
   } finally {
     loading.coordinate = false
+    resetAsyncStatus('coordinate')
   }
 }
 
 async function generateLearningPath() {
   loading.path = true
+  startAsyncStatus('path', '学习路径')
   try {
     const { data } = await agentApi.post<LearningPathResponse>('/paths/generate', pathForm)
     learningPath.value = data
@@ -864,48 +1263,189 @@ async function generateLearningPath() {
     announceFallback('learning-path', '学习路径服务暂不可用，已切换到本地学习路径。')
   } finally {
     loading.path = false
+    resetAsyncStatus('path')
   }
 }
 
 function buildFallbackCoursewareContent(knowledgePoint: string) {
-  return `# ${knowledgePoint} 学习课件
+  if (knowledgePoint.includes('循环')) {
+    return [
+      `# ${knowledgePoint} 学习课件`,
+      '',
+      '## 课程导入',
+      '想象一下，如果你要把 1 到 100 的数字全部打印出来，或者要逐个检查一组成绩是否及格，你会怎么做？',
+      '如果没有循环，我们只能把相同的代码一遍遍重复写出来，不但效率低，而且特别容易出错。',
+      `所以学习 ${knowledgePoint}，本质上不是只背一个语法，而是学会把“重复任务”交给程序自动完成。`,
+      '',
+      '## 学习目标',
+      `- 能说清 ${knowledgePoint} 解决的核心问题是什么`,
+      '- 能区分 `for` 循环和 `while` 循环的适用场景',
+      '- 能读懂基础循环代码，并解释每一行在做什么',
+      '- 能主动检查循环中的边界、条件和更新步骤，避免死循环',
+      '',
+      '## 知识讲解',
+      '循环就是让程序按照一定规则重复执行同一类操作。',
+      '学习循环时，必须盯住三个问题：',
+      '1. 重复的对象是谁，比如列表里的每个元素，或者不断变化的计数值。',
+      '2. 每一轮要做什么，比如输出、统计、判断或者筛选。',
+      '3. 什么时候停下来，如果停不下来，就可能变成死循环。',
+      '',
+      '通常来说：',
+      '- `for` 更适合遍历固定范围、固定序列或已知集合。',
+      '- `while` 更适合“只要条件成立就继续执行”的场景。',
+      '- 循环常常会和条件判断一起使用，因为真实任务通常既要重复，也要判断。',
+      '',
+      '## 重难点突破',
+      '很多同学写循环时，不是语法不会，而是思路不清。',
+      '最常见的三个问题是：',
+      '- 把 `for` 和 `while` 的场景混用，本来遍历列表就能解决的问题，非要写成复杂的 `while`。',
+      '- 没有意识到 `range(5)` 得到的是 `0, 1, 2, 3, 4`，不包含 5。',
+      '- 在 `while` 循环里忘记更新控制变量，比如忘记写 `count += 1`，结果程序一直停不下来。',
+      '',
+      '你可以把循环想成“程序在按规则做一轮一轮的工作”，每做完一轮都要问自己：',
+      '- 这轮做了什么？',
+      '- 变量变了吗？',
+      '- 下一轮为什么还能继续，或者为什么应该结束？',
+      '',
+      '## 关键语法',
+      '```python',
+      'for item in items:',
+      '    print(item)',
+      '```',
+      '',
+      '上面这段代码表示：从 `items` 中每次取出一个元素，放到 `item` 里，再执行循环体。',
+      '',
+      '```python',
+      'count = 0',
+      'while count < 3:',
+      '    print(count)',
+      '    count += 1',
+      '```',
+      '',
+      '这段代码表示：只要 `count < 3` 这个条件成立，就继续执行循环体。每执行一轮后，`count` 都会加 1，所以它最终会停下来。',
+      '',
+      '## 示例讲解',
+      '下面看一个更贴近真实任务的例子：',
+      '',
+      '```python',
+      'scores = [78, 91, 59, 84]',
+      'for score in scores:',
+      '    if score >= 60:',
+      "        print(score, '及格')",
+      '    else:',
+      "        print(score, '不及格')",
+      '```',
+      '',
+      '这段代码的理解顺序应该是：',
+      '- `scores` 是要处理的数据。',
+      '- `for score in scores` 表示把每个成绩依次取出来。',
+      '- `if score >= 60` 表示对当前这一个成绩进行判断。',
+      "- 如果条件成立，就输出“及格”；否则输出“不及格”。",
+      '',
+      '这个例子说明，循环真正的价值不是“重复写代码”，而是“自动处理一批相似任务”。',
+      '',
+      '## 课堂小结',
+      `- ${knowledgePoint} 的核心价值，是让程序自动完成重复性的处理工作。`,
+      '- `for` 偏向遍历型任务，`while` 偏向条件型任务。',
+      '- 做循环题时，要重点检查：循环对象、循环条件、变量更新、缩进层级。',
+      '- 一旦程序停不下来，优先排查 `while` 条件和控制变量是否发生了变化。',
+      '',
+      '## 学完后自测',
+      '- 我能不能解释 `for` 和 `while` 各自适合什么场景？',
+      '- 我能不能说出 `range(5)` 实际会产生哪些数字？',
+      '- 我能不能分析一个 `while` 循环为什么会死循环？',
+      '- 我能不能写出一段遍历列表并做条件判断的代码？',
+      '',
+      '## 拓展延伸',
+      '下一步可以尝试把循环和条件判断、列表、函数结合起来，完成统计、筛选、查找等小任务。',
+      `真正掌握 ${knowledgePoint}，不是看到代码会点头，而是自己写题时知道什么时候该用它、为什么这样用、出错后怎么检查。`,
+    ].join('\n')
+  }
 
-## 课程导入
-很多同学刚接触 ${knowledgePoint} 时，会觉得它只是一个语法点，但真正重要的是理解它在什么场景下帮助我们更高效地解决问题。
+  if (knowledgePoint.includes('条件判断')) {
+    return [
+      `# ${knowledgePoint} 学习课件`,
+      '',
+      '## 课程导入',
+      '程序并不是只会机械执行命令，它还可以根据不同情况作出不同选择。',
+      `学习 ${knowledgePoint}，就是学习如何让程序“看情况办事”。`,
+      '',
+      '## 学习目标',
+      `- 理解 ${knowledgePoint} 的基本作用`,
+      '- 能读懂并写出 `if / elif / else` 结构',
+      '- 能分析条件顺序、边界值和比较逻辑是否正确',
+      '',
+      '## 知识讲解',
+      '- `if` 表示当条件成立时执行。',
+      '- `elif` 表示当前面条件不满足时，再检查新的条件。',
+      '- `else` 表示当前面条件都不成立时的兜底处理。',
+      '- 写条件判断时，要特别关注边界值，比如“是否包含等于号”。',
+      '',
+      '## 重难点突破',
+      '- 很多错误不是语法错，而是条件顺序错。',
+      '- 如果宽范围条件写在前面，后面更精细的条件可能永远不会被执行。',
+      '- `=` 是赋值，`==` 才是比较，这也是初学者常见错误。',
+      '',
+      '## 示例讲解',
+      '```python',
+      'score = 85',
+      'if score >= 90:',
+      "    print('A')",
+      'elif score >= 80:',
+      "    print('B')",
+      'else:',
+      "    print('C')",
+      '```',
+      '',
+      '这段代码会先判断是否大于等于 90；如果不是，再判断是否大于等于 80；最后再进入兜底分支。',
+      '',
+      '## 课堂小结',
+      `- ${knowledgePoint} 的本质是根据条件选择不同执行路径。`,
+      '- 写题时要检查条件顺序、边界和比较符号是否准确。',
+      '',
+      '## 学完后自测',
+      '- 我能不能解释 `if / elif / else` 的执行顺序？',
+      '- 我能不能判断条件区间是否有重叠或遗漏？',
+      '',
+      '## 拓展延伸',
+      '条件判断通常会和循环一起出现。学完这一节后，可以继续做“循环 + 判断”的综合练习。',
+    ].join('\n')
+  }
 
-## 学习目标
-- 先理解 ${knowledgePoint} 的核心作用
-- 再弄清它常见的使用场景
-- 最后结合一个小例子把概念落到实际
-
-## 知识讲解
-${knowledgePoint} 的本质，是帮助我们按照一定规则重复执行一段操作。学习时不要只盯着写法，更要关注“为什么要这样写”和“什么时候应该停止”。
-
-## 重难点突破
-初学时最容易出错的地方通常有两个：一是没有真正看懂条件或范围，二是步骤顺序写对了表面形式，却没理解运行过程。
-
-## 示例讲解
-\`\`\`python
-count = 0
-while count < 3:
-    print(count)
-    count += 1
-\`\`\`
-
-这段代码里，\`count < 3\` 是继续执行的条件，\`count += 1\` 是防止循环一直不结束的关键。
-
-## 课堂小结
-- 先理解作用，再记语法
-- 先判断场景，再选择写法
-- 做题时一定检查条件、范围和更新步骤
-
-## 学完后自测
-- 我能不能说清这个知识点在解决什么问题？
-- 我能不能指出最容易出错的地方？
-- 我能不能写出一个最基础的小例子？
-
-## 拓展延伸
-建议你先完成一轮自测题，再回头看解析，这样更容易发现自己是真懂了还是只“看懂了”。`
+  return [
+    `# ${knowledgePoint} 学习课件`,
+    '',
+    '## 课程导入',
+    `学习 ${knowledgePoint} 时，先不要急着记语法或结论，而要先想清楚：这个知识点到底解决什么问题。`,
+    '',
+    '## 学习目标',
+    `- 理解 ${knowledgePoint} 的核心概念`,
+    '- 知道它的典型使用场景',
+    '- 能结合一个具体例子说明它的作用',
+    '',
+    '## 知识讲解',
+    `${knowledgePoint} 建议从“定义是什么、为什么要学、容易错在哪里、怎么用在题目里”四个角度去理解。`,
+    '',
+    '## 重难点突破',
+    '如果一个知识点总是学了就忘，通常不是记忆力问题，而是没有把概念、场景和步骤连起来。',
+    '学习时要不断追问自己：为什么这样做？如果换个题目还能不能用？',
+    '',
+    '## 示例讲解',
+    `请尝试围绕 ${knowledgePoint} 自己举一个最小例子，再对照课件检查自己是否真的理解。`,
+    '',
+    '## 课堂小结',
+    `- 先理解 ${knowledgePoint} 为什么存在`,
+    `- 再掌握 ${knowledgePoint} 怎么使用`,
+    `- 最后通过做题把 ${knowledgePoint} 变成真正会用的能力`,
+    '',
+    '## 学完后自测',
+    `- 我能不能用自己的话解释 ${knowledgePoint}？`,
+    `- 我能不能说出它适合解决什么问题？`,
+    `- 我能不能指出它最容易出错的地方？`,
+    '',
+    '## 拓展延伸',
+    `建议继续生成围绕 ${knowledgePoint} 的课后自测题，把“看懂”进一步变成“会做”。`,
+  ].join('\n')
 }
 
 function buildQuickExerciseSet(): ExerciseGenerationResponse {
@@ -988,6 +1528,118 @@ function buildQaLearningHistory() {
   }
 }
 
+function buildFallbackQaResponse(): QAResponsePayload {
+  const question = qaForm.question.trim()
+  const knowledgePoint = pathForm.knowledge_point || exerciseForm.knowledge_point || '当前知识点'
+  const lowerQuestion = question.toLowerCase()
+
+  let studentResponse = `你提到的问题和“${knowledgePoint}”有关。先不要急着记结论，我们先把这个知识点拆开理解：它解决什么问题、什么时候使用、最容易错在哪里。`
+  let knowledgeGaps = [knowledgePoint]
+  let misconceptions = ['当前理解还停留在现象层面，需要把概念、条件和执行过程连起来。']
+  let nextActions = ['先回看课件中的核心概念，再结合 2-3 道基础题巩固。']
+  let routeAction = '先补概念理解，再做同类基础练习。'
+  let routeReason = '当前问题暴露出核心概念和执行逻辑还不够稳定。'
+  let wrongReason = '当前没有提供完整错误作答过程，无法进一步定位到某一步骤。'
+  let correctApproach = '建议先梳理题目考查的核心概念，再逐步解释每一步为什么这样执行。'
+
+  if (lowerQuestion.includes('while') || lowerQuestion.includes('死循环')) {
+    studentResponse = [
+      '你这个问题很典型，很多同学第一次学 `while` 时都会卡在这里。',
+      '',
+      '先抓住一句话：`while` 的意思是“只要条件成立，就一直重复执行”。',
+      '所以它会不会变成死循环，关键不在于写了 `while`，而在于循环体里有没有让条件发生变化。',
+      '',
+      '看一个最常见的例子：',
+      '',
+      '```python',
+      'count = 0',
+      'while count < 3:',
+      '    print(count)',
+      '```',
+      '',
+      '这段代码的问题是：`count` 一开始等于 0，而且循环里没有修改 `count`。',
+      '于是程序每一轮判断时都会发现 `count < 3` 仍然成立，就会一直重复执行下去，这就是死循环。',
+      '',
+      '正确写法应该是：',
+      '',
+      '```python',
+      'count = 0',
+      'while count < 3:',
+      '    print(count)',
+      '    count += 1',
+      '```',
+      '',
+      '现在每执行一轮，`count` 都会加 1：',
+      '- 第 1 轮后，`count = 1`',
+      '- 第 2 轮后，`count = 2`',
+      '- 第 3 轮后，`count = 3`',
+      '这时条件 `count < 3` 不再成立，循环自然结束。',
+      '',
+      '你可以把 `while` 理解成“门口保安不断检查条件”，只要条件还满足，就放程序继续执行；一旦条件不满足，程序才会停下来。',
+      '',
+      '以后检查 `while` 题目时，重点看三件事：',
+      '- 循环开始前，条件是不是成立',
+      '- 每执行一轮，控制变量有没有变化',
+      '- 这种变化会不会最终让条件不成立',
+    ].join('\n')
+    knowledgeGaps = ['while 循环结束条件', '控制变量更新', '死循环成因']
+    misconceptions = [
+      '容易把“写了 while”误认为“程序会自动结束”。',
+      '容易忽略循环体里必须让控制变量发生变化这一点。',
+    ]
+    nextActions = [
+      '先自己口述一遍：while 循环为什么会停下来。',
+      '再手动模拟一段简单 while 代码的每一轮变量变化。',
+      '最后做 2 道“找死循环原因”的小题巩固。',
+    ]
+    routeAction = '补强 while 循环结束条件与变量更新逻辑，再做死循环诊断题。'
+    routeReason = '当前问题直接暴露出对 while 执行机制和退出条件的理解不稳定。'
+    wrongReason = '容易忽略循环体内部是否真正改变了控制变量。'
+    correctApproach = '先检查条件，再逐轮追踪变量变化，确认条件是否会最终失效。'
+  }
+
+  return {
+    student_id: String(authStore.user?.userId ?? exerciseForm.user_id),
+    subject: pathForm.subject,
+    grade: qaForm.grade,
+    student_response: studentResponse,
+    structured_analysis: {
+      identified_knowledge_gaps: knowledgeGaps,
+      misconceptions,
+      difficulty_level: 'intermediate',
+      learning_state: '当前处于“已经接触概念，但执行过程还没有真正想透”的阶段，适合通过讲解加少量诊断题快速补牢。',
+      recommended_next_knowledge_points: [knowledgePoint],
+      learning_route_updates: [
+        {
+          knowledge_point: knowledgePoint,
+          priority: 'high',
+          action: routeAction,
+          reason: routeReason,
+        },
+      ],
+      resource_recommendations: [
+        {
+          resource_type: 'courseware',
+          title: `${knowledgePoint} 精讲课件`,
+          reason: '先把概念、条件和执行步骤重新讲透，再做题效果更好。',
+        },
+        {
+          resource_type: 'exercise',
+          title: `${knowledgePoint} 基础诊断题`,
+          reason: '通过少量题目确认是否真的理解了关键逻辑。',
+        },
+      ],
+      study_suggestions: nextActions,
+      mistake_book_update: {
+        should_add: false,
+        question_summary: question || `关于 ${knowledgePoint} 的提问`,
+        wrong_reason: wrongReason,
+        correct_approach: correctApproach,
+      },
+    },
+  }
+}
+
 function stopGenerationProgress(kind: GenerationKind) {
   const timer = generationProgressTimers[kind]
   if (timer) {
@@ -1000,7 +1652,16 @@ function startGenerationProgress(kind: GenerationKind, message: string) {
   stopGenerationProgress(kind)
   generationStatus[kind].hint = message
   generationStatus[kind].progress = 8
+  generationStatus[kind].startedAt = Date.now()
+  generationStatus[kind].elapsedSeconds = 0
+  generationStatus[kind].status = 'running'
   generationProgressTimers[kind] = setInterval(() => {
+    if (generationStatus[kind].startedAt) {
+      generationStatus[kind].elapsedSeconds = Math.max(
+        0,
+        Math.floor((Date.now() - generationStatus[kind].startedAt) / 1000),
+      )
+    }
     if (generationStatus[kind].progress < 45) {
       generationStatus[kind].progress += 7
       return
@@ -1015,10 +1676,27 @@ function startGenerationProgress(kind: GenerationKind, message: string) {
   }, 450)
 }
 
-function finishGenerationProgress(kind: GenerationKind, message: string) {
+function setGenerationProgressBackground(kind: GenerationKind, message: string) {
+  generationStatus[kind].hint = message
+  generationStatus[kind].status = 'background'
+  generationStatus[kind].progress = Math.max(generationStatus[kind].progress, 82)
+}
+
+function finishGenerationProgress(
+  kind: GenerationKind,
+  message: string,
+  status: Extract<GenerationPhaseStatus, 'done' | 'fallback'> = 'done',
+) {
   stopGenerationProgress(kind)
   generationStatus[kind].progress = 100
   generationStatus[kind].hint = message
+  if (generationStatus[kind].startedAt) {
+    generationStatus[kind].elapsedSeconds = Math.max(
+      generationStatus[kind].elapsedSeconds,
+      Math.floor((Date.now() - generationStatus[kind].startedAt) / 1000),
+    )
+  }
+  generationStatus[kind].status = status
 }
 
 function resetGenerationProgress(kind?: GenerationKind) {
@@ -1026,6 +1704,9 @@ function resetGenerationProgress(kind?: GenerationKind) {
     stopGenerationProgress(kind)
     generationStatus[kind].hint = ''
     generationStatus[kind].progress = 0
+    generationStatus[kind].startedAt = null
+    generationStatus[kind].elapsedSeconds = 0
+    generationStatus[kind].status = 'idle'
     return
   }
 
@@ -1033,6 +1714,9 @@ function resetGenerationProgress(kind?: GenerationKind) {
     stopGenerationProgress(item)
     generationStatus[item].hint = ''
     generationStatus[item].progress = 0
+    generationStatus[item].startedAt = null
+    generationStatus[item].elapsedSeconds = 0
+    generationStatus[item].status = 'idle'
   })
 }
 
@@ -1048,16 +1732,37 @@ async function generateCourseware() {
     resource_type: resourceForm.resource_type,
     resource_style: resourceForm.resource_style,
     references: [],
+    variants: [
+      {
+        variant_id: 'fallback-interactive',
+        title: `${resourceForm.knowledge_point} 快速课件`,
+        summary: '本地快速版课件，可先开始学习。',
+        resource_style: 'interactive',
+        content: fallbackContent,
+        is_recommended: true,
+      },
+    ],
     content: fallbackContent,
   }
+  selectedCoursewareVariantId.value = 'fallback-interactive'
   exerciseForm.courseware_content = fallbackContent
   coursewareDeliveryMode.value = 'upgrading'
+  let fallbackTakeoverTriggered = false
+  const takeoverTimer = setTimeout(() => {
+    if (requestVersion !== coursewareRequestVersion) {
+      return
+    }
+    fallbackTakeoverTriggered = true
+    loading.courseware = false
+    setGenerationProgressBackground('courseware', '已先展示快速版课件，后台正在继续增强正式版。')
+    ElMessage.info('已先展示快速版课件，可先开始学习。')
+  }, 2200)
   try {
     resourceForm.resource_type = 'courseware'
     lastCoursewareRequest.value = {
       ...resourceForm,
     }
-    const { data } = await postWithTimeout<EnvelopeLike<ResourceResult>>('/resources/generate', resourceForm, 12000)
+    const { data } = await postContentWithTimeout<EnvelopeLike<ResourceResult>>('/resources/generate', resourceForm, 12000)
     if (requestVersion !== coursewareRequestVersion) {
       return
     }
@@ -1067,11 +1772,22 @@ async function generateCourseware() {
       throw new Error('resource payload is empty')
     }
     resourceResult.value = normalized
-    exerciseForm.courseware_content = resourceResult.value.content ?? ''
+    selectedCoursewareVariantId.value =
+      normalized.variants?.find((item) => item.is_recommended)?.variant_id ??
+      normalized.variants?.[0]?.variant_id ??
+      ''
+    exerciseForm.courseware_content =
+      normalized.variants?.find((item) => item.variant_id === selectedCoursewareVariantId.value)?.content ??
+      resourceResult.value.content ??
+      ''
+    coursewareGenerationError.value = ''
     coursewareDeliveryMode.value = 'remote'
     markTaskCompleted('courseware')
-    finishGenerationProgress('courseware', '学习课件已生成完成。')
-    ElMessage.success('学习课件已生成')
+    finishGenerationProgress(
+      'courseware',
+      fallbackTakeoverTriggered ? '正式学习课件已更新完成。' : '学习课件已生成完成。',
+    )
+    ElMessage.success(fallbackTakeoverTriggered ? '正式学习课件已更新' : '学习课件已生成')
   } catch {
     if (requestVersion !== coursewareRequestVersion) {
       return
@@ -1082,17 +1798,37 @@ async function generateCourseware() {
       resource_type: resourceForm.resource_type,
       resource_style: resourceForm.resource_style,
       references: [],
+      variants: [
+        {
+          variant_id: 'fallback-interactive',
+          title: `${resourceForm.knowledge_point} 快速课件`,
+          summary: '本地快速版课件，可先开始学习。',
+          resource_style: 'interactive',
+          content: fallbackContent,
+          is_recommended: true,
+        },
+      ],
       content: fallbackContent,
     }
+    selectedCoursewareVariantId.value = 'fallback-interactive'
     exerciseForm.courseware_content = fallbackContent
     coursewareDeliveryMode.value = 'fallback'
     coursewareGenerationError.value = '远程课件生成超时或失败，当前已切换为快速版本地课件，页面不会卡住。'
-    finishGenerationProgress('courseware', '远程生成较慢，已切换为快速版课件。')
+    finishGenerationProgress('courseware', '远程生成较慢，已切换为快速版课件。', 'fallback')
     ElMessage.warning('远程课件生成较慢，已切换为快速版课件')
   } finally {
+    clearTimeout(takeoverTimer)
     if (requestVersion === coursewareRequestVersion) {
       loading.courseware = false
     }
+  }
+}
+
+function selectCoursewareVariant(variantId: string) {
+  selectedCoursewareVariantId.value = variantId
+  const variant = coursewareVariants.value.find((item) => item.variant_id === variantId)
+  if (variant) {
+    exerciseForm.courseware_content = variant.content
   }
 }
 
@@ -1123,6 +1859,18 @@ async function generateExercises() {
   exerciseSet.value = buildQuickExerciseSet()
   resetExerciseSession()
   exerciseDeliveryMode.value = 'upgrading'
+  await nextTick()
+  scrollToExerciseResult()
+  let fallbackTakeoverTriggered = false
+  const takeoverTimer = setTimeout(() => {
+    if (requestVersion !== exerciseRequestVersion) {
+      return
+    }
+    fallbackTakeoverTriggered = true
+    loading.exercises = false
+    setGenerationProgressBackground('exercises', '已先展示快速版题组，后台正在继续增强正式题组。')
+    ElMessage.info('已先展示快速版题组，可先开始作答。')
+  }, 2200)
   try {
     exerciseForm.generation_mode = 'self_test'
     exerciseForm.courseware_content = buildExerciseContext(resourceResult.value?.content)
@@ -1135,7 +1883,7 @@ async function generateExercises() {
       generation_mode: exerciseForm.generation_mode,
       courseware_content_preview: exerciseForm.courseware_content.slice(0, 500),
     }
-    const { data } = await postWithTimeout<EnvelopeLike<ExerciseGenerationResponse>>('/exercises/generate', exerciseForm, 12000)
+    const { data } = await postContentWithTimeout<EnvelopeLike<ExerciseGenerationResponse>>('/exercises/generate', exerciseForm, 12000)
     if (requestVersion !== exerciseRequestVersion) {
       return
     }
@@ -1146,19 +1894,26 @@ async function generateExercises() {
     }
     exerciseSet.value = normalized
     resetExerciseSession()
+    exerciseGenerationError.value = ''
     exerciseDeliveryMode.value = 'remote'
+    await nextTick()
+    scrollToExerciseResult()
     markTaskCompleted('exercise')
-    finishGenerationProgress('exercises', '课后自测已生成完成。')
-    ElMessage.success('课后自测已生成')
+    finishGenerationProgress(
+      'exercises',
+      fallbackTakeoverTriggered ? '正式题组已更新完成。' : '课后自测已生成完成。',
+    )
+    ElMessage.success(fallbackTakeoverTriggered ? '正式题组已更新' : '课后自测已生成')
   } catch {
     if (requestVersion !== exerciseRequestVersion) {
       return
     }
     exerciseDeliveryMode.value = 'fallback'
     exerciseGenerationError.value = '远程题目生成失败或超时，当前已保留快速版题组，你可以先继续作答。'
-    finishGenerationProgress('exercises', '远程生成较慢，当前先使用快速版题组。')
+    finishGenerationProgress('exercises', '远程生成较慢，当前先使用快速版题组。', 'fallback')
     ElMessage.warning('远程题目生成较慢，当前先使用快速版题组')
   } finally {
+    clearTimeout(takeoverTimer)
     if (requestVersion === exerciseRequestVersion) {
       loading.exercises = false
     }
@@ -1167,6 +1922,7 @@ async function generateExercises() {
 
 async function queryGraph() {
   loading.graph = true
+  startAsyncStatus('graph', '知识图谱查询')
   try {
     const payload = {
       knowledge_point: pathForm.knowledge_point,
@@ -1185,6 +1941,7 @@ async function queryGraph() {
     ElMessage.error('知识图谱查询失败。')
   } finally {
     loading.graph = false
+    resetAsyncStatus('graph')
   }
 }
 
@@ -1322,6 +2079,7 @@ function goToNextExercise() {
 
 async function fetchMistakeNotebook() {
   loading.mistakes = true
+  startAsyncStatus('mistakes', '错题本刷新')
   try {
     const userId = exerciseForm.user_id
     const { data } = await evaluationApi.get<ApiEnvelope<MistakeNotebook>>(`/evaluation/mistakes/${userId}/detail`)
@@ -1331,11 +2089,13 @@ async function fetchMistakeNotebook() {
     announceFallback('mistake-notebook', '错题本服务暂不可用，已切换到本地错题记录。')
   } finally {
     loading.mistakes = false
+    resetAsyncStatus('mistakes')
   }
 }
 
 async function fetchRemedialExercises() {
   loading.remedial = true
+  startAsyncStatus('remedial', '重练题生成')
   try {
     const userId = exerciseForm.user_id
     const { data } = await evaluationApi.get<ApiEnvelope<RemedialExerciseSet>>(`/evaluation/mistakes/${userId}/remedial`)
@@ -1405,11 +2165,13 @@ async function fetchRemedialExercises() {
     announceFallback('remedial-exercises', '错题重练服务暂不可用，已切换到本地变式题模式。')
   } finally {
     loading.remedial = false
+    resetAsyncStatus('remedial')
   }
 }
 
 async function fetchReports() {
   loading.reports = true
+  startAsyncStatus('reports', '学习报告刷新')
   try {
     const userId = exerciseForm.user_id
     const [stageResponse, comprehensiveResponse] = await Promise.all([
@@ -1424,12 +2186,24 @@ async function fetchReports() {
     announceFallback('learning-reports', '学习报告服务暂不可用，已切换到本地报告模式。')
   } finally {
     loading.reports = false
+    resetAsyncStatus('reports')
   }
 }
 
 async function askQaAgent() {
+  if (loading.qa) {
+    return
+  }
+  if (!qaForm.question.trim()) {
+    qaError.value = '请先输入你的问题，再开始智能讲解。'
+    return
+  }
   loading.qa = true
+  startAsyncStatus('qa', '智能讲解')
   qaError.value = ''
+  qaResult.value = null
+  await nextTick()
+  scrollToQaResult()
   try {
     qaForm.student_id = String(authStore.user?.userId ?? exerciseForm.user_id)
     qaForm.subject = pathForm.subject
@@ -1442,16 +2216,31 @@ async function askQaAgent() {
       ...qaForm,
       question: qaForm.question,
     }
-    const { data } = await agentApi.post<EnvelopeLike<QAResponsePayload>>('/qa/analyze', qaForm)
+    const { data } = await qaApi.post<EnvelopeLike<QAResponsePayload>>('/qa/analyze', qaForm)
     lastQaRawResponse.value = data
     qaResult.value = unwrapApiData(data)
-    ElMessage.success('智能答疑结果已生成')
-  } catch {
-    qaResult.value = null
-    qaError.value = '答疑分析失败，请查看下方调试详情中的原始响应。'
-    ElMessage.error('智能答疑失败')
+    await nextTick()
+    scrollToQaResult()
+    ElMessage.success('智能讲解结果已生成')
+  } catch (error) {
+    const message =
+      typeof error === 'object' &&
+      error !== null &&
+      'response' in error &&
+      typeof (error as { response?: { data?: { detail?: string } } }).response?.data?.detail === 'string'
+        ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
+        : ''
+    qaResult.value = buildFallbackQaResponse()
+    qaError.value = message
+      ? `远程答疑暂时不可用，当前已切换为本地讲解模式：${message}`
+      : '远程答疑暂时不可用，当前已切换为本地讲解模式。'
+    lastQaRawResponse.value = error
+    await nextTick()
+    scrollToQaResult()
+    announceFallback('qa-agent', '智能答疑远程服务暂不可用，已切换为本地讲解模式。')
   } finally {
     loading.qa = false
+    resetAsyncStatus('qa')
   }
 }
 
@@ -1479,6 +2268,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   resetGenerationProgress()
+  resetAsyncStatus()
 })
 </script>
 
@@ -1540,6 +2330,14 @@ onUnmounted(() => {
     </section>
 
     <main class="workspace-grid student-grid">
+      <div v-if="globalStatusView" class="request-status-card global-status-banner" :class="globalStatusView.tone">
+        <div class="global-status-head">
+          <strong>{{ globalStatusView.title }}</strong>
+          <span>已等待 {{ globalStatusView.elapsedLabel }}</span>
+        </div>
+        <p>{{ globalStatusView.detail }}</p>
+      </div>
+
       <section class="workspace-panel wide">
         <div class="panel-heading">
           <div>
@@ -1555,6 +2353,16 @@ onUnmounted(() => {
           <el-button plain @click="logout">退出登录</el-button>
         </div>
 
+        <div v-if="pathStatusView" class="request-status-card" :class="pathStatusView.tone">
+          <strong>{{ pathStatusView.title }}</strong>
+          <p>{{ pathStatusView.detail }}</p>
+          <span>已等待 {{ pathStatusView.elapsedLabel }}</span>
+        </div>
+        <div v-if="coordinationStatusView" class="request-status-card" :class="coordinationStatusView.tone">
+          <strong>{{ coordinationStatusView.title }}</strong>
+          <p>{{ coordinationStatusView.detail }}</p>
+          <span>已等待 {{ coordinationStatusView.elapsedLabel }}</span>
+        </div>
         <div v-if="learningPath" class="path-stage-list">
           <article v-for="stage in learningPath.stages" :key="stage.stage_id" class="stage-card">
             <div class="stage-header">
@@ -1583,11 +2391,18 @@ onUnmounted(() => {
         </div>
         <div v-if="generationStatus.courseware.hint" class="generation-hint">
           <div class="generation-hint-title">课件生成进度</div>
+          <div class="generation-status-row">
+            <span class="generation-status-pill">{{ coursewareProgressView.statusLabel }}</span>
+            <span class="generation-status-pill">已耗时 {{ coursewareProgressView.elapsedLabel }}</span>
+            <span class="generation-status-pill">{{ coursewareProgressView.remainingLabel }}</span>
+          </div>
           <div class="generation-hint-line">
             <span class="generation-hint-dot" :class="{ running: loading.courseware }"></span>
-            <span>{{ generationStatus.courseware.hint }}</span>
+            <span>{{ coursewareProgressView.title }}</span>
             <strong>{{ generationStatus.courseware.progress }}%</strong>
           </div>
+          <p class="generation-stage-detail">{{ generationStatus.courseware.hint }}</p>
+          <p class="generation-stage-note">{{ coursewareProgressView.detail }}</p>
           <el-progress
             :percentage="generationStatus.courseware.progress"
             :stroke-width="10"
@@ -1596,6 +2411,20 @@ onUnmounted(() => {
             striped-flow
             :duration="8"
           />
+          <div class="generation-step-list">
+            <div
+              v-for="step in coursewareProgressView.steps"
+              :key="`courseware-step-${step.index}`"
+              class="generation-step-card"
+              :class="step.state"
+            >
+              <span class="generation-step-index">{{ step.index }}</span>
+              <div class="generation-step-copy">
+                <strong>{{ step.title }}</strong>
+                <p>{{ step.description }}</p>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1634,6 +2463,11 @@ onUnmounted(() => {
         </div>
         <div class="action-row">
           <el-button @click="fetchProfileDashboard()">刷新画像</el-button>
+        </div>
+        <div v-if="profileStatusView" class="request-status-card" :class="profileStatusView.tone">
+          <strong>{{ profileStatusView.title }}</strong>
+          <p>{{ profileStatusView.detail }}</p>
+          <span>已等待 {{ profileStatusView.elapsedLabel }}</span>
         </div>
         <div v-if="profileDashboard" class="learning-content">
           <article class="learning-section">
@@ -1707,6 +2541,26 @@ onUnmounted(() => {
           </aside>
 
           <div class="learning-content reader-content">
+            <article v-if="coursewareVariants.length > 1" class="learning-section">
+              <h3>可选课件版本</h3>
+              <div class="reference-list">
+                <article
+                  v-for="variant in coursewareVariants"
+                  :key="variant.variant_id"
+                  class="reference-card clickable-card"
+                  :class="{ active: activeCoursewareVariant?.variant_id === variant.variant_id }"
+                  @click="selectCoursewareVariant(variant.variant_id)"
+                >
+                  <strong>{{ variant.title }}</strong>
+                  <p>{{ variant.summary }}</p>
+                  <span class="reference-meta">
+                    风格：{{ variant.resource_style }}
+                    <template v-if="variant.is_recommended"> · 推荐</template>
+                  </span>
+                </article>
+              </div>
+            </article>
+
             <article class="learning-section">
               <h3>学习建议</h3>
               <div class="tag-row">
@@ -1717,6 +2571,55 @@ onUnmounted(() => {
               <p class="learning-line">
                 这份课件已经按章节拆开。建议先顺着目录学习，再回到练习区做题，提交后查看标准答案和解析。
               </p>
+            </article>
+
+            <article v-if="coursewarePersonalization" class="learning-section">
+              <h3>本次个性化依据</h3>
+              <div class="report-evidence-grid">
+                <div class="report-evidence-card">
+                  <span>当前掌握度</span>
+                  <strong>{{ coursewarePersonalization.mastery_score }}/100</strong>
+                </div>
+                <div class="report-evidence-card">
+                  <span>近期正确率</span>
+                  <strong>{{ coursewarePersonalization.correct_rate }}%</strong>
+                </div>
+                <div class="report-evidence-card">
+                  <span>真实作答次数</span>
+                  <strong>{{ coursewarePersonalization.answered_count }}</strong>
+                </div>
+                <div class="report-evidence-card">
+                  <span>近期弱项题型</span>
+                  <strong>{{ coursewarePersonalization.weak_question_types.length || 0 }}</strong>
+                </div>
+              </div>
+              <ul class="markdown-list">
+                <li v-for="item in coursewarePersonalization.basis" :key="item">{{ item }}</li>
+              </ul>
+              <div v-if="coursewarePersonalization.weak_question_types.length" class="tag-row">
+                <span
+                  v-for="item in coursewarePersonalization.weak_question_types"
+                  :key="`courseware-weak-${item}`"
+                  class="agent-tag"
+                >
+                  {{ formatQuestionTypeLabel(item) }}
+                </span>
+              </div>
+              <div v-if="coursewarePersonalization.recent_mistakes.length" class="reference-list">
+                <article
+                  v-for="mistake in coursewarePersonalization.recent_mistakes"
+                  :key="`courseware-mistake-${mistake.exercise_id}`"
+                  class="reference-card"
+                >
+                  <strong>
+                    {{ formatQuestionTypeLabel(mistake.question_type) }} / {{ formatDifficultyLabel(mistake.difficulty) }}
+                  </strong>
+                  <p>{{ mistake.prompt }}</p>
+                  <p v-if="mistake.user_answer">你的答案：{{ mistake.user_answer }}</p>
+                  <p v-if="mistake.correct_answer">标准答案：{{ mistake.correct_answer }}</p>
+                  <p>错因依据：{{ mistake.analysis }}</p>
+                </article>
+              </div>
             </article>
 
             <section
@@ -1786,11 +2689,18 @@ onUnmounted(() => {
         </div>
         <div v-if="generationStatus.exercises.hint" class="generation-hint compact">
           <div class="generation-hint-title">自测题生成进度</div>
+          <div class="generation-status-row">
+            <span class="generation-status-pill">{{ exerciseProgressView.statusLabel }}</span>
+            <span class="generation-status-pill">已耗时 {{ exerciseProgressView.elapsedLabel }}</span>
+            <span class="generation-status-pill">{{ exerciseProgressView.remainingLabel }}</span>
+          </div>
           <div class="generation-hint-line">
             <span class="generation-hint-dot" :class="{ running: loading.exercises }"></span>
-            <span>{{ generationStatus.exercises.hint }}</span>
+            <span>{{ exerciseProgressView.title }}</span>
             <strong>{{ generationStatus.exercises.progress }}%</strong>
           </div>
+          <p class="generation-stage-detail">{{ generationStatus.exercises.hint }}</p>
+          <p class="generation-stage-note">{{ exerciseProgressView.detail }}</p>
           <el-progress
             :percentage="generationStatus.exercises.progress"
             :stroke-width="10"
@@ -1799,6 +2709,28 @@ onUnmounted(() => {
             striped-flow
             :duration="8"
           />
+          <div class="generation-step-list">
+            <div
+              v-for="step in exerciseProgressView.steps"
+              :key="`exercise-step-${step.index}`"
+              class="generation-step-card"
+              :class="step.state"
+            >
+              <span class="generation-step-index">{{ step.index }}</span>
+              <div class="generation-step-copy">
+                <strong>{{ step.title }}</strong>
+                <p>{{ step.description }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div ref="exerciseResultAnchor" />
+
+        <div v-if="loading.exercises && exerciseSet?.exercises?.length" class="insight-card">
+          <div class="insight-label">题组生成状态</div>
+          <div class="insight-value">正在准备题目</div>
+          <p class="panel-text">已经先为你展示一版可作答题组，页面正在继续等待更完整的正式结果。</p>
         </div>
 
         <div v-if="exerciseSet?.exercises?.length" class="insight-card">
@@ -1812,6 +2744,53 @@ onUnmounted(() => {
           <div class="insight-value">没有拿到可展示的题目</div>
           <p class="panel-text">{{ exerciseGenerationError }}</p>
         </div>
+
+        <article v-if="exercisePersonalization" class="learning-section">
+          <h3>本次题组依据</h3>
+          <div class="report-evidence-grid">
+            <div class="report-evidence-card">
+              <span>当前掌握度</span>
+              <strong>{{ exercisePersonalization.mastery_score }}/100</strong>
+            </div>
+            <div class="report-evidence-card">
+              <span>近期正确率</span>
+              <strong>{{ exercisePersonalization.correct_rate }}%</strong>
+            </div>
+            <div class="report-evidence-card">
+              <span>真实作答次数</span>
+              <strong>{{ exercisePersonalization.answered_count }}</strong>
+            </div>
+            <div class="report-evidence-card">
+              <span>最近错题数</span>
+              <strong>{{ exercisePersonalization.recent_mistakes.length }}</strong>
+            </div>
+          </div>
+          <ul class="markdown-list">
+            <li v-for="item in exercisePersonalization.basis" :key="item">{{ item }}</li>
+          </ul>
+          <div v-if="exercisePersonalization.weak_question_types.length" class="tag-row">
+            <span
+              v-for="item in exercisePersonalization.weak_question_types"
+              :key="`exercise-weak-${item}`"
+              class="agent-tag"
+            >
+              {{ formatQuestionTypeLabel(item) }}
+            </span>
+          </div>
+          <div v-if="exercisePersonalization.recent_mistakes.length" class="reference-list">
+            <article
+              v-for="mistake in exercisePersonalization.recent_mistakes"
+              :key="`exercise-mistake-${mistake.exercise_id}`"
+              class="reference-card"
+            >
+              <strong>
+                {{ formatQuestionTypeLabel(mistake.question_type) }} / {{ formatDifficultyLabel(mistake.difficulty) }}
+              </strong>
+              <p>{{ mistake.prompt }}</p>
+              <p>错因依据：{{ mistake.analysis }}</p>
+            </article>
+          </div>
+        </article>
 
         <template v-if="currentExercise">
           <div class="exercise-head">
@@ -1872,6 +2851,9 @@ onUnmounted(() => {
             <p class="panel-text">得分：{{ currentSubmission.feedback.score }}</p>
             <p class="panel-text">反馈：{{ currentSubmission.feedback.feedback }}</p>
             <p class="panel-text">建议：{{ currentSubmission.feedback.suggested_action }}</p>
+            <p v-if="currentSubmission.feedback.mastery_after_update !== null" class="panel-text">
+              提交后掌握度更新为：{{ currentSubmission.feedback.mastery_after_update }}/100
+            </p>
             <p class="panel-text"><strong>你的答案：</strong>{{ currentSubmission.userAnswer }}</p>
             <p class="panel-text"><strong>标准答案：</strong>{{ currentSubmission.correctAnswer }}</p>
             <p class="panel-text"><strong>解析：</strong>{{ currentSubmission.analysis }}</p>
@@ -1888,6 +2870,11 @@ onUnmounted(() => {
             <h2>前置依赖</h2>
           </div>
           <Connection class="panel-icon" />
+        </div>
+        <div v-if="graphStatusView" class="request-status-card" :class="graphStatusView.tone">
+          <strong>{{ graphStatusView.title }}</strong>
+          <p>{{ graphStatusView.detail }}</p>
+          <span>已等待 {{ graphStatusView.elapsedLabel }}</span>
         </div>
         <template v-if="dependencyPaths.length || graphVisualization?.nodes.length">
           <div v-if="dependencyPaths.length" class="dependency-list">
@@ -1916,6 +2903,11 @@ onUnmounted(() => {
         <div class="action-row">
           <el-button :loading="loading.mistakes" @click="fetchMistakeNotebook">刷新错题本</el-button>
           <el-button type="danger" :loading="loading.remedial" @click="fetchRemedialExercises">生成变式重练题</el-button>
+        </div>
+        <div v-if="mistakeStatusView" class="request-status-card" :class="mistakeStatusView.tone">
+          <strong>{{ mistakeStatusView.title }}</strong>
+          <p>{{ mistakeStatusView.detail }}</p>
+          <span>已等待 {{ mistakeStatusView.elapsedLabel }}</span>
         </div>
 
         <div v-if="hasMistakes" class="reference-list">
@@ -1974,16 +2966,27 @@ onUnmounted(() => {
               />
             </div>
             <div class="action-row">
-              <el-button type="primary" :loading="loading.qa" @click="askQaAgent">开始答疑分析</el-button>
+              <el-button type="primary" :loading="loading.qa" @click="askQaAgent">开始智能讲解</el-button>
             </div>
           </article>
 
-          <article v-if="qaResult" class="learning-section">
+          <article v-if="qaStatusView" class="learning-section">
+            <h3>{{ qaStatusView.title }}</h3>
+            <p class="learning-line">{{ qaStatusView.detail }}</p>
+            <p class="panel-text">已等待 {{ qaStatusView.elapsedLabel }}</p>
+          </article>
+
+          <article v-if="loading.qa" ref="qaResultAnchor" class="learning-section">
+            <h3>答疑处理中</h3>
+            <p class="learning-line">正在调用 DeepSeek 生成具体讲解与学习分析，请稍等几秒。如果远程服务较慢，页面会自动切换到本地讲解模式。</p>
+          </article>
+
+          <article v-if="qaResult" ref="qaResultAnchor" class="learning-section">
             <h3>老师讲解</h3>
             <p class="learning-line preserve-linebreaks">{{ qaResult.student_response }}</p>
           </article>
 
-          <article v-else-if="qaError" class="learning-section">
+          <article v-else-if="qaError" ref="qaResultAnchor" class="learning-section">
             <h3>答疑状态</h3>
             <p class="learning-line">{{ qaError }}</p>
           </article>
@@ -2056,6 +3059,11 @@ onUnmounted(() => {
         </div>
         <div class="action-row">
           <el-button :loading="loading.reports" @click="fetchReports">刷新报告</el-button>
+        </div>
+        <div v-if="reportStatusView" class="request-status-card" :class="reportStatusView.tone">
+          <strong>{{ reportStatusView.title }}</strong>
+          <p>{{ reportStatusView.detail }}</p>
+          <span>已等待 {{ reportStatusView.elapsedLabel }}</span>
         </div>
 
         <div class="report-grid">
@@ -2225,3 +3233,205 @@ onUnmounted(() => {
     </main>
   </div>
 </template>
+
+<style scoped>
+.global-status-banner {
+  grid-column: 1 / -1;
+  position: sticky;
+  top: 12px;
+  z-index: 12;
+  margin-bottom: 2px;
+}
+
+.global-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.global-status-head span {
+  font-size: 12px;
+  color: inherit;
+  opacity: 0.78;
+  white-space: nowrap;
+}
+
+.request-status-card {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(191, 116, 63, 0.18);
+  background: rgba(255, 249, 242, 0.94);
+  box-shadow: 0 10px 28px rgba(120, 72, 40, 0.08);
+}
+
+.request-status-card strong {
+  display: block;
+  color: #5e2e12;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+
+.request-status-card p {
+  margin: 0;
+  color: #7a533b;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.request-status-card span {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8e684f;
+}
+
+.request-status-card.info {
+  border-color: rgba(191, 116, 63, 0.22);
+  background: linear-gradient(135deg, rgba(255, 248, 238, 0.98), rgba(255, 255, 255, 0.96));
+}
+
+.request-status-card.warning {
+  border-color: rgba(214, 143, 31, 0.28);
+  background: linear-gradient(135deg, rgba(255, 247, 229, 0.98), rgba(255, 252, 244, 0.96));
+}
+
+.request-status-card.warning strong,
+.request-status-card.warning span {
+  color: #94610d;
+}
+
+.request-status-card.warning p {
+  color: #815b1b;
+}
+
+.request-status-card.danger {
+  border-color: rgba(198, 84, 57, 0.3);
+  background: linear-gradient(135deg, rgba(255, 240, 236, 0.98), rgba(255, 248, 246, 0.96));
+}
+
+.request-status-card.danger strong,
+.request-status-card.danger span {
+  color: #9b3b26;
+}
+
+.request-status-card.danger p {
+  color: #884333;
+}
+
+.generation-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.generation-status-pill {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(191, 116, 63, 0.12);
+  color: #8b4b24;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.generation-stage-detail {
+  margin: 10px 0 4px;
+  color: #7b3f1f;
+  font-size: 14px;
+}
+
+.generation-stage-note {
+  margin: 0 0 12px;
+  color: #8e684f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.generation-step-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.generation-step-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(191, 116, 63, 0.18);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.generation-step-card.completed {
+  border-color: rgba(66, 159, 96, 0.3);
+  background: rgba(232, 247, 237, 0.92);
+}
+
+.generation-step-card.current {
+  border-color: rgba(191, 116, 63, 0.36);
+  background: rgba(255, 244, 232, 0.96);
+  box-shadow: 0 8px 20px rgba(191, 116, 63, 0.12);
+}
+
+.generation-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(191, 116, 63, 0.12);
+  color: #8b4b24;
+  font-weight: 700;
+  font-size: 13px;
+  flex: none;
+}
+
+.generation-step-card.completed .generation-step-index {
+  background: rgba(66, 159, 96, 0.18);
+  color: #2f7b4b;
+}
+
+.generation-step-card.current .generation-step-index {
+  background: #bf743f;
+  color: #fff;
+}
+
+.generation-step-copy {
+  min-width: 0;
+}
+
+.generation-step-copy strong {
+  display: block;
+  color: #5e2e12;
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.generation-step-copy p {
+  margin: 0;
+  color: #8e684f;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.clickable-card {
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.clickable-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(120, 72, 40, 0.1);
+}
+
+.clickable-card.active {
+  border-color: rgba(191, 116, 63, 0.42);
+  background: rgba(255, 246, 236, 0.96);
+  box-shadow: 0 12px 28px rgba(191, 116, 63, 0.12);
+}
+</style>

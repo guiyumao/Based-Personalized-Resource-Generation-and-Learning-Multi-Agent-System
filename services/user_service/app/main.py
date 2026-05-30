@@ -3,6 +3,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from common.db.bootstrap import ensure_database_schema, ensure_default_admin
+from common.db.session import SessionLocal
 from common.logging.setup import configure_logging
 from services.user_service.app.api.routes import users
 
@@ -24,6 +26,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(users.router, prefix="/users", tags=["users"])
+
+
+@app.on_event("startup")
+def startup_bootstrap() -> None:
+    """Ensure local development auth can work without manual DB setup."""
+
+    ensure_database_schema()
+    db = SessionLocal()
+    try:
+        ensure_default_admin(db)
+    finally:
+        db.close()
 
 
 @app.get("/health", summary="Health check")

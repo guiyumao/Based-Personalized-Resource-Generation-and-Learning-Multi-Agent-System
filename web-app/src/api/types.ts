@@ -116,10 +116,54 @@ export type ExerciseItem = {
   analysis: string
 }
 
+export type PersonalizationRecentMistake = {
+  exercise_id: number
+  question_type: string
+  difficulty: string
+  prompt: string
+  analysis: string
+  user_answer?: string
+  correct_answer?: string
+}
+
+export type PersonalizationContext = {
+  mastery_score: number
+  correct_rate: number
+  answered_count: number
+  weak_question_types: string[]
+  basis: string[]
+  recent_mistakes: PersonalizationRecentMistake[]
+}
+
+export type ResourceVariant = {
+  variant_id: string
+  title: string
+  summary: string
+  resource_style: 'concise' | 'case' | 'interactive'
+  content: string
+  is_recommended: boolean
+}
+
+export type ResourceResult = {
+  user_id: number
+  knowledge_point: string
+  resource_type: string
+  resource_style: string
+  references: Array<{
+    id?: string
+    content?: string
+    metadata?: Record<string, unknown>
+  }>
+  personalization?: PersonalizationContext
+  content: string
+  variants?: ResourceVariant[]
+}
+
 export type ExerciseGenerationResponse = {
   user_id: number
   knowledge_point: string
   summary: string
+  personalization: PersonalizationContext
   exercises: ExerciseItem[]
 }
 
@@ -195,6 +239,7 @@ export type PracticeFeedback = {
   feedback: string
   suggested_action: string
   analysis: string
+  mastery_after_update?: number | null
 }
 
 export type MistakeItem = {

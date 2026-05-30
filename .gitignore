@@ -25,3 +25,4 @@ learning_system.db
 
 .DS_Store
 Thumbs.db
+*.log
