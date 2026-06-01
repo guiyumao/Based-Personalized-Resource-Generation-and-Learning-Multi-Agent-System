@@ -271,6 +271,7 @@ const resourceForm = reactive<ResourcePayload>({
   knowledge_point: DEFAULT_TOPIC,
   resource_style: 'interactive',
   resource_type: 'courseware',
+  request_text: '',
   learner_profile: {
     learning_style: 'visual',
     mastery: 62,
@@ -1889,6 +1890,7 @@ async function generateCourseware() {
   }, 2200)
   try {
     resourceForm.resource_type = 'courseware'
+    resourceForm.request_text = `${learningRequestForm.goal}，知识点：${resourceForm.knowledge_point}`
     lastCoursewareRequest.value = {
       ...resourceForm,
     }

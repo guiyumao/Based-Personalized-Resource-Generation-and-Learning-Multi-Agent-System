@@ -13,4 +13,4 @@ def generate_resource(payload: ResourceGenerationRequest) -> ResourceGenerationR
     """Generate a personalized resource with RAG context."""
 
     service = ResourceGenerationService()
-    return ResourceGenerationResponse(**service.generate_courseware(payload))
+    return ResourceGenerationResponse(**service.generate_courseware_with_plan(payload))

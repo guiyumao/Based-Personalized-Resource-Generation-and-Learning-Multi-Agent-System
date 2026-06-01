@@ -35,3 +35,27 @@ def test_report_detail_contains_action_items(db_session, test_user) -> None:
 
     assert report.strengths
     assert report.next_actions
+
+
+def test_learning_suggestions_highlight_focus_areas(db_session, test_user) -> None:
+    """Learning suggestions should summarize the learner's next focus areas."""
+
+    service = ReportService(db_session)
+    service.evaluate_practice(
+        PracticeSubmission(
+            user_id=test_user.id,
+            exercise_id=130000 + test_user.id,
+            knowledge_point="Python 寰幆",
+            question_type="choice",
+            user_answer="A",
+            correct_answer="B",
+            analysis="需要重新区分 for 和 while 的适用场景。",
+            time_spent=52,
+        )
+    )
+
+    suggestion = service.generate_learning_suggestions(test_user.id)
+
+    assert suggestion.suggestions
+    assert suggestion.recommended_action
+    assert suggestion.focus_areas

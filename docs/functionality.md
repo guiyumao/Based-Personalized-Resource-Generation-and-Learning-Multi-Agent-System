@@ -227,3 +227,19 @@ Selection rationale:
 
 - Kept `main` implementations for resource generation, QA analysis, and evaluation/reporting because they already had better integration coverage and passing automated tests.
 - Added the learner-profile conversation flow and persisted learning-path adjustment because those capabilities existed in `agent-core` but were still missing on `main`.
+
+Second-round integration:
+
+- `POST /qa/analyze`
+  Now returns `context_snippets` and `confidence` so the tutoring result can expose lightweight knowledge-grounded evidence similar to the standalone `agent-core` tutor flow.
+- `GET /reports/suggestions/{user_id}`
+  Returns concise personalized learner suggestions and focus areas distilled from persisted practice evidence.
+
+Third-round integration:
+
+- `POST /resources/generate`
+  Now follows a deterministic coordination plan inspired by `agent-core` `ResourceCoordinationServiceImpl`.
+  The response includes `generation_plan` with inferred `knowledge_point`, `resource_type`, `difficulty`, `target_word_count`, `suggested_outline`, and `personalization_hints`.
+- Selection rationale:
+  We did not copy the original async queue/task-status design into `main` because the Python synchronous flow is currently more stable and faster in local tests.
+  We kept the working `main` generation path, but migrated the high-value pre-generation analysis layer so the produced content is now guided by an explicit plan rather than only raw request fields.

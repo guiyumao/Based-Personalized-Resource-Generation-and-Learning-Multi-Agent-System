@@ -133,6 +133,19 @@ Implementation choice notes:
 - Resource generation, QA analysis, and evaluation reporting remain on the `main` Python services because they already had stronger end-to-end integration coverage and passing tests.
 - The profile conversation flow and learning-path adjustment flow were added from the `agent-core` feature set because they were missing on `main` and could be integrated cleanly without regressing the existing student workspace.
 
+Second-round integration details:
+
+- QA now borrows the `agent-core` tutoring idea of lightweight keyword-grounded retrieval before answering:
+  `POST /qa/analyze` now also returns `context_snippets` and `confidence`.
+- Evaluation now exposes deterministic learner analytics suggestions inspired by the `agent-core` analytics layer:
+  `GET /reports/suggestions/{user_id}`
+
+Third-round integration details:
+
+- Resource generation now borrows the `agent-core` coordination idea of building an explicit generation plan before composing content:
+  `POST /resources/generate` now returns `generation_plan` with inferred topic normalization, outline, difficulty, target word count, and personalization hints.
+- We intentionally kept `main`'s synchronous Python generation execution instead of porting the original async queue/task-status flow from `agent-core`, because the existing `main` path is currently faster and already well covered by passing tests.
+
 ## 说明
 
 - 当前仓库中存在一部分中文乱码历史内容，本轮已优先修正关键启动说明和功能文档。

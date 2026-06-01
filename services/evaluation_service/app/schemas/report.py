@@ -132,3 +132,12 @@ class ReportDetail(BaseModel):
     weaknesses: list[str]
     next_actions: list[str]
     evidence: ReportEvidence
+
+
+class AnalyticsSuggestion(BaseModel):
+    """Personalized learning suggestions distilled from practice evidence."""
+
+    user_id: int
+    suggestions: list[str] = Field(default_factory=list)
+    focus_areas: list[str] = Field(default_factory=list)
+    recommended_action: str

@@ -31,6 +31,23 @@ class ResourceGenerationRequest(BaseModel):
     resource_style: Literal["concise", "case", "interactive"] = "interactive"
     resource_type: Literal["courseware", "exercise", "notes", "exam"] = "courseware"
     learner_profile: dict[str, Any] = Field(default_factory=dict)
+    request_text: str = ""
+    preferred_word_count: int | None = Field(default=None, ge=300, le=6000)
+
+
+class ResourceGenerationPlan(BaseModel):
+    """Deterministic generation plan inspired by the agent-core coordination flow."""
+
+    request_summary: str
+    knowledge_point: str
+    resource_type: Literal["courseware", "exercise", "notes", "exam"]
+    resource_style: Literal["concise", "case", "interactive"]
+    title_suggestion: str
+    suggested_outline: list[str] = Field(default_factory=list)
+    target_word_count: int = Field(default=1200, ge=300, le=6000)
+    difficulty: Literal["foundation", "intermediate", "advanced"] = "intermediate"
+    personalization_hints: list[str] = Field(default_factory=list)
+    analysis_source: Literal["request", "heuristic", "profile_enriched"] = "heuristic"
 
 
 class ResourceVariant(BaseModel):
@@ -51,6 +68,7 @@ class ResourceGenerationResponse(BaseModel):
     knowledge_point: str
     resource_type: str
     resource_style: str
+    generation_plan: ResourceGenerationPlan
     references: list[dict[str, Any]] = Field(default_factory=list)
     personalization: dict[str, Any] = Field(default_factory=dict)
     content: str
@@ -238,3 +256,5 @@ class QAResponse(BaseModel):
     grade: str
     student_response: str
     structured_analysis: QAAnalysisPayload
+    context_snippets: list[str] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0, le=1)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 
 @dataclass(frozen=True)
@@ -133,3 +134,46 @@ class KnowledgeBaseService:
             if any(alias in normalized or normalized in alias for alias in aliases):
                 return article
         return None
+
+    def search_by_keywords(self, question: str, top_k: int = 3) -> list[KnowledgeArticle]:
+        """Return the most relevant curated articles for a learner question."""
+
+        keywords = self._extract_keywords(question)
+        if not keywords:
+            return []
+
+        scored: list[tuple[int, KnowledgeArticle]] = []
+        for aliases, article in self._articles:
+            haystacks = [article.title.lower(), article.summary.lower(), *[alias.lower() for alias in aliases]]
+            haystacks.extend(item.lower() for item in article.concepts[:4])
+            haystacks.extend(item.lower() for item in article.mistakes[:4])
+
+            score = 0
+            for keyword in keywords:
+                if any(text == keyword for text in haystacks):
+                    score += 10
+                elif any(keyword in text for text in haystacks):
+                    score += 4
+            if score > 0:
+                scored.append((score, article))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+
+        results: list[KnowledgeArticle] = []
+        seen_titles: set[str] = set()
+        for _, article in scored:
+            if article.title in seen_titles:
+                continue
+            results.append(article)
+            seen_titles.add(article.title)
+            if len(results) >= top_k:
+                break
+        return results
+
+    def _extract_keywords(self, question: str) -> list[str]:
+        tokens = [
+            token.strip().lower()
+            for token in re.split(r"[\s，。！？,!.?；;：:、（）()]+", question)
+            if token.strip()
+        ]
+        return [token for token in tokens if len(token) >= 2]

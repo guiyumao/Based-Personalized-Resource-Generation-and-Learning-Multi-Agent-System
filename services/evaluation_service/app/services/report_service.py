@@ -18,6 +18,7 @@ from common.models.learning import (
     UserProfile,
 )
 from services.evaluation_service.app.schemas.report import (
+    AnalyticsSuggestion,
     AnswerRecordIn,
     LatestMistakeEvidence,
     MistakeItem,
@@ -389,6 +390,55 @@ class ReportService:
             ],
             "heatmap": heatmap,
         }
+
+    def generate_learning_suggestions(self, user_id: int) -> AnalyticsSuggestion:
+        """Return concise personalized suggestions from accumulated evidence."""
+
+        traces = self._get_user_traces(user_id)
+        evidence = self._build_evidence(traces)
+        profile = self.db.get(UserProfile, user_id)
+
+        focus_areas: list[str] = []
+        suggestions: list[str] = []
+
+        if evidence.weakest_knowledge_point:
+            focus_areas.append(evidence.weakest_knowledge_point)
+            suggestions.append(f"优先围绕 {evidence.weakest_knowledge_point} 做一轮定向复练。")
+
+        focus_areas.extend(item for item in evidence.weakest_question_types[:2] if item not in focus_areas)
+        if evidence.weakest_question_types:
+            suggestions.append(f"把 {'、'.join(evidence.weakest_question_types[:2])} 作为下一轮练习重点题型。")
+
+        if evidence.average_time_spent >= 45:
+            suggestions.append("最近单题耗时偏长，先做基础题巩固步骤感，再逐步提速。")
+        elif evidence.total_answers:
+            suggestions.append("保持当前答题节奏，同时增加少量变式题巩固迁移能力。")
+
+        if evidence.accuracy >= 80:
+            suggestions.append("整体正确率已较稳定，可以增加进阶题和综合应用题比例。")
+        elif evidence.total_answers:
+            suggestions.append("先把错题复盘流程固定下来，优先减少重复性错误。")
+        else:
+            suggestions.append("先完成一组真实练习，系统才能生成更准确的个性化建议。")
+
+        if profile is not None and isinstance(profile.habits, dict):
+            study_hours = profile.habits.get("study_hours", {})
+            if isinstance(study_hours, dict) and study_hours:
+                top_hour = max(study_hours.items(), key=lambda item: int(item[1]))[0]
+                suggestions.append(f"尽量把高强度练习安排在你更活跃的 {top_hour} 点附近。")
+
+        recommended_action = (
+            f"下一步先复练 {focus_areas[0]}，再回到学习路径继续推进。"
+            if focus_areas
+            else "下一步先完成一轮练习，积累足够数据后再做精准调优。"
+        )
+
+        return AnalyticsSuggestion(
+            user_id=user_id,
+            suggestions=suggestions[:4],
+            focus_areas=focus_areas[:3],
+            recommended_action=recommended_action,
+        )
 
     def _resolve_or_create_exercise(self, payload: PracticeSubmission) -> Exercise:
         exercise = self.db.get(Exercise, payload.exercise_id)

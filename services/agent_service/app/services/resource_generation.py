@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+import re
 from typing import Any
 
 from common.config import get_settings
@@ -33,6 +34,223 @@ class ResourceGenerationService:
         self.knowledge_base = KnowledgeBaseService()
         self.llm_factory = LLMFactory(self.settings)
         self.prompt_template = _load_prompt_template("resource_gen.md")
+
+    def _build_request_text(self, request: ResourceGenerationRequest) -> str:
+        raw = request.request_text.strip()
+        if raw:
+            return raw
+        return f"{request.knowledge_point} {request.resource_type} {request.resource_style}".strip()
+
+    def _normalize_knowledge_point(self, request: ResourceGenerationRequest, request_text: str) -> str:
+        knowledge_point = request.knowledge_point.strip() or "通用学习主题"
+        article = self.knowledge_base.get_article(knowledge_point)
+        if article is not None:
+            return article.title
+
+        matches = self.knowledge_base.search_by_keywords(request_text, top_k=1) if request_text else []
+        if matches:
+            generic_markers = ("python", "编程", "代码", "学习", "知识点", "主题")
+            if len(knowledge_point) <= 4 or any(marker in knowledge_point.lower() for marker in generic_markers):
+                return matches[0].title
+        return knowledge_point
+
+    def _infer_resource_type(self, request: ResourceGenerationRequest, request_text: str) -> str:
+        if request.resource_type != "courseware":
+            return request.resource_type
+
+        lowered = request_text.lower()
+        keyword_map = {
+            "exercise": ("练习", "刷题", "习题", "题目", "自测", "测试"),
+            "notes": ("笔记", "总结", "速记", "提纲"),
+            "exam": ("考试", "模拟", "试卷", "测验", "冲刺"),
+        }
+        for resource_type, keywords in keyword_map.items():
+            if any(keyword in lowered for keyword in keywords):
+                return resource_type
+        return request.resource_type
+
+    def _infer_difficulty(
+        self,
+        request_text: str,
+        snapshot: LearnerPersonalizationSnapshot | None,
+    ) -> str:
+        lowered = request_text.lower()
+        if any(keyword in lowered for keyword in ("入门", "基础", "零基础", "新手", "初学")):
+            return "foundation"
+        if any(keyword in lowered for keyword in ("拔高", "进阶", "综合", "面试", "项目", "实战", "迁移")):
+            return "advanced"
+
+        if snapshot is None:
+            return "intermediate"
+        if snapshot.answered_count and snapshot.mastery_score >= 78:
+            return "advanced"
+        if snapshot.answered_count < 3 or snapshot.mastery_score <= 45:
+            return "foundation"
+        return "intermediate"
+
+    def _infer_target_word_count(
+        self,
+        request: ResourceGenerationRequest,
+        resource_type: str,
+        difficulty: str,
+    ) -> int:
+        if request.preferred_word_count is not None:
+            return request.preferred_word_count
+
+        defaults = {
+            "courseware": {"foundation": 1500, "intermediate": 1300, "advanced": 1600},
+            "exercise": {"foundation": 900, "intermediate": 1100, "advanced": 1300},
+            "notes": {"foundation": 700, "intermediate": 850, "advanced": 1000},
+            "exam": {"foundation": 1000, "intermediate": 1200, "advanced": 1400},
+        }
+        resource_defaults = defaults.get(resource_type, defaults["courseware"])
+        return resource_defaults.get(difficulty, resource_defaults["intermediate"])
+
+    def _build_outline(self, knowledge_point: str, resource_type: str, difficulty: str) -> list[str]:
+        if resource_type == "exercise":
+            return [
+                f"{knowledge_point} 考点定位",
+                "基础热身",
+                "典型题拆解",
+                "变式训练",
+                "自查与订正提醒",
+            ]
+        if resource_type == "notes":
+            return [
+                f"{knowledge_point} 核心定义",
+                "必记规则",
+                "最小示例",
+                "高频易错点",
+                "复习清单",
+            ]
+        if resource_type == "exam":
+            return [
+                f"{knowledge_point} 高频考点",
+                "题型分布",
+                "答题策略",
+                "典型陷阱",
+                "冲刺自测",
+            ]
+        if difficulty == "advanced":
+            return [
+                "知识点回顾",
+                "应用场景与迁移",
+                "复杂案例拆解",
+                "高频误区辨析",
+                "综合自测",
+            ]
+        return [
+            "课程导入",
+            "核心概念",
+            "重点难点",
+            "示例讲解",
+            "课堂小结",
+            "自测与延伸",
+        ]
+
+    def _build_title_suggestion(self, knowledge_point: str, resource_type: str) -> str:
+        suffix_map = {
+            "courseware": "个性化课件",
+            "exercise": "练习方案",
+            "notes": "复习笔记",
+            "exam": "测评卷",
+        }
+        return f"{knowledge_point}{suffix_map.get(resource_type, '学习资源')}"
+
+    def _build_request_summary(
+        self,
+        request: ResourceGenerationRequest,
+        knowledge_point: str,
+        resource_type: str,
+    ) -> str:
+        request_text = re.sub(r"\s+", " ", request.request_text.strip())
+        if request_text:
+            return request_text[:160]
+        return f"围绕 {knowledge_point} 生成一份 {resource_type} 类型的个性化学习资源。"
+
+    def _build_personalization_hints(
+        self,
+        request: ResourceGenerationRequest,
+        knowledge_point: str,
+        snapshot: LearnerPersonalizationSnapshot | None,
+    ) -> list[str]:
+        hints: list[str] = []
+
+        if snapshot is None or snapshot.answered_count == 0:
+            hints.append(f"先用低门槛例子建立 {knowledge_point} 的基本理解，再逐步增加练习。")
+        elif snapshot.mastery_score < 60:
+            hints.append(f"当前对 {knowledge_point} 的掌握度偏弱，讲解要放慢节奏并强化步骤解释。")
+        else:
+            hints.append(f"当前对 {knowledge_point} 已有一定基础，可增加迁移应用和易错辨析。")
+
+        if snapshot is not None:
+            weak_types = snapshot.learner_profile.get("weak_question_types", [])
+            if weak_types:
+                hints.append(f"把 {', '.join(map(str, weak_types[:3]))} 题型作为重点训练对象。")
+            if snapshot.recent_mistakes:
+                latest = snapshot.recent_mistakes[-1]
+                hints.append(
+                    "显式回应最近一道错题暴露的问题："
+                    f"{latest['question_type']} / {latest['difficulty']}。"
+                )
+
+        if request.resource_style == "concise":
+            hints.append("优先输出规则、最小示例和快速自测，控制说明长度。")
+        elif request.resource_style == "case":
+            hints.append("用案例驱动结构组织内容，强调从题意到解法的迁移。")
+        else:
+            hints.append("保留课堂互动感，在关键处加入提问和自检提示。")
+
+        return hints[:4]
+
+    def _build_generation_plan(
+        self,
+        request: ResourceGenerationRequest,
+        snapshot: LearnerPersonalizationSnapshot | None = None,
+        *,
+        knowledge_point: str | None = None,
+        resource_type: str | None = None,
+    ) -> dict[str, Any]:
+        request_text = self._build_request_text(request)
+        resolved_knowledge_point = knowledge_point or self._normalize_knowledge_point(request, request_text)
+        resolved_resource_type = resource_type or self._infer_resource_type(request, request_text)
+        difficulty = self._infer_difficulty(request_text, snapshot)
+
+        if snapshot is not None:
+            analysis_source = "profile_enriched"
+        elif request.request_text.strip():
+            analysis_source = "request"
+        else:
+            analysis_source = "heuristic"
+
+        return {
+            "request_summary": self._build_request_summary(request, resolved_knowledge_point, resolved_resource_type),
+            "knowledge_point": resolved_knowledge_point,
+            "resource_type": resolved_resource_type,
+            "resource_style": request.resource_style,
+            "title_suggestion": self._build_title_suggestion(resolved_knowledge_point, resolved_resource_type),
+            "suggested_outline": self._build_outline(resolved_knowledge_point, resolved_resource_type, difficulty),
+            "target_word_count": self._infer_target_word_count(request, resolved_resource_type, difficulty),
+            "difficulty": difficulty,
+            "personalization_hints": self._build_personalization_hints(
+                request,
+                resolved_knowledge_point,
+                snapshot,
+            ),
+            "analysis_source": analysis_source,
+        }
+
+    def _build_generation_plan_text(self, plan: dict[str, Any]) -> str:
+        outline = "\n".join(f"- {item}" for item in plan.get("suggested_outline", []))
+        hints = "\n".join(f"- {item}" for item in plan.get("personalization_hints", []))
+        return (
+            f"title: {plan['title_suggestion']}\n"
+            f"difficulty: {plan['difficulty']}\n"
+            f"target_word_count: {plan['target_word_count']}\n"
+            f"analysis_source: {plan['analysis_source']}\n"
+            f"outline:\n{outline or '- none'}\n"
+            f"personalization_hints:\n{hints or '- none'}"
+        )
 
     def _build_grounding_text(self, knowledge_point: str) -> str:
         article = self.knowledge_base.get_article(knowledge_point)
@@ -423,6 +641,90 @@ class ResourceGenerationService:
             "knowledge_point": request.knowledge_point,
             "resource_type": request.resource_type,
             "resource_style": request.resource_style,
+            "references": retrieved_context,
+            "personalization": personalization,
+            "content": primary["content"],
+            "variants": variants,
+        }
+
+    def generate_courseware_with_plan(self, request: ResourceGenerationRequest) -> dict[str, Any]:
+        """Generate resources with an explicit coordination plan inspired by agent-core."""
+
+        request_text = self._build_request_text(request)
+        resolved_knowledge_point = self._normalize_knowledge_point(request, request_text)
+        resolved_resource_type = self._infer_resource_type(request, request_text)
+
+        retrieved_context = self.retriever.retrieve(
+            query=f"{resolved_knowledge_point} {resolved_resource_type}",
+            top_k=max(1, self.settings.resource_rag_top_k),
+        )
+        context_text = "\n\n".join(item["content"] for item in retrieved_context) or "当前暂无可用参考资料。"
+        grounding_text = self._build_grounding_text(resolved_knowledge_point)
+
+        with SessionLocal() as db:
+            snapshot = PersonalizationService(db).build_snapshot(
+                user_id=request.user_id,
+                knowledge_point=resolved_knowledge_point,
+                fallback_profile=request.learner_profile,
+            )
+
+        generation_plan = self._build_generation_plan(
+            request,
+            snapshot=snapshot,
+            knowledge_point=resolved_knowledge_point,
+            resource_type=resolved_resource_type,
+        )
+        personalization = self._build_personalization_payload(generation_plan["knowledge_point"], snapshot)
+        plan_basis = list(personalization["basis"]) + [
+            f"生成规划标题建议：{generation_plan['title_suggestion']}",
+            f"目标难度：{generation_plan['difficulty']}",
+            f"目标字数：约 {generation_plan['target_word_count']} 字",
+            "建议结构：" + " / ".join(generation_plan["suggested_outline"]),
+            *generation_plan["personalization_hints"],
+        ]
+        variables = {
+            "knowledge_point": generation_plan["knowledge_point"],
+            "resource_type": generation_plan["resource_type"],
+            "resource_style": generation_plan["resource_style"],
+            "request_summary": generation_plan["request_summary"],
+            "generation_plan": generation_plan,
+            "generation_plan_text": self._build_generation_plan_text(generation_plan),
+            "learner_profile": snapshot.learner_profile,
+            "grounding_text": grounding_text[:1800],
+            "context_text": context_text[:1400],
+            "personalization_basis": plan_basis,
+            "personalization_basis_text": "\n".join(f"- {item}" for item in plan_basis),
+            "recent_mistakes_text": self._build_recent_mistakes_text(snapshot),
+        }
+        style_order = [request.resource_style, "concise", "case", "interactive"]
+        variant_styles: list[str] = []
+        for style in style_order:
+            if style not in variant_styles:
+                variant_styles.append(style)
+
+        variants: list[dict[str, Any]] = []
+        for index, style in enumerate(variant_styles[:3], start=1):
+            variant_variables = self._build_variant_prompt(variables, style)
+            content = self._invoke_llm(variant_variables)
+            variants.append(
+                {
+                    "variant_id": f"{style}-{index}",
+                    "title": self._extract_title(content, generation_plan["knowledge_point"], style),
+                    "summary": self._build_variant_summary(style),
+                    "resource_style": style,
+                    "content": content,
+                    "is_recommended": style == request.resource_style,
+                }
+            )
+
+        primary = next((item for item in variants if item["is_recommended"]), variants[0])
+
+        return {
+            "user_id": request.user_id,
+            "knowledge_point": generation_plan["knowledge_point"],
+            "resource_type": generation_plan["resource_type"],
+            "resource_style": generation_plan["resource_style"],
+            "generation_plan": generation_plan,
             "references": retrieved_context,
             "personalization": personalization,
             "content": primary["content"],

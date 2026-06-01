@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from common.db.session import get_db
 from common.schemas.response import ApiResponse
 from services.evaluation_service.app.schemas.report import (
+    AnalyticsSuggestion,
     AnswerRecordIn,
     MistakeNotebook,
     PracticeFeedback,
@@ -126,4 +127,15 @@ def get_profile_snapshot(user_id: int, db: Session = Depends(get_db)) -> ApiResp
     return ApiResponse(
         data=report_service.generate_profile_snapshot(user_id),
         message="Profile snapshot generated successfully.",
+    )
+
+
+@router.get("/reports/suggestions/{user_id}", response_model=ApiResponse[AnalyticsSuggestion])
+def get_learning_suggestions(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[AnalyticsSuggestion]:
+    """Return personalized learning suggestions distilled from practice history."""
+
+    report_service = ReportService(db)
+    return ApiResponse(
+        data=report_service.generate_learning_suggestions(user_id),
+        message="Learning suggestions generated successfully.",
     )

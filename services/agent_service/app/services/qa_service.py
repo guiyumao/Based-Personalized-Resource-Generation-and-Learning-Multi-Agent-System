@@ -50,8 +50,13 @@ class QAService:
     def analyze_question(self, request: QARequest) -> dict[str, Any]:
         """Return a student-readable answer with system-readable structured analysis."""
 
-        llm_result = self._try_invoke_llm(request)
-        candidate = llm_result if llm_result is not None else self._build_fallback_response(request)
+        context_snippets, confidence = self._build_context_snippets(request.question)
+        llm_result = self._try_invoke_llm(request, context_snippets, confidence)
+        candidate = (
+            llm_result
+            if llm_result is not None
+            else self._build_fallback_response(request, context_snippets, confidence)
+        )
         return self._validate_response(candidate, request)
 
     def _classify_question(self, request: QARequest) -> dict[str, Any]:
@@ -59,10 +64,13 @@ class QAService:
         has_wrong_context = bool(request.student_answer.strip() or request.wrong_answer.strip())
         has_learning_context = any(token in question for token in self.LEARNING_TOKENS)
         is_weather = any(token in question for token in self.WEATHER_TOKENS)
-        is_review = has_wrong_context or any(token in question for token in ("为什么错", "错在哪", "改错", "解析", "讲解这题"))
+        is_review = has_wrong_context or any(
+            token in question for token in ("为什么错", "错在哪", "改错", "解析", "讲解这题")
+        )
         should_analyze = has_learning_context or has_wrong_context
         should_add_mistake = bool(
-            has_wrong_context and (has_learning_context or any(token in question for token in ("错题", "作业", "题目", "答案")))
+            has_wrong_context
+            and (has_learning_context or any(token in question for token in ("错题", "作业", "题目", "答案")))
         )
         return {
             "has_learning_context": has_learning_context,
@@ -88,21 +96,34 @@ class QAService:
             return "当前学习问题"
         return "通用提问"
 
-    def _build_grounding_text(self, article: Any) -> str:
-        if article is None:
-            return ""
-        return "\n".join(
-            [
-                f"主题: {article.title}",
-                f"摘要: {article.summary}",
-                "核心概念:",
-                *[f"- {item}" for item in article.concepts[:4]],
-                "常见错误:",
-                *[f"- {item}" for item in article.mistakes[:4]],
-                "自测点:",
-                *[f"- {item}" for item in article.checks[:4]],
-            ]
-        )
+    def _build_grounding_text(self, article: Any, context_snippets: list[str]) -> str:
+        sections: list[str] = []
+        if article is not None:
+            sections.append(
+                "\n".join(
+                    [
+                        f"主题: {article.title}",
+                        f"摘要: {article.summary}",
+                        "核心概念:",
+                        *[f"- {item}" for item in article.concepts[:4]],
+                        "常见错误:",
+                        *[f"- {item}" for item in article.mistakes[:4]],
+                        "自测点:",
+                        *[f"- {item}" for item in article.checks[:4]],
+                    ]
+                )
+            )
+        if context_snippets:
+            sections.append("关键词命中参考:\n" + "\n".join(f"- {item}" for item in context_snippets))
+        return "\n\n".join(sections)
+
+    def _build_context_snippets(self, question: str) -> tuple[list[str], float]:
+        """Provide lightweight keyword-grounded snippets for tutoring."""
+
+        articles = self.knowledge_base.search_by_keywords(question, top_k=3)
+        snippets = [f"{article.title}: {article.summary[:120]}" for article in articles]
+        confidence = 0.8 if snippets else 0.5
+        return snippets, confidence
 
     def _build_direct_answer(
         self,
@@ -118,9 +139,9 @@ class QAService:
 
             llm = self.llm_factory.build_chat_model(temperature=0.35)
             system_prompt = (
-                "你是一位经验丰富、非常耐心的老师和答疑助手。"
-                "请先根据用户真实问题直接回答，不要强行限定在当前学习知识点里。"
-                "如果问题是学习问题，就用教学方式讲清楚；如果问题是一般问答，也正常回答。"
+                "你是一位经验丰富、很耐心的老师和答疑助手。"
+                "请优先直接回答学生真实问题，不要强行限制在当前学习知识点里。"
+                "如果是学习类问题，就用教学方式讲清楚；如果是一般问答，也正常回答。"
                 "不要输出 JSON。"
             )
             human_prompt = (
@@ -155,17 +176,22 @@ class QAService:
         except Exception:
             return None
 
-    def _try_invoke_llm(self, request: QARequest) -> dict[str, Any] | None:
+    def _try_invoke_llm(
+        self,
+        request: QARequest,
+        context_snippets: list[str],
+        confidence: float,
+    ) -> dict[str, Any] | None:
         flags = self._classify_question(request)
         target = self._pick_target_knowledge(request, flags)
         article = self.knowledge_base.get_article(target if flags["has_learning_context"] else request.question)
-        grounding_text = self._build_grounding_text(article)
+        grounding_text = self._build_grounding_text(article, context_snippets)
         direct_answer = self._build_direct_answer(request, grounding_text, flags)
 
         if not flags["should_analyze"]:
             if not direct_answer:
                 return None
-            fallback = self._build_fallback_response(request)
+            fallback = self._build_fallback_response(request, context_snippets, confidence)
             fallback["student_response"] = direct_answer
             return fallback
 
@@ -215,7 +241,7 @@ class QAService:
                     "learning_route": request.learning_route,
                     "error_book": request.error_book,
                     "learning_history": request.learning_history,
-                    "grounding_text": grounding_text[:1200],
+                    "grounding_text": grounding_text[:1400],
                 }
             )
             parsed = self._parse_llm_output(raw)
@@ -229,11 +255,13 @@ class QAService:
                 "grade": request.grade,
                 "student_response": parsed["student_response"],
                 "structured_analysis": parsed["structured_analysis"],
+                "context_snippets": context_snippets,
+                "confidence": confidence,
             }
         except Exception:
             if not direct_answer:
                 return None
-            fallback = self._build_fallback_response(request)
+            fallback = self._build_fallback_response(request, context_snippets, confidence)
             fallback["student_response"] = direct_answer
             return fallback
 
@@ -280,7 +308,12 @@ class QAService:
                 raise
             return json.loads(match.group(0))
 
-    def _build_fallback_response(self, request: QARequest) -> dict[str, Any]:
+    def _build_fallback_response(
+        self,
+        request: QARequest,
+        context_snippets: list[str],
+        confidence: float,
+    ) -> dict[str, Any]:
         flags = self._classify_question(request)
         target_knowledge = self._pick_target_knowledge(request, flags)
         is_general_question = not flags["should_analyze"]
@@ -305,7 +338,7 @@ class QAService:
             student_response = (
                 f"你提到的问题是：{request.question}\n\n"
                 f"这个问题目前更接近“{target_knowledge}”相关的学习提问。"
-                "我会优先从问题本身讲解，再结合你有没有提供错误答案、作答过程，判断是否需要继续做错题分析。"
+                "我会优先从问题本身讲解，再结合你是否提供错误答案、作答过程，判断是否需要继续做错题分析。"
             )
             identified_knowledge_gaps = request.current_knowledge_points[:2] or [target_knowledge]
             misconceptions = [
@@ -340,6 +373,8 @@ class QAService:
             "subject": request.subject,
             "grade": request.grade,
             "student_response": student_response,
+            "context_snippets": context_snippets,
+            "confidence": confidence,
             "structured_analysis": {
                 "identified_knowledge_gaps": identified_knowledge_gaps,
                 "misconceptions": misconceptions,
@@ -368,5 +403,6 @@ class QAService:
         try:
             return QAResponse(**candidate).model_dump()
         except Exception:
-            fallback = self._build_fallback_response(request)
+            context_snippets, confidence = self._build_context_snippets(request.question)
+            fallback = self._build_fallback_response(request, context_snippets, confidence)
             return QAResponse(**fallback).model_dump()

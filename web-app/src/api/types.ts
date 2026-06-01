@@ -83,6 +83,8 @@ export type ResourcePayload = {
   resource_style: 'concise' | 'case' | 'interactive'
   resource_type: 'courseware' | 'exercise' | 'notes' | 'exam'
   learner_profile: Record<string, unknown>
+  request_text?: string
+  preferred_word_count?: number
 }
 
 export type LearningPathPayload = {
@@ -169,11 +171,25 @@ export type ResourceVariant = {
   is_recommended: boolean
 }
 
+export type ResourceGenerationPlan = {
+  request_summary: string
+  knowledge_point: string
+  resource_type: 'courseware' | 'exercise' | 'notes' | 'exam'
+  resource_style: 'concise' | 'case' | 'interactive'
+  title_suggestion: string
+  suggested_outline: string[]
+  target_word_count: number
+  difficulty: 'foundation' | 'intermediate' | 'advanced'
+  personalization_hints: string[]
+  analysis_source: 'request' | 'heuristic' | 'profile_enriched'
+}
+
 export type ResourceResult = {
   user_id: number
   knowledge_point: string
   resource_type: string
   resource_style: string
+  generation_plan?: ResourceGenerationPlan
   references: Array<{
     id?: string
     content?: string
@@ -243,6 +259,8 @@ export type QAResponsePayload = {
   grade: string
   student_response: string
   structured_analysis: QAAnalysisPayload
+  context_snippets: string[]
+  confidence: number | null
 }
 
 export type PracticeSubmissionPayload = {
