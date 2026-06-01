@@ -24,6 +24,15 @@ PROFILE_DIMENSION_KEYS = (
     "goalOrientation",
 )
 
+PROFILE_DIMENSION_LABELS = {
+    "knowledgeBase": "知识基础",
+    "cognitiveStyle": "认知风格",
+    "errorPreference": "易错偏好",
+    "learningSpeed": "学习节奏",
+    "interestDirection": "兴趣方向",
+    "goalOrientation": "目标导向",
+}
+
 PROFILE_QUESTION_BANK = {
     "knowledgeBase": "你之前学过哪些相关内容，或者已经掌握了哪些基础？",
     "cognitiveStyle": "你更喜欢看图理解、读文字、听讲解，还是边做边学？",
@@ -34,20 +43,20 @@ PROFILE_QUESTION_BANK = {
 }
 
 COGNITIVE_STYLE_RULES = (
-    (("动手", "实践", "上机", "写代码"), "动手实践型"),
-    (("看图", "图", "可视化", "视觉"), "视觉型"),
+    (("动手", "实践", "上机", "写代码", "实操"), "动手实践型"),
+    (("看图", "图示", "图表", "可视化", "视觉"), "视觉型"),
     (("阅读", "文字", "文本", "文档"), "文本型"),
-    (("听", "讲解", "讲一遍"), "听觉型"),
+    (("听", "讲解", "讲一遍", "语音"), "听觉型"),
 )
 
 LEARNING_SPEED_RULES = (
     (("学得快", "上手快", "节奏快", "比较快"), "较快"),
     (("慢", "吃力", "跟不上", "慢一点"), "较慢"),
-    (("适中", "正常"), "适中"),
+    (("适中", "正常", "还行"), "适中"),
 )
 
 SYSTEM_PROMPT = """
-你是个性化学习平台里的画像构建助手。你需要自然回复学生，同时从当前对话中提取学习画像信息。
+你是个性化学习平台里的画像构建助手。你需要自然地回复学生，同时从当前对话中提取学习画像信息。
 
 请只返回 JSON，格式如下：
 {
@@ -153,14 +162,14 @@ class ProfileBuilderService:
         history: list[ProfileConversation],
         existing_dimensions: dict[str, str],
     ) -> tuple[str, dict[str, str]]:
+        heuristic_updates = self._extract_updates_from_text(message)
         llm_result = self._run_llm(message, history)
         if llm_result is not None:
-            reply, updates = llm_result
+            reply, llm_updates = llm_result
             if reply.strip():
-                return reply.strip(), updates
+                return reply.strip(), {**heuristic_updates, **llm_updates}
 
-        updates = self._extract_updates_from_text(message)
-        return self._build_fallback_reply(existing_dimensions, updates), updates
+        return self._build_fallback_reply(existing_dimensions, heuristic_updates), heuristic_updates
 
     def _run_llm(self, message: str, history: list[ProfileConversation]) -> tuple[str, dict[str, str]] | None:
         try:
@@ -223,7 +232,7 @@ class ProfileBuilderService:
 
             if (
                 "knowledgeBase" not in updates
-                and any(token in sentence for token in ("学过", "掌握", "基础", "会", "接触过", "做过"))
+                and any(token in sentence for token in ("学过", "掌握", "基础", "了解过", "接触过", "做过"))
             ):
                 updates["knowledgeBase"] = sentence
 
@@ -247,13 +256,13 @@ class ProfileBuilderService:
 
             if (
                 "interestDirection" not in updates
-                and any(token in sentence for token in ("感兴趣", "喜欢", "想学", "偏向", "更想"))
+                and any(token in sentence for token in ("感兴趣", "喜欢", "想学", "偏向", "更想", "后端", "前端", "算法", "数据分析"))
             ):
                 updates["interestDirection"] = sentence
 
             if (
                 "goalOrientation" not in updates
-                and any(token in sentence for token in ("目标", "希望", "找工作", "实习", "考研", "考试", "项目"))
+                and any(token in sentence for token in ("目标", "希望", "找工作", "求职", "实习", "考研", "考试", "项目"))
             ):
                 updates["goalOrientation"] = sentence
 
@@ -267,10 +276,26 @@ class ProfileBuilderService:
         for key, value in updates.items():
             if key not in PROFILE_DIMENSION_KEYS:
                 continue
-            text = str(value).strip()
+            text = self._canonicalize_update(key, str(value).strip())
             if text:
                 normalized[key] = text
         return normalized
+
+    def _canonicalize_update(self, key: str, value: str) -> str:
+        if not value:
+            return ""
+
+        if key == "cognitiveStyle":
+            for tokens, label in COGNITIVE_STYLE_RULES:
+                if any(token in value for token in tokens):
+                    return label
+
+        if key == "learningSpeed":
+            for tokens, label in LEARNING_SPEED_RULES:
+                if any(token in value for token in tokens):
+                    return label
+
+        return value
 
     def _apply_updates(self, profile: UserProfile, updates: dict[str, str]) -> None:
         habits = profile.habits if isinstance(profile.habits, dict) else {}
@@ -333,7 +358,10 @@ class ProfileBuilderService:
         merged = {**existing_dimensions, **updates}
         missing = [key for key in PROFILE_DIMENSION_KEYS if not merged.get(key)]
         if updates:
-            captured = "，".join(f"{key}: {value}" for key, value in updates.items())
+            captured = "；".join(
+                f"{PROFILE_DIMENSION_LABELS.get(key, key)}：{value}"
+                for key, value in updates.items()
+            )
             if not missing:
                 return f"我已经记录下这些画像信息：{captured}。当前画像已经比较完整，可以开始进入学习路径和资源生成了。"
             next_key = missing[0]
