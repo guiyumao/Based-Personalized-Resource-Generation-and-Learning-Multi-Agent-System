@@ -114,6 +114,25 @@ python -m uvicorn services.system_service.app.main:app --host 127.0.0.1 --port 8
 - 功能说明：[docs/functionality.md](docs/functionality.md)
 - OpenAPI 草案：[docs/openapi.yaml](docs/openapi.yaml)
 
+## Recent Integration From `agent-core`
+
+The current `main` branch now keeps the Python multi-service architecture as the primary runtime, and additionally absorbs the highest-value learner-agent capabilities from `agent-core`:
+
+- Conversational learner profile building:
+  `POST /users/{user_id}/profile/chat`
+- Manual learner profile dimension patching:
+  `PUT /users/{user_id}/profile`
+- Enriched learner profile read model with stored `profile_dimensions`
+- Persisted learning-path lifecycle support:
+  `POST /paths/generate`
+  `GET /paths/{user_id}`
+  `POST /paths/adjust`
+
+Implementation choice notes:
+
+- Resource generation, QA analysis, and evaluation reporting remain on the `main` Python services because they already had stronger end-to-end integration coverage and passing tests.
+- The profile conversation flow and learning-path adjustment flow were added from the `agent-core` feature set because they were missing on `main` and could be integrated cleanly without regressing the existing student workspace.
+
 ## 说明
 
 - 当前仓库中存在一部分中文乱码历史内容，本轮已优先修正关键启动说明和功能文档。

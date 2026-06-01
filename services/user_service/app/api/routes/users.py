@@ -9,10 +9,13 @@ from common.db.session import get_db
 from common.models.learning import User, UserProfile
 from common.schemas.user import (
     LearnerProfileDashboard,
+    ProfileChatRequest,
+    ProfileChatResponse,
     TokenResponse,
     UserCreate,
     UserLogin,
     UserProfileRead,
+    UserProfileUpdate,
     UserRegister,
     UserRead,
     to_user_profile_read,
@@ -20,6 +23,7 @@ from common.schemas.user import (
 )
 from common.security.auth import create_access_token, hash_password, verify_password
 from services.user_service.app.dependencies import get_current_user
+from services.user_service.app.services.profile_builder import ProfileBuilderService
 
 router = APIRouter()
 settings = get_settings()
@@ -132,6 +136,29 @@ def get_profile(user_id: int, db: Session = Depends(get_db)) -> UserProfileRead:
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
     return to_user_profile_read(profile)
+
+
+@router.put("/{user_id}/profile", response_model=UserProfileRead)
+def update_profile(user_id: int, payload: UserProfileUpdate, db: Session = Depends(get_db)) -> UserProfileRead:
+    """Manually update a learner profile."""
+
+    service = ProfileBuilderService(db)
+    try:
+        profile = service.update_profile(user_id, payload.learning_style, payload.profile_dimensions)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return to_user_profile_read(profile)
+
+
+@router.post("/{user_id}/profile/chat", response_model=ProfileChatResponse)
+def chat_profile(user_id: int, payload: ProfileChatRequest, db: Session = Depends(get_db)) -> ProfileChatResponse:
+    """Build a learner profile through natural-language conversation."""
+
+    service = ProfileBuilderService(db)
+    try:
+        return service.chat(user_id, payload.message)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{user_id}/profile/dashboard", response_model=LearnerProfileDashboard)

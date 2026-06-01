@@ -31,6 +31,7 @@ import {
   type LearningPathResponse,
   type MistakeNotebook,
   type PersonalizationContext,
+  type ProfileChatResponsePayload,
   type PracticeFeedback,
   type PracticeSubmissionPayload,
   type QARequestPayload,
@@ -40,6 +41,7 @@ import {
   type ResourcePayload,
   type ResourceResult,
   type ResourceVariant,
+  type UserProfileRead,
 } from '../api'
 import { useAuthStore } from '../stores/auth'
 
@@ -157,6 +159,10 @@ const learner = reactive({
 })
 
 const profileDashboard = ref<LearnerProfileDashboard | null>(null)
+const profileRecord = ref<UserProfileRead | null>(null)
+const profileChatMessage = ref('')
+const profileChatResult = ref<ProfileChatResponsePayload | null>(null)
+const profileChatError = ref('')
 const coordinationResult = ref<CoordinationResult | null>(null)
 const resourceResult = ref<ResourceResult | null>(null)
 const graphResult = ref<GraphResult | null>(null)
@@ -220,6 +226,7 @@ const loading = reactive({
   courseware: false,
   graph: false,
   path: false,
+  profileChat: false,
   exercises: false,
   mistakes: false,
   remedial: false,
@@ -388,6 +395,7 @@ const dependencyPaths = computed(() => {
 })
 const radarMetrics = computed(() => profileDashboard.value?.radar_metrics ?? [])
 const heatmapMetrics = computed(() => profileDashboard.value?.heatmap ?? [])
+const profileDimensionEntries = computed(() => Object.entries(profileRecord.value?.profile_dimensions ?? {}))
 const qaRecommendations = computed(() => qaResult.value?.structured_analysis.resource_recommendations ?? [])
 const qaRouteUpdates = computed(() => qaResult.value?.structured_analysis.learning_route_updates ?? [])
 const qaKnowledgeGaps = computed(() => qaResult.value?.structured_analysis.identified_knowledge_gaps ?? [])
@@ -1285,6 +1293,7 @@ async function fetchCurrentUser() {
     resourceForm.user_id = data.id
     pathForm.user_id = data.id
     exerciseForm.user_id = data.id
+    qaForm.student_id = String(data.id)
     await fetchProfileDashboard(data.id)
   } catch {
     authStore.clear()
@@ -1295,13 +1304,44 @@ async function fetchCurrentUser() {
 async function fetchProfileDashboard(userId = exerciseForm.user_id) {
   startAsyncStatus('profile', '学习画像')
   try {
-    const { data } = await userApi.get<LearnerProfileDashboard>(`/users/${userId}/profile/dashboard`)
-    syncLearnerFromDashboard(data)
+    const [{ data: dashboard }, { data: profile }] = await Promise.all([
+      userApi.get<LearnerProfileDashboard>(`/users/${userId}/profile/dashboard`),
+      userApi.get<UserProfileRead>(`/users/${userId}/profile`),
+    ])
+    syncLearnerFromDashboard(dashboard)
+    profileRecord.value = profile
   } catch {
     syncLearnerFromDashboard(buildFallbackProfileDashboard(userId))
+    profileRecord.value = null
     announceFallback('profile-dashboard', '学习画像服务暂不可用，已切换到本地画像模式。')
   } finally {
     resetAsyncStatus('profile')
+  }
+}
+
+async function submitProfileChat() {
+  const message = profileChatMessage.value.trim()
+  if (!message) {
+    ElMessage.warning('请先输入一段你当前的学习情况或目标。')
+    return
+  }
+
+  loading.profileChat = true
+  profileChatError.value = ''
+  try {
+    const userId = authStore.user?.userId ?? exerciseForm.user_id
+    const { data } = await userApi.post<ProfileChatResponsePayload>(`/users/${userId}/profile/chat`, {
+      message,
+    })
+    profileChatResult.value = data
+    profileChatMessage.value = ''
+    await fetchProfileDashboard(userId)
+    ElMessage.success('画像对话已更新。')
+  } catch {
+    profileChatError.value = '画像对话提交失败，请稍后再试。'
+    ElMessage.error('画像对话提交失败。')
+  } finally {
+    loading.profileChat = false
   }
 }
 
@@ -2591,12 +2631,40 @@ onUnmounted(() => {
         <div class="action-row">
           <el-button @click="fetchProfileDashboard()">刷新画像</el-button>
         </div>
+        <article class="learning-section profile-chat-section">
+          <h3>画像对话构建</h3>
+          <p class="learning-line">用自然语言告诉系统你学过什么、怎么学得更顺、最近想达成什么目标，系统会自动补全学习画像。</p>
+          <el-input
+            v-model="profileChatMessage"
+            type="textarea"
+            :rows="4"
+            placeholder="例如：我学过 Python 基础，喜欢边写边学，最近想冲刺后端实习。"
+          />
+          <div class="action-row">
+            <el-button type="primary" :loading="loading.profileChat" @click="submitProfileChat">提交画像对话</el-button>
+          </div>
+          <p v-if="profileChatError" class="feedback-inline danger">{{ profileChatError }}</p>
+        </article>
         <div v-if="profileStatusView" class="request-status-card" :class="profileStatusView.tone">
           <strong>{{ profileStatusView.title }}</strong>
           <p>{{ profileStatusView.detail }}</p>
           <span>已等待 {{ profileStatusView.elapsedLabel }}</span>
         </div>
         <div v-if="profileDashboard" class="learning-content">
+          <article v-if="profileChatResult" class="learning-section">
+            <h3>本轮画像提取结果</h3>
+            <p class="learning-line preserve-linebreaks">{{ profileChatResult.reply }}</p>
+            <div v-if="Object.keys(profileChatResult.profile_updates).length" class="tag-row">
+              <span
+                v-for="(value, key) in profileChatResult.profile_updates"
+                :key="key"
+                class="agent-tag"
+              >
+                {{ key }}: {{ value }}
+              </span>
+            </div>
+            <p class="learning-line">预计还需 {{ profileChatResult.estimated_remaining_rounds }} 轮可基本补全画像。</p>
+          </article>
           <article class="learning-section">
             <h3>画像摘要</h3>
             <p class="learning-line">学习风格：{{ profileDashboard.learning_style }}</p>
@@ -3362,6 +3430,19 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.profile-chat-section {
+  margin-bottom: 12px;
+}
+
+.feedback-inline {
+  margin: 10px 0 0;
+  font-size: 13px;
+}
+
+.feedback-inline.danger {
+  color: #9b3b26;
+}
+
 .global-status-banner {
   grid-column: 1 / -1;
   position: sticky;

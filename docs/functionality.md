@@ -207,3 +207,23 @@ python scripts/watch_function_docs.py
 - 新增接口后，先更新代码，再同步文档。
 - 新增页面后，在文档中补充页面职责与交互入口。
 - 提交代码前，建议检查启动方式、默认账号和主要页面说明是否仍与实现一致。
+
+## 7. Recent Integration Notes
+
+The `main` branch has absorbed selected capabilities from the standalone `agent-core` branch while keeping the Python multi-service runtime as the primary execution path.
+
+Added endpoints:
+
+- `POST /users/{user_id}/profile/chat`
+  Conversational learner-profile building with structured extracted dimensions and estimated remaining rounds.
+- `PUT /users/{user_id}/profile`
+  Manual learner-profile dimension patching.
+- `GET /paths/{user_id}`
+  Fetch the latest persisted active learning path.
+- `POST /paths/adjust`
+  Mark one generated path task as `complete`, `reset`, or `skip`.
+
+Selection rationale:
+
+- Kept `main` implementations for resource generation, QA analysis, and evaluation/reporting because they already had better integration coverage and passing automated tests.
+- Added the learner-profile conversation flow and persisted learning-path adjustment because those capabilities existed in `agent-core` but were still missing on `main`.

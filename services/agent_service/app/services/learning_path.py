@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from common.schemas.agent import LearningPathRequest
+from copy import deepcopy
+
+from sqlalchemy.orm import Session
+
+from common.models.learning import LearningPath
+from common.schemas.agent import LearningPathAdjustRequest, LearningPathRequest
 
 
 class LearningPathService:
     """Build a lightweight but actionable personalized learning path."""
+
+    def __init__(self, db: Session | None = None) -> None:
+        self.db = db
 
     def generate_path(self, request: LearningPathRequest) -> dict[str, object]:
         """Create a staged learning path around one knowledge point."""
@@ -15,7 +23,7 @@ class LearningPathService:
         estimated_days = 3 if daily_minutes >= 45 else 4
         style = str(request.learner_profile.get("learning_style", "visual"))
 
-        return {
+        payload = {
             "user_id": request.user_id,
             "subject": request.subject,
             "knowledge_point": request.knowledge_point,
@@ -27,7 +35,7 @@ class LearningPathService:
             "stages": [
                 {
                     "stage_id": "stage-1",
-                    "title": "阶段一：概念建立",
+                    "title": "阶段一：概念建构",
                     "description": "先掌握知识点定义、适用场景和常见误区。",
                     "tasks": [
                         {
@@ -39,6 +47,7 @@ class LearningPathService:
                             "estimated_minutes": max(15, daily_minutes // 2),
                             "difficulty": "foundation",
                             "completed": False,
+                            "status": "pending",
                         },
                         {
                             "task_id": "task-2",
@@ -49,6 +58,7 @@ class LearningPathService:
                             "estimated_minutes": 10,
                             "difficulty": "foundation",
                             "completed": False,
+                            "status": "pending",
                         },
                     ],
                 },
@@ -66,6 +76,7 @@ class LearningPathService:
                             "estimated_minutes": max(20, daily_minutes // 2),
                             "difficulty": "intermediate",
                             "completed": False,
+                            "status": "pending",
                         },
                     ],
                 },
@@ -83,8 +94,104 @@ class LearningPathService:
                             "estimated_minutes": 20,
                             "difficulty": "advanced",
                             "completed": False,
+                            "status": "pending",
                         },
                     ],
                 },
             ],
         }
+        return self._persist_generated_path(request.user_id, payload) if self.db is not None else payload
+
+    def get_latest_path(self, user_id: int) -> dict[str, object] | None:
+        """Return the latest active path for a learner if one exists."""
+
+        if self.db is None:
+            return None
+        record = self._get_active_path_record(user_id)
+        if record is None:
+            return None
+        return self._normalize_payload(record.path_data_json or {})
+
+    def adjust_path(self, request: LearningPathAdjustRequest) -> dict[str, object] | None:
+        """Adjust one task state inside the latest active path."""
+
+        if self.db is None:
+            return None
+
+        record = self._get_active_path_record(request.user_id)
+        if record is None:
+            return None
+
+        payload = self._normalize_payload(record.path_data_json or {})
+        found = False
+        stages = payload.get("stages", [])
+        if not isinstance(stages, list):
+            return None
+
+        for stage in stages:
+            tasks = stage.get("tasks", [])
+            if not isinstance(tasks, list):
+                continue
+            for task in tasks:
+                if task.get("task_id") != request.task_id:
+                    continue
+                found = True
+                if request.action == "complete":
+                    task["completed"] = True
+                    task["status"] = "completed"
+                elif request.action == "reset":
+                    task["completed"] = False
+                    task["status"] = "pending"
+                else:
+                    task["completed"] = False
+                    task["status"] = "skipped"
+                break
+
+        if not found:
+            return None
+
+        record.path_data_json = payload
+        self.db.commit()
+        self.db.refresh(record)
+        return self._normalize_payload(record.path_data_json or {})
+
+    def _persist_generated_path(self, user_id: int, payload: dict[str, object]) -> dict[str, object]:
+        existing_records = (
+            self.db.query(LearningPath)
+            .filter(LearningPath.user_id == user_id, LearningPath.status == "active")
+            .all()
+        )
+        for item in existing_records:
+            item.status = "archived"
+
+        record = LearningPath(
+            user_id=user_id,
+            path_data_json=deepcopy(payload),
+            status="active",
+        )
+        self.db.add(record)
+        self.db.commit()
+        self.db.refresh(record)
+        return self._normalize_payload(record.path_data_json or {})
+
+    def _get_active_path_record(self, user_id: int) -> LearningPath | None:
+        return (
+            self.db.query(LearningPath)
+            .filter(LearningPath.user_id == user_id, LearningPath.status == "active")
+            .order_by(LearningPath.id.desc())
+            .first()
+        )
+
+    def _normalize_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        data = deepcopy(payload)
+        stages = data.get("stages", [])
+        if not isinstance(stages, list):
+            return data
+        for stage in stages:
+            tasks = stage.get("tasks", [])
+            if not isinstance(tasks, list):
+                continue
+            for task in tasks:
+                task.setdefault("completed", False)
+                task.setdefault("status", "completed" if task.get("completed") else "pending")
+        return data

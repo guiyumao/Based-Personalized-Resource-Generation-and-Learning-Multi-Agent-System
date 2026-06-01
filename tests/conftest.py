@@ -6,9 +6,17 @@ from uuid import uuid4
 
 import pytest
 
+from common.db.bootstrap import ensure_database_schema
 from common.db.session import SessionLocal
 from common.models.learning import AnswerRecord, Exercise, LearningReport, User, UserProfile
 from common.security.auth import hash_password
+
+
+@pytest.fixture(scope="session", autouse=True)
+def initialize_database_schema():
+    """Ensure the shared local test database schema exists before any test runs."""
+
+    ensure_database_schema()
 
 
 @pytest.fixture

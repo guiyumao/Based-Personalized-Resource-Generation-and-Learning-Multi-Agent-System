@@ -109,6 +109,7 @@ class LearningTaskItem(BaseModel):
     estimated_minutes: int
     difficulty: Literal["foundation", "intermediate", "advanced"]
     completed: bool = False
+    status: Literal["pending", "completed", "skipped"] = "pending"
 
 
 class LearningStageItem(BaseModel):
@@ -129,6 +130,14 @@ class LearningPathResponse(BaseModel):
     overview: str
     estimated_days: int
     stages: list[LearningStageItem]
+
+
+class LearningPathAdjustRequest(BaseModel):
+    """Payload for adjusting one generated learning-path task."""
+
+    user_id: int
+    task_id: str
+    action: Literal["complete", "reset", "skip"]
 
 
 class ExerciseGenerationRequest(BaseModel):

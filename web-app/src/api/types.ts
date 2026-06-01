@@ -45,6 +45,31 @@ export type LearnerProfileDashboard = {
   heatmap: LearnerHeatmapCell[]
 }
 
+export type UserProfileRead = {
+  user_id: number
+  mastery_json: Record<string, unknown>
+  learning_style: string
+  cognitive_abilities: Record<string, unknown>
+  habits: Record<string, unknown>
+  profile_dimensions: Record<string, string>
+}
+
+export type UserProfileUpdatePayload = {
+  learning_style?: string
+  profile_dimensions: Record<string, string>
+}
+
+export type ProfileChatPayload = {
+  message: string
+}
+
+export type ProfileChatResponsePayload = {
+  reply: string
+  profile_updates: Record<string, string>
+  profile_completeness: Record<string, string>
+  estimated_remaining_rounds: number
+}
+
 export type CoordinationPayload = {
   user_id: number
   intent: string

@@ -165,3 +165,14 @@ class LearningReport(TimestampMixin, Base):
     content_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     user: Mapped[User] = relationship(back_populates="reports")
+
+
+class ProfileConversation(TimestampMixin, Base):
+    """Conversation history captured while building a learner profile."""
+
+    __tablename__ = "profile_conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)

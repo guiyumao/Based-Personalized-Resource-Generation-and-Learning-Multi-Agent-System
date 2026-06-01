@@ -42,6 +42,29 @@ class UserProfileRead(BaseModel):
     learning_style: str
     cognitive_abilities: dict[str, Any]
     habits: dict[str, Any]
+    profile_dimensions: dict[str, str] = Field(default_factory=dict)
+
+
+class UserProfileUpdate(BaseModel):
+    """Manual learner profile update payload."""
+
+    learning_style: str | None = None
+    profile_dimensions: dict[str, str] = Field(default_factory=dict)
+
+
+class ProfileChatRequest(BaseModel):
+    """Payload for conversational learner-profile building."""
+
+    message: str = Field(min_length=1, max_length=1000)
+
+
+class ProfileChatResponse(BaseModel):
+    """Structured result for one profile-building conversation turn."""
+
+    reply: str
+    profile_updates: dict[str, str] = Field(default_factory=dict)
+    profile_completeness: dict[str, str]
+    estimated_remaining_rounds: int
 
 
 class LearnerRadarMetric(BaseModel):
@@ -102,10 +125,22 @@ def to_user_read(user: object) -> UserRead:
 def to_user_profile_read(profile: object) -> UserProfileRead:
     """Convert an ORM-like user profile object to `UserProfileRead`."""
 
+    habits = getattr(profile, "habits")
+    profile_dimensions: dict[str, str] = {}
+    if isinstance(habits, dict):
+        raw_dimensions = habits.get("profile_dimensions")
+        if isinstance(raw_dimensions, dict):
+            profile_dimensions = {
+                str(key): str(value).strip()
+                for key, value in raw_dimensions.items()
+                if str(value).strip()
+            }
+
     return UserProfileRead(
         user_id=getattr(profile, "user_id"),
         mastery_json=getattr(profile, "mastery_json"),
         learning_style=getattr(profile, "learning_style"),
         cognitive_abilities=getattr(profile, "cognitive_abilities"),
-        habits=getattr(profile, "habits"),
+        habits=habits,
+        profile_dimensions=profile_dimensions,
     )
