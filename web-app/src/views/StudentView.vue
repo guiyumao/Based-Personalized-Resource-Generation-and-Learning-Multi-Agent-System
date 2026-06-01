@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -2601,581 +2601,494 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="workspace-panel">
-        <div class="panel-heading">
-          <div>
-            <div class="panel-kicker">当前任务</div>
-            <h2>{{ activeTask?.title ?? '等待任务' }}</h2>
+      <div class="student-column student-column-main">
+        <section class="workspace-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="panel-kicker">当前任务</div>
+              <h2>{{ activeTask?.title ?? '等待任务' }}</h2>
+            </div>
+            <TrendCharts class="panel-icon" />
           </div>
-          <TrendCharts class="panel-icon" />
-        </div>
-        <div v-if="activeTask" class="insight-card">
-          <div class="insight-label">任务目标</div>
-          <div class="insight-value">{{ activeTask.objective }}</div>
-          <p class="panel-text">
-            难度：{{ activeTask.difficulty }} / 预计时长：{{ activeTask.estimated_minutes }} 分钟
-          </p>
-        </div>
-        <div class="action-row">
-          <el-button type="warning" :loading="loading.courseware" @click="generateCourseware()">生成学习课件</el-button>
-          <el-button plain :disabled="loading.courseware" @click="generateCourseware()">重新生成课件</el-button>
-          <el-button type="success" :loading="loading.exercises" @click="generateExercises()">生成课后自测</el-button>
-          <el-button plain :disabled="loading.exercises" @click="generateExercises()">重新生成自测</el-button>
-          <el-button type="danger" :loading="loading.remedial" @click="fetchRemedialExercises">错题变式重练</el-button>
-          <el-button :loading="loading.graph" @click="queryGraph">查询知识图谱</el-button>
-        </div>
-      </section>
-
-      <section class="workspace-panel">
-        <div class="panel-heading">
-          <div>
-            <div class="panel-kicker">学习画像</div>
-            <h2>能力雷达与掌握热力图</h2>
+          <div v-if="activeTask" class="insight-card">
+            <div class="insight-label">任务目标</div>
+            <div class="insight-value">{{ activeTask.objective }}</div>
+            <p class="panel-text">
+              难度：{{ activeTask.difficulty }} / 预计时长：{{ activeTask.estimated_minutes }} 分钟
+            </p>
           </div>
-          <TrendCharts class="panel-icon" />
-        </div>
-        <div class="action-row">
-          <el-button @click="fetchProfileDashboard()">刷新画像</el-button>
-        </div>
-        <article class="learning-section profile-chat-section">
-          <h3>画像对话构建</h3>
-          <p class="learning-line">用自然语言告诉系统你学过什么、怎么学得更顺、最近想达成什么目标，系统会自动补全学习画像。</p>
-          <el-input
-            v-model="profileChatMessage"
-            type="textarea"
-            :rows="4"
-            placeholder="例如：我学过 Python 基础，喜欢边写边学，最近想冲刺后端实习。"
-          />
           <div class="action-row">
-            <el-button type="primary" :loading="loading.profileChat" @click="submitProfileChat">提交画像对话</el-button>
+            <el-button type="warning" :loading="loading.courseware" @click="generateCourseware()">生成学习课件</el-button>
+            <el-button plain :disabled="loading.courseware" @click="generateCourseware()">重新生成课件</el-button>
+            <el-button type="success" :loading="loading.exercises" @click="generateExercises()">生成课后自测</el-button>
+            <el-button plain :disabled="loading.exercises" @click="generateExercises()">重新生成自测</el-button>
+            <el-button type="danger" :loading="loading.remedial" @click="fetchRemedialExercises">错题变式重练</el-button>
+            <el-button :loading="loading.graph" @click="queryGraph">查询知识图谱</el-button>
           </div>
-          <p v-if="profileChatError" class="feedback-inline danger">{{ profileChatError }}</p>
-        </article>
-        <div v-if="profileStatusView" class="request-status-card" :class="profileStatusView.tone">
-          <strong>{{ profileStatusView.title }}</strong>
-          <p>{{ profileStatusView.detail }}</p>
-          <span>已等待 {{ profileStatusView.elapsedLabel }}</span>
-        </div>
-        <div v-if="profileDashboard" class="learning-content">
-          <article v-if="profileChatResult" class="learning-section">
-            <h3>本轮画像提取结果</h3>
-            <p class="learning-line preserve-linebreaks">{{ profileChatResult.reply }}</p>
-            <div v-if="Object.keys(profileChatResult.profile_updates).length" class="tag-row">
-              <span
-                v-for="(value, key) in profileChatResult.profile_updates"
-                :key="key"
-                class="agent-tag"
+        </section>
+
+        <section class="workspace-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="panel-kicker">课件学习</div>
+              <h2>{{ coursewareTitle }}</h2>
+            </div>
+            <Document class="panel-icon" />
+          </div>
+          <div v-if="generationStatus.courseware.hint" class="generation-hint courseware-progress-panel">
+            <div class="courseware-progress-header">
+              <div>
+                <div class="generation-hint-title">课件生成进度</div>
+                <p class="courseware-progress-meta">模型会根据当前学习目标和知识点直接生成正式课件内容。</p>
+              </div>
+              <strong class="courseware-progress-percentage">{{ generationStatus.courseware.progress }}%</strong>
+            </div>
+            <div class="generation-status-row">
+              <span class="generation-status-pill">{{ coursewareProgressView.statusLabel }}</span>
+              <span class="generation-status-pill">已耗时 {{ coursewareProgressView.elapsedLabel }}</span>
+              <span class="generation-status-pill">{{ coursewareProgressView.remainingLabel }}</span>
+            </div>
+            <div class="generation-hint-line">
+              <span class="generation-hint-dot" :class="{ running: loading.courseware }"></span>
+              <span>{{ coursewareProgressView.title }}</span>
+              <strong>阶段 {{ coursewareProgressView.stageIndex }}/{{ coursewareProgressView.totalStages }}</strong>
+            </div>
+            <p class="generation-stage-detail">{{ generationStatus.courseware.hint }}</p>
+            <p class="generation-stage-note">{{ coursewareProgressView.detail }}</p>
+            <el-progress
+              :percentage="generationStatus.courseware.progress"
+              :stroke-width="12"
+              :show-text="false"
+              striped
+              striped-flow
+              :duration="8"
+            />
+            <div class="generation-step-list">
+              <div
+                v-for="step in coursewareProgressView.steps"
+                :key="`courseware-step-${step.index}`"
+                class="generation-step-card"
+                :class="step.state"
               >
-                {{ key }}: {{ value }}
+                <span class="generation-step-index">{{ step.index }}</span>
+                <div class="generation-step-copy">
+                  <strong>{{ step.title }}</strong>
+                  <p>{{ step.description }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="coursewareGenerationError" class="feedback-card wrong">
+            <div class="insight-label">课件生成状态</div>
+            <div class="insight-value">本次生成失败</div>
+            <p class="panel-text">{{ coursewareGenerationError }}</p>
+          </div>
+          <div v-if="resourceResult" class="reader-layout">
+            <aside class="reader-outline">
+              <div class="insight-label">课件目录</div>
+              <div class="outline-list">
+                <button
+                  v-for="section in resourceSections"
+                  :key="section.anchor"
+                  type="button"
+                  class="outline-item"
+                  @click="scrollToCoursewareSection(section.anchor)"
+                >
+                  {{ section.heading }}
+                </button>
+              </div>
+            </aside>
+
+            <div class="learning-content reader-content">
+              <article v-if="coursewareVariants.length > 1" class="learning-section">
+                <h3>可选课件版本</h3>
+                <div class="reference-list">
+                  <article
+                    v-for="variant in coursewareVariants"
+                    :key="variant.variant_id"
+                    class="reference-card clickable-card"
+                    :class="{ active: activeCoursewareVariant?.variant_id === variant.variant_id }"
+                    @click="selectCoursewareVariant(variant.variant_id)"
+                  >
+                    <strong>{{ variant.title }}</strong>
+                    <p>{{ variant.summary }}</p>
+                    <span class="reference-meta">
+                      风格：{{ variant.resource_style }}
+                      <template v-if="variant.is_recommended"> · 推荐</template>
+                    </span>
+                  </article>
+                </div>
+              </article>
+
+              <article class="learning-section">
+                <h3>学习建议</h3>
+                <div class="tag-row">
+                  <span class="agent-tag">先看概念</span>
+                  <span class="agent-tag">再读示例</span>
+                  <span class="agent-tag">最后做题</span>
+                </div>
+                <p class="learning-line">
+                  这份课件已经按章节拆开。建议先顺着目录学习，再回到练习区做题，提交后查看标准答案和解析。
+                </p>
+              </article>
+
+              <article v-if="coursewarePersonalization" class="learning-section">
+                <h3>本次个性化依据</h3>
+                <div class="report-evidence-grid">
+                  <div class="report-evidence-card">
+                    <span>当前掌握度</span>
+                    <strong>{{ coursewarePersonalization.mastery_score }}/100</strong>
+                  </div>
+                  <div class="report-evidence-card">
+                    <span>近期正确率</span>
+                    <strong>{{ coursewarePersonalization.correct_rate }}%</strong>
+                  </div>
+                  <div class="report-evidence-card">
+                    <span>真实作答次数</span>
+                    <strong>{{ coursewarePersonalization.answered_count }}</strong>
+                  </div>
+                  <div class="report-evidence-card">
+                    <span>近期弱项题型</span>
+                    <strong>{{ coursewarePersonalization.weak_question_types.length || 0 }}</strong>
+                  </div>
+                </div>
+                <ul class="markdown-list">
+                  <li v-for="item in coursewarePersonalization.basis" :key="item">{{ item }}</li>
+                </ul>
+                <div v-if="coursewarePersonalization.weak_question_types.length" class="tag-row">
+                  <span
+                    v-for="item in coursewarePersonalization.weak_question_types"
+                    :key="`courseware-weak-${item}`"
+                    class="agent-tag"
+                  >
+                    {{ formatQuestionTypeLabel(item) }}
+                  </span>
+                </div>
+                <div v-if="coursewarePersonalization.recent_mistakes.length" class="reference-list">
+                  <article
+                    v-for="mistake in coursewarePersonalization.recent_mistakes"
+                    :key="`courseware-mistake-${mistake.exercise_id}`"
+                    class="reference-card"
+                  >
+                    <strong>
+                      {{ formatQuestionTypeLabel(mistake.question_type) }} / {{ formatDifficultyLabel(mistake.difficulty) }}
+                    </strong>
+                    <p>{{ mistake.prompt }}</p>
+                    <p v-if="mistake.user_answer">你的答案：{{ mistake.user_answer }}</p>
+                    <p v-if="mistake.correct_answer">标准答案：{{ mistake.correct_answer }}</p>
+                    <p>错因依据：{{ mistake.analysis }}</p>
+                  </article>
+                </div>
+              </article>
+
+              <section
+                v-for="section in resourceSections"
+                :id="section.anchor"
+                :key="section.anchor"
+                class="learning-section"
+              >
+                <h3>{{ section.heading }}</h3>
+                <template v-for="block in section.blocks" :key="`${section.anchor}-${block.type}-${block.lines.join('-')}`">
+                  <p v-if="block.type === 'paragraph'" class="learning-line">
+                    {{ block.lines.join(' ') }}
+                  </p>
+                  <ul v-else-if="block.type === 'unordered'" class="markdown-list">
+                    <li v-for="line in block.lines" :key="line">{{ line }}</li>
+                  </ul>
+                  <ol v-else-if="block.type === 'ordered'" class="markdown-list markdown-list-ordered">
+                    <li v-for="line in block.lines" :key="line">{{ line }}</li>
+                  </ol>
+                  <div v-else class="code-block">
+                    <div v-if="block.language" class="code-block-label">{{ block.language }}</div>
+                    <pre><code>{{ block.lines.join('\n') }}</code></pre>
+                  </div>
+                </template>
+              </section>
+
+              <article v-if="resourceResult.references?.length" class="learning-section">
+                <h3>参考材料</h3>
+                <div class="reference-list">
+                  <article
+                    v-for="reference in resourceResult.references"
+                    :key="reference.id ?? reference.content"
+                    class="reference-card"
+                  >
+                    <strong>{{ reference.id ?? '参考片段' }}</strong>
+                    <p>{{ reference.content }}</p>
+                    <span class="reference-meta">
+                      来源：{{ String(reference.metadata?.source ?? 'RAG 检索') }}
+                    </span>
+                  </article>
+                </div>
+              </article>
+            </div>
+          </div>
+          <div v-else class="empty-state">点击“生成学习课件”后，这里会出现可直接阅读的学习内容。</div>
+        </section>
+
+        <section class="workspace-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="panel-kicker">在线练习</div>
+              <h2>刷题与作答</h2>
+            </div>
+            <EditPen class="panel-icon" />
+          </div>
+          <div class="practice-toolbar">
+            <el-button type="success" :loading="loading.exercises" @click="generateExercises()">生成课后自测</el-button>
+            <el-button plain :disabled="loading.exercises" @click="generateExercises()">重新生成本轮题目</el-button>
+            <span class="practice-toolbar-tip">先生成学习课件，再在这里直接生成围绕当前课件内容的自测题。每次点击都会重新请求后端生成。</span>
+          </div>
+          <div v-if="generationStatus.exercises.hint" class="generation-hint compact">
+            <div class="generation-hint-title">自测题生成进度</div>
+            <div class="generation-status-row">
+              <span class="generation-status-pill">{{ exerciseProgressView.statusLabel }}</span>
+              <span class="generation-status-pill">已耗时 {{ exerciseProgressView.elapsedLabel }}</span>
+              <span class="generation-status-pill">{{ exerciseProgressView.remainingLabel }}</span>
+            </div>
+            <div class="generation-hint-line">
+              <span class="generation-hint-dot" :class="{ running: loading.exercises }"></span>
+              <span>{{ exerciseProgressView.title }}</span>
+              <strong>{{ generationStatus.exercises.progress }}%</strong>
+            </div>
+            <p class="generation-stage-detail">{{ generationStatus.exercises.hint }}</p>
+            <p class="generation-stage-note">{{ exerciseProgressView.detail }}</p>
+            <el-progress
+              :percentage="generationStatus.exercises.progress"
+              :stroke-width="10"
+              :show-text="false"
+              striped
+              striped-flow
+              :duration="8"
+            />
+            <div class="generation-step-list">
+              <div
+                v-for="step in exerciseProgressView.steps"
+                :key="`exercise-step-${step.index}`"
+                class="generation-step-card"
+                :class="step.state"
+              >
+                <span class="generation-step-index">{{ step.index }}</span>
+                <div class="generation-step-copy">
+                  <strong>{{ step.title }}</strong>
+                  <p>{{ step.description }}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div ref="exerciseResultAnchor" />
+          <div v-if="loading.exercises && exerciseSet?.exercises?.length" class="insight-card">
+            <div class="insight-label">题组生成状态</div>
+            <div class="insight-value">正在准备题目</div>
+            <p class="panel-text">已经先为你展示一版可作答题组，页面正在继续等待更完整的正式结果。</p>
+          </div>
+          <div v-if="exerciseSet?.exercises?.length" class="insight-card">
+            <div class="insight-label">本轮题组</div>
+            <div class="insight-value">已生成 {{ exerciseSet.exercises.length }} 道题</div>
+            <p class="panel-text">{{ exerciseSet.summary }}</p>
+            <p v-if="exerciseDeliveryMode === 'upgrading'" class="panel-text">当前先展示快速版题组，后台仍在继续请求正式版题目。</p>
+          </div>
+          <div v-else-if="exerciseGenerationError" class="feedback-card wrong">
+            <div class="insight-label">题目生成结果</div>
+            <div class="insight-value">没有拿到可展示的题目</div>
+            <p class="panel-text">{{ exerciseGenerationError }}</p>
+          </div>
+          <article v-if="exercisePersonalization" class="learning-section">
+            <h3>本次题组依据</h3>
+            <div class="report-evidence-grid">
+              <div class="report-evidence-card"><span>当前掌握度</span><strong>{{ exercisePersonalization.mastery_score }}/100</strong></div>
+              <div class="report-evidence-card"><span>近期正确率</span><strong>{{ exercisePersonalization.correct_rate }}%</strong></div>
+              <div class="report-evidence-card"><span>真实作答次数</span><strong>{{ exercisePersonalization.answered_count }}</strong></div>
+              <div class="report-evidence-card"><span>最近错题数</span><strong>{{ exercisePersonalization.recent_mistakes.length }}</strong></div>
+            </div>
+            <ul class="markdown-list">
+              <li v-for="item in exercisePersonalization.basis" :key="item">{{ item }}</li>
+            </ul>
+            <div v-if="exercisePersonalization.weak_question_types.length" class="tag-row">
+              <span v-for="item in exercisePersonalization.weak_question_types" :key="`exercise-weak-${item}`" class="agent-tag">
+                {{ formatQuestionTypeLabel(item) }}
               </span>
             </div>
-            <p class="learning-line">预计还需 {{ profileChatResult.estimated_remaining_rounds }} 轮可基本补全画像。</p>
-          </article>
-          <article class="learning-section">
-            <h3>画像摘要</h3>
-            <p class="learning-line">学习风格：{{ profileDashboard.learning_style }}</p>
-            <p class="learning-line">近期学习习惯：{{ profileDashboard.habit_summary }}</p>
-            <p class="learning-line">本周专注时长：{{ profileDashboard.weekly_focus_minutes }} 分钟</p>
-          </article>
-          <article class="learning-section">
-            <h3>能力雷达</h3>
-            <div class="metric-stack">
-              <div v-for="item in radarMetrics" :key="item.dimension" class="progress-row">
-                <div class="progress-label">
-                  <span>{{ item.dimension }}</span>
-                  <strong>{{ item.score }}</strong>
-                </div>
-                <el-progress :percentage="item.score" :stroke-width="12" :show-text="false" />
-              </div>
+            <div v-if="exercisePersonalization.recent_mistakes.length" class="reference-list">
+              <article v-for="mistake in exercisePersonalization.recent_mistakes" :key="`exercise-mistake-${mistake.exercise_id}`" class="reference-card">
+                <strong>{{ formatQuestionTypeLabel(mistake.question_type) }} / {{ formatDifficultyLabel(mistake.difficulty) }}</strong>
+                <p>{{ mistake.prompt }}</p>
+                <p>错因依据：{{ mistake.analysis }}</p>
+              </article>
             </div>
           </article>
-          <article class="learning-section">
-            <h3>知识点热力图</h3>
-            <div class="heatmap-grid">
-              <div
-                v-for="item in heatmapMetrics"
-                :key="item.knowledge_point"
-                class="heatmap-cell"
-                :style="{ opacity: `${Math.max(0.38, item.mastery / 100)}` }"
-              >
-                <strong>{{ item.knowledge_point }}</strong>
-                <span>{{ item.mastery }}%</span>
-              </div>
+          <template v-if="currentExercise">
+            <div class="exercise-head">
+              <div class="agent-tag">{{ currentExercise.question_type }}</div>
+              <div class="agent-tag">{{ currentExercise.difficulty }}</div>
+              <div class="agent-tag">第 {{ currentExerciseIndex + 1 }} / {{ exerciseSet?.exercises.length }}</div>
+              <div class="agent-tag">已提交 {{ answeredCount }} 题</div>
             </div>
-          </article>
-        </div>
-        <div v-else class="empty-state">正在加载学习画像。</div>
-      </section>
-
-      <section class="workspace-panel wide">
-        <div class="panel-heading">
-          <div>
-            <div class="panel-kicker">课件学习</div>
-            <h2>{{ coursewareTitle }}</h2>
-          </div>
-          <Document class="panel-icon" />
-        </div>
-        <div v-if="generationStatus.courseware.hint" class="generation-hint courseware-progress-panel">
-          <div class="courseware-progress-header">
-            <div>
-              <div class="generation-hint-title">课件生成进度</div>
-              <p class="courseware-progress-meta">模型会根据当前学习目标和知识点直接生成正式课件内容。</p>
+            <div v-if="currentSubmission" class="insight-card">
+              <div class="insight-label">作答状态</div>
+              <div class="insight-value">本题已提交，不能再次作答</div>
+              <p class="panel-text">你的答案已经锁定。系统会自动进入下一题，你也可以先查看标准答案与解析。</p>
             </div>
-            <strong class="courseware-progress-percentage">{{ generationStatus.courseware.progress }}%</strong>
-          </div>
-          <div class="generation-status-row">
-            <span class="generation-status-pill">{{ coursewareProgressView.statusLabel }}</span>
-            <span class="generation-status-pill">已耗时 {{ coursewareProgressView.elapsedLabel }}</span>
-            <span class="generation-status-pill">{{ coursewareProgressView.remainingLabel }}</span>
-          </div>
-          <div class="generation-hint-line">
-            <span class="generation-hint-dot" :class="{ running: loading.courseware }"></span>
-            <span>{{ coursewareProgressView.title }}</span>
-            <strong>阶段 {{ coursewareProgressView.stageIndex }}/{{ coursewareProgressView.totalStages }}</strong>
-          </div>
-          <p class="generation-stage-detail">{{ generationStatus.courseware.hint }}</p>
-          <p class="generation-stage-note">{{ coursewareProgressView.detail }}</p>
-          <el-progress
-            :percentage="generationStatus.courseware.progress"
-            :stroke-width="12"
-            :show-text="false"
-            striped
-            striped-flow
-            :duration="8"
-          />
-          <div class="generation-step-list">
-            <div
-              v-for="step in coursewareProgressView.steps"
-              :key="`courseware-step-${step.index}`"
-              class="generation-step-card"
-              :class="step.state"
-            >
-              <span class="generation-step-index">{{ step.index }}</span>
-              <div class="generation-step-copy">
-                <strong>{{ step.title }}</strong>
-                <p>{{ step.description }}</p>
+            <div class="exercise-card">
+              <h3>{{ currentExercise.prompt }}</h3>
+              <div v-if="currentExercise.options.length" class="option-list">
+                <label v-for="option in currentExercise.options" :key="option" class="option-item">
+                  <input v-model="currentAnswerDraft" type="radio" :value="option.charAt(0)" :disabled="Boolean(currentSubmission)" />
+                  <span>{{ option }}</span>
+                </label>
               </div>
+              <el-input v-else v-model="currentAnswerDraft" type="textarea" :rows="5" :disabled="Boolean(currentSubmission)" placeholder="请输入你的答案" />
             </div>
-          </div>
-        </div>
-        <div v-if="coursewareGenerationError" class="feedback-card wrong">
-          <div class="insight-label">课件生成状态</div>
-          <div class="insight-value">本次生成失败</div>
-          <p class="panel-text">{{ coursewareGenerationError }}</p>
-        </div>
-        <div v-if="resourceResult" class="reader-layout">
-          <aside class="reader-outline">
-            <div class="insight-label">课件目录</div>
-            <div class="outline-list">
-              <button
-                v-for="section in resourceSections"
-                :key="section.anchor"
-                type="button"
-                class="outline-item"
-                @click="scrollToCoursewareSection(section.anchor)"
-              >
-                {{ section.heading }}
-              </button>
-            </div>
-          </aside>
-
-          <div class="learning-content reader-content">
-            <article v-if="coursewareVariants.length > 1" class="learning-section">
-              <h3>可选课件版本</h3>
-              <div class="reference-list">
-                <article
-                  v-for="variant in coursewareVariants"
-                  :key="variant.variant_id"
-                  class="reference-card clickable-card"
-                  :class="{ active: activeCoursewareVariant?.variant_id === variant.variant_id }"
-                  @click="selectCoursewareVariant(variant.variant_id)"
-                >
-                  <strong>{{ variant.title }}</strong>
-                  <p>{{ variant.summary }}</p>
-                  <span class="reference-meta">
-                    风格：{{ variant.resource_style }}
-                    <template v-if="variant.is_recommended"> · 推荐</template>
-                  </span>
-                </article>
-              </div>
-            </article>
-
-            <article class="learning-section">
-              <h3>学习建议</h3>
-              <div class="tag-row">
-                <span class="agent-tag">先看概念</span>
-                <span class="agent-tag">再读示例</span>
-                <span class="agent-tag">最后做题</span>
-              </div>
-              <p class="learning-line">
-                这份课件已经按章节拆开。建议先顺着目录学习，再回到练习区做题，提交后查看标准答案和解析。
-              </p>
-            </article>
-
-            <article v-if="coursewarePersonalization" class="learning-section">
-              <h3>本次个性化依据</h3>
-              <div class="report-evidence-grid">
-                <div class="report-evidence-card">
-                  <span>当前掌握度</span>
-                  <strong>{{ coursewarePersonalization.mastery_score }}/100</strong>
-                </div>
-                <div class="report-evidence-card">
-                  <span>近期正确率</span>
-                  <strong>{{ coursewarePersonalization.correct_rate }}%</strong>
-                </div>
-                <div class="report-evidence-card">
-                  <span>真实作答次数</span>
-                  <strong>{{ coursewarePersonalization.answered_count }}</strong>
-                </div>
-                <div class="report-evidence-card">
-                  <span>近期弱项题型</span>
-                  <strong>{{ coursewarePersonalization.weak_question_types.length || 0 }}</strong>
-                </div>
-              </div>
-              <ul class="markdown-list">
-                <li v-for="item in coursewarePersonalization.basis" :key="item">{{ item }}</li>
-              </ul>
-              <div v-if="coursewarePersonalization.weak_question_types.length" class="tag-row">
-                <span
-                  v-for="item in coursewarePersonalization.weak_question_types"
-                  :key="`courseware-weak-${item}`"
-                  class="agent-tag"
-                >
-                  {{ formatQuestionTypeLabel(item) }}
-                </span>
-              </div>
-              <div v-if="coursewarePersonalization.recent_mistakes.length" class="reference-list">
-                <article
-                  v-for="mistake in coursewarePersonalization.recent_mistakes"
-                  :key="`courseware-mistake-${mistake.exercise_id}`"
-                  class="reference-card"
-                >
-                  <strong>
-                    {{ formatQuestionTypeLabel(mistake.question_type) }} / {{ formatDifficultyLabel(mistake.difficulty) }}
-                  </strong>
-                  <p>{{ mistake.prompt }}</p>
-                  <p v-if="mistake.user_answer">你的答案：{{ mistake.user_answer }}</p>
-                  <p v-if="mistake.correct_answer">标准答案：{{ mistake.correct_answer }}</p>
-                  <p>错因依据：{{ mistake.analysis }}</p>
-                </article>
-              </div>
-            </article>
-
-            <section
-              v-for="section in resourceSections"
-              :id="section.anchor"
-              :key="section.anchor"
-              class="learning-section"
-            >
-              <h3>{{ section.heading }}</h3>
-              <template v-for="block in section.blocks" :key="`${section.anchor}-${block.type}-${block.lines.join('-')}`">
-                <p v-if="block.type === 'paragraph'" class="learning-line">
-                  {{ block.lines.join(' ') }}
-                </p>
-                <ul v-else-if="block.type === 'unordered'" class="markdown-list">
-                  <li v-for="line in block.lines" :key="line">{{ line }}</li>
-                </ul>
-                <ol v-else-if="block.type === 'ordered'" class="markdown-list markdown-list-ordered">
-                  <li v-for="line in block.lines" :key="line">{{ line }}</li>
-                </ol>
-                <div v-else class="code-block">
-                  <div v-if="block.language" class="code-block-label">{{ block.language }}</div>
-                  <pre><code>{{ block.lines.join('\n') }}</code></pre>
-                </div>
-              </template>
-            </section>
-
-            <article v-if="resourceResult.references?.length" class="learning-section">
-              <h3>参考材料</h3>
-              <div class="reference-list">
-                <article
-                  v-for="reference in resourceResult.references"
-                  :key="reference.id ?? reference.content"
-                  class="reference-card"
-                >
-                  <strong>{{ reference.id ?? '参考片段' }}</strong>
-                  <p>{{ reference.content }}</p>
-                  <span class="reference-meta">
-                    来源：{{ String(reference.metadata?.source ?? 'RAG 检索') }}
-                  </span>
-                </article>
-              </div>
-            </article>
-          </div>
-        </div>
-        <div v-else class="empty-state">点击“生成学习课件”后，这里会出现可直接阅读的学习内容。</div>
-      </section>
-
-      <section class="workspace-panel">
-        <div class="panel-heading">
-          <div>
-            <div class="panel-kicker">在线练习</div>
-            <h2>刷题与作答</h2>
-          </div>
-          <EditPen class="panel-icon" />
-        </div>
-
-        <div class="practice-toolbar">
-          <el-button type="success" :loading="loading.exercises" @click="generateExercises()">
-            生成课后自测
-          </el-button>
-          <el-button plain :disabled="loading.exercises" @click="generateExercises()">
-            重新生成本轮题目
-          </el-button>
-          <span class="practice-toolbar-tip">
-            先生成学习课件，再在这里直接生成围绕当前课件内容的自测题。每次点击都会重新请求后端生成。
-          </span>
-        </div>
-        <div v-if="generationStatus.exercises.hint" class="generation-hint compact">
-          <div class="generation-hint-title">自测题生成进度</div>
-          <div class="generation-status-row">
-            <span class="generation-status-pill">{{ exerciseProgressView.statusLabel }}</span>
-            <span class="generation-status-pill">已耗时 {{ exerciseProgressView.elapsedLabel }}</span>
-            <span class="generation-status-pill">{{ exerciseProgressView.remainingLabel }}</span>
-          </div>
-          <div class="generation-hint-line">
-            <span class="generation-hint-dot" :class="{ running: loading.exercises }"></span>
-            <span>{{ exerciseProgressView.title }}</span>
-            <strong>{{ generationStatus.exercises.progress }}%</strong>
-          </div>
-          <p class="generation-stage-detail">{{ generationStatus.exercises.hint }}</p>
-          <p class="generation-stage-note">{{ exerciseProgressView.detail }}</p>
-          <el-progress
-            :percentage="generationStatus.exercises.progress"
-            :stroke-width="10"
-            :show-text="false"
-            striped
-            striped-flow
-            :duration="8"
-          />
-          <div class="generation-step-list">
-            <div
-              v-for="step in exerciseProgressView.steps"
-              :key="`exercise-step-${step.index}`"
-              class="generation-step-card"
-              :class="step.state"
-            >
-              <span class="generation-step-index">{{ step.index }}</span>
-              <div class="generation-step-copy">
-                <strong>{{ step.title }}</strong>
-                <p>{{ step.description }}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div ref="exerciseResultAnchor" />
-
-        <div v-if="loading.exercises && exerciseSet?.exercises?.length" class="insight-card">
-          <div class="insight-label">题组生成状态</div>
-          <div class="insight-value">正在准备题目</div>
-          <p class="panel-text">已经先为你展示一版可作答题组，页面正在继续等待更完整的正式结果。</p>
-        </div>
-
-        <div v-if="exerciseSet?.exercises?.length" class="insight-card">
-          <div class="insight-label">本轮题组</div>
-          <div class="insight-value">已生成 {{ exerciseSet.exercises.length }} 道题</div>
-          <p class="panel-text">{{ exerciseSet.summary }}</p>
-          <p v-if="exerciseDeliveryMode === 'upgrading'" class="panel-text">当前先展示快速版题组，后台仍在继续请求正式版题目。</p>
-        </div>
-        <div v-else-if="exerciseGenerationError" class="feedback-card wrong">
-          <div class="insight-label">题目生成结果</div>
-          <div class="insight-value">没有拿到可展示的题目</div>
-          <p class="panel-text">{{ exerciseGenerationError }}</p>
-        </div>
-
-        <article v-if="exercisePersonalization" class="learning-section">
-          <h3>本次题组依据</h3>
-          <div class="report-evidence-grid">
-            <div class="report-evidence-card">
-              <span>当前掌握度</span>
-              <strong>{{ exercisePersonalization.mastery_score }}/100</strong>
-            </div>
-            <div class="report-evidence-card">
-              <span>近期正确率</span>
-              <strong>{{ exercisePersonalization.correct_rate }}%</strong>
-            </div>
-            <div class="report-evidence-card">
-              <span>真实作答次数</span>
-              <strong>{{ exercisePersonalization.answered_count }}</strong>
-            </div>
-            <div class="report-evidence-card">
-              <span>最近错题数</span>
-              <strong>{{ exercisePersonalization.recent_mistakes.length }}</strong>
-            </div>
-          </div>
-          <ul class="markdown-list">
-            <li v-for="item in exercisePersonalization.basis" :key="item">{{ item }}</li>
-          </ul>
-          <div v-if="exercisePersonalization.weak_question_types.length" class="tag-row">
-            <span
-              v-for="item in exercisePersonalization.weak_question_types"
-              :key="`exercise-weak-${item}`"
-              class="agent-tag"
-            >
-              {{ formatQuestionTypeLabel(item) }}
-            </span>
-          </div>
-          <div v-if="exercisePersonalization.recent_mistakes.length" class="reference-list">
-            <article
-              v-for="mistake in exercisePersonalization.recent_mistakes"
-              :key="`exercise-mistake-${mistake.exercise_id}`"
-              class="reference-card"
-            >
-              <strong>
-                {{ formatQuestionTypeLabel(mistake.question_type) }} / {{ formatDifficultyLabel(mistake.difficulty) }}
-              </strong>
-              <p>{{ mistake.prompt }}</p>
-              <p>错因依据：{{ mistake.analysis }}</p>
-            </article>
-          </div>
-        </article>
-
-        <template v-if="currentExercise">
-          <div class="exercise-head">
-            <div class="agent-tag">{{ currentExercise.question_type }}</div>
-            <div class="agent-tag">{{ currentExercise.difficulty }}</div>
-            <div class="agent-tag">第 {{ currentExerciseIndex + 1 }} / {{ exerciseSet?.exercises.length }}</div>
-            <div class="agent-tag">已提交 {{ answeredCount }} 题</div>
-          </div>
-
-          <div v-if="currentSubmission" class="insight-card">
-            <div class="insight-label">作答状态</div>
-            <div class="insight-value">本题已提交，不能再次作答</div>
-            <p class="panel-text">
-              你的答案已经锁定。系统会自动进入下一题，你也可以先查看标准答案与解析。
-            </p>
-          </div>
-
-          <div class="exercise-card">
-            <h3>{{ currentExercise.prompt }}</h3>
-
-            <div v-if="currentExercise.options.length" class="option-list">
-              <label v-for="option in currentExercise.options" :key="option" class="option-item">
-                <input
-                  v-model="currentAnswerDraft"
-                  type="radio"
-                  :value="option.charAt(0)"
-                  :disabled="Boolean(currentSubmission)"
-                />
-                <span>{{ option }}</span>
-              </label>
-            </div>
-
-            <el-input
-              v-else
-              v-model="currentAnswerDraft"
-              type="textarea"
-              :rows="5"
-              :disabled="Boolean(currentSubmission)"
-              placeholder="请输入你的答案"
-            />
-          </div>
-
-          <div class="action-row">
-            <el-button
-              type="primary"
-              :loading="loading.submit"
-              :disabled="Boolean(currentSubmission)"
-              @click="submitPractice"
-            >
-              提交答案
-            </el-button>
-            <el-button :disabled="!currentSubmission" @click="goToNextExercise">下一题</el-button>
-          </div>
-
-          <div v-if="currentSubmission" class="feedback-card" :class="{ correct: currentSubmission.feedback.is_correct, wrong: !currentSubmission.feedback.is_correct }">
-            <div class="insight-label">即时反馈</div>
-            <div class="insight-value">{{ currentSubmission.feedback.is_correct ? '回答正确' : '需要继续巩固' }}</div>
-            <p class="panel-text">得分：{{ currentSubmission.feedback.score }}</p>
-            <p class="panel-text">反馈：{{ currentSubmission.feedback.feedback }}</p>
-            <p class="panel-text">建议：{{ currentSubmission.feedback.suggested_action }}</p>
-            <p v-if="currentSubmission.feedback.mastery_after_update !== null" class="panel-text">
-              提交后掌握度更新为：{{ currentSubmission.feedback.mastery_after_update }}/100
-            </p>
-            <p class="panel-text"><strong>你的答案：</strong>{{ currentSubmission.userAnswer }}</p>
-            <p class="panel-text"><strong>标准答案：</strong>{{ currentSubmission.correctAnswer }}</p>
-            <p class="panel-text"><strong>解析：</strong>{{ currentSubmission.analysis }}</p>
-          </div>
-        </template>
-
-        <div v-else class="empty-state">点击“生成课后自测”后，这里会出现围绕当前课件内容生成的结构化题目与答题入口。</div>
-      </section>
-
-      <section class="workspace-panel">
-        <div class="panel-heading">
-          <div>
-            <div class="panel-kicker">知识图谱</div>
-            <h2>前置依赖</h2>
-          </div>
-          <Connection class="panel-icon" />
-        </div>
-        <div v-if="graphStatusView" class="request-status-card" :class="graphStatusView.tone">
-          <strong>{{ graphStatusView.title }}</strong>
-          <p>{{ graphStatusView.detail }}</p>
-          <span>已等待 {{ graphStatusView.elapsedLabel }}</span>
-        </div>
-        <template v-if="dependencyPaths.length || graphVisualization?.nodes.length">
-          <div v-if="dependencyPaths.length" class="dependency-list">
-            <article v-for="(path, index) in dependencyPaths" :key="`path-${index}`" class="dependency-card">
-              <div class="insight-label">依赖链 {{ index + 1 }}</div>
-              <div class="dependency-flow">
-                <span v-for="(node, nodeIndex) in path" :key="`${node}-${nodeIndex}`" class="dependency-node">
-                  {{ node }}
-                </span>
-              </div>
-            </article>
-          </div>
-          <div ref="graphCanvas" class="graph-canvas" />
-        </template>
-        <div v-else class="empty-state">点击“查询知识图谱”后，这里会展示当前知识点的依赖链。</div>
-      </section>
-
-      <section class="workspace-panel">
-        <div class="panel-heading">
-          <div>
-            <div class="panel-kicker">错题本</div>
-            <h2>复盘与重练入口</h2>
-          </div>
-          <CircleCheck class="panel-icon" />
-        </div>
-        <div class="action-row">
-          <el-button :loading="loading.mistakes" @click="fetchMistakeNotebook">刷新错题本</el-button>
-          <el-button type="danger" :loading="loading.remedial" @click="fetchRemedialExercises">生成变式重练题</el-button>
-        </div>
-        <div v-if="mistakeStatusView" class="request-status-card" :class="mistakeStatusView.tone">
-          <strong>{{ mistakeStatusView.title }}</strong>
-          <p>{{ mistakeStatusView.detail }}</p>
-          <span>已等待 {{ mistakeStatusView.elapsedLabel }}</span>
-        </div>
-
-        <div v-if="hasMistakes" class="reference-list">
-          <article
-            v-for="(item, index) in mistakeNotebook?.items"
-            :key="`${item.exercise_id}-${index}`"
-            class="reference-card"
-          >
-            <strong>{{ item.knowledge_point }} / {{ item.question_type }}</strong>
-            <p>你的答案：{{ item.user_answer }}</p>
-            <p>标准答案：{{ item.correct_answer }}</p>
-            <p>解析：{{ item.analysis }}</p>
-            <p>建议：{{ item.suggested_action }}</p>
             <div class="action-row">
-              <el-button size="small" type="warning" @click="startRemedialFromMistake(item.knowledge_point)">
-                生成同类重练题
-              </el-button>
+              <el-button type="primary" :loading="loading.submit" :disabled="Boolean(currentSubmission)" @click="submitPractice">提交答案</el-button>
+              <el-button :disabled="!currentSubmission" @click="goToNextExercise">下一题</el-button>
             </div>
+            <div v-if="currentSubmission" class="feedback-card" :class="{ correct: currentSubmission.feedback.is_correct, wrong: !currentSubmission.feedback.is_correct }">
+              <div class="insight-label">即时反馈</div>
+              <div class="insight-value">{{ currentSubmission.feedback.is_correct ? '回答正确' : '需要继续巩固' }}</div>
+              <p class="panel-text">得分：{{ currentSubmission.feedback.score }}</p>
+              <p class="panel-text">反馈：{{ currentSubmission.feedback.feedback }}</p>
+              <p class="panel-text">建议：{{ currentSubmission.feedback.suggested_action }}</p>
+              <p v-if="currentSubmission.feedback.mastery_after_update !== null" class="panel-text">提交后掌握度更新为：{{ currentSubmission.feedback.mastery_after_update }}/100</p>
+              <p class="panel-text"><strong>你的答案：</strong>{{ currentSubmission.userAnswer }}</p>
+              <p class="panel-text"><strong>标准答案：</strong>{{ currentSubmission.correctAnswer }}</p>
+              <p class="panel-text"><strong>解析：</strong>{{ currentSubmission.analysis }}</p>
+            </div>
+          </template>
+          <div v-else class="empty-state">点击“生成课后自测”后，这里会出现围绕当前课件内容生成的结构化题目与答题入口。</div>
+        </section>
+
+        <section class="workspace-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="panel-kicker">错题本</div>
+              <h2>复盘与重练入口</h2>
+            </div>
+            <CircleCheck class="panel-icon" />
+          </div>
+          <div class="action-row">
+            <el-button :loading="loading.mistakes" @click="fetchMistakeNotebook">刷新错题本</el-button>
+            <el-button type="danger" :loading="loading.remedial" @click="fetchRemedialExercises">生成变式重练题</el-button>
+          </div>
+          <div v-if="mistakeStatusView" class="request-status-card" :class="mistakeStatusView.tone">
+            <strong>{{ mistakeStatusView.title }}</strong>
+            <p>{{ mistakeStatusView.detail }}</p>
+            <span>已等待 {{ mistakeStatusView.elapsedLabel }}</span>
+          </div>
+          <div v-if="hasMistakes" class="reference-list">
+            <article v-for="(item, index) in mistakeNotebook?.items" :key="`${item.exercise_id}-${index}`" class="reference-card">
+              <strong>{{ item.knowledge_point }} / {{ item.question_type }}</strong>
+              <p>你的答案：{{ item.user_answer }}</p>
+              <p>标准答案：{{ item.correct_answer }}</p>
+              <p>解析：{{ item.analysis }}</p>
+              <p>建议：{{ item.suggested_action }}</p>
+              <div class="action-row">
+                <el-button size="small" type="warning" @click="startRemedialFromMistake(item.knowledge_point)">生成同类重练题</el-button>
+              </div>
+            </article>
+          </div>
+          <div v-else class="empty-state">当前还没有错题记录，继续保持。</div>
+          <div v-if="remedialCount" class="insight-card">
+            <div class="insight-label">变式重练</div>
+            <div class="insight-value">{{ remedialCount }} 题</div>
+            <p class="panel-text">{{ remedialExerciseSet?.summary }}</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="student-column student-column-side">
+        <section class="workspace-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="panel-kicker">学习画像</div>
+              <h2>能力雷达与掌握热力图</h2>
+            </div>
+            <TrendCharts class="panel-icon" />
+          </div>
+          <div class="action-row">
+            <el-button @click="fetchProfileDashboard()">刷新画像</el-button>
+          </div>
+          <article class="learning-section profile-chat-section">
+            <h3>画像对话构建</h3>
+            <p class="learning-line">用自然语言告诉系统你学过什么、怎么学得更顺、最近想达成什么目标，系统会自动补全学习画像。</p>
+            <el-input v-model="profileChatMessage" type="textarea" :rows="4" placeholder="例如：我学过 Python 基础，喜欢边写边学，最近想冲刺后端实习。" />
+            <div class="action-row">
+              <el-button type="primary" :loading="loading.profileChat" @click="submitProfileChat">提交画像对话</el-button>
+            </div>
+            <p v-if="profileChatError" class="feedback-inline danger">{{ profileChatError }}</p>
           </article>
-        </div>
+          <div v-if="profileStatusView" class="request-status-card" :class="profileStatusView.tone">
+            <strong>{{ profileStatusView.title }}</strong>
+            <p>{{ profileStatusView.detail }}</p>
+            <span>已等待 {{ profileStatusView.elapsedLabel }}</span>
+          </div>
+          <div v-if="profileDashboard" class="learning-content">
+            <article v-if="profileChatResult" class="learning-section">
+              <h3>本轮画像提取结果</h3>
+              <p class="learning-line preserve-linebreaks">{{ profileChatResult.reply }}</p>
+              <div v-if="Object.keys(profileChatResult.profile_updates).length" class="tag-row">
+                <span v-for="(value, key) in profileChatResult.profile_updates" :key="key" class="agent-tag">{{ key }}: {{ value }}</span>
+              </div>
+              <p class="learning-line">预计还需 {{ profileChatResult.estimated_remaining_rounds }} 轮可基本补全画像。</p>
+            </article>
+            <article class="learning-section">
+              <h3>画像摘要</h3>
+              <p class="learning-line">学习风格：{{ profileDashboard.learning_style }}</p>
+              <p class="learning-line">近期学习习惯：{{ profileDashboard.habit_summary }}</p>
+              <p class="learning-line">本周专注时长：{{ profileDashboard.weekly_focus_minutes }} 分钟</p>
+            </article>
+            <article class="learning-section">
+              <h3>能力雷达</h3>
+              <div class="metric-stack">
+                <div v-for="item in radarMetrics" :key="item.dimension" class="progress-row">
+                  <div class="progress-label">
+                    <span>{{ item.dimension }}</span>
+                    <strong>{{ item.score }}</strong>
+                  </div>
+                  <el-progress :percentage="item.score" :stroke-width="12" :show-text="false" />
+                </div>
+              </div>
+            </article>
+            <article class="learning-section">
+              <h3>知识点热力图</h3>
+              <div class="heatmap-grid">
+                <div v-for="item in heatmapMetrics" :key="item.knowledge_point" class="heatmap-cell" :style="{ opacity: `${Math.max(0.38, item.mastery / 100)}` }">
+                  <strong>{{ item.knowledge_point }}</strong>
+                  <span>{{ item.mastery }}%</span>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div v-else class="empty-state">正在加载学习画像。</div>
+        </section>
 
-        <div v-else class="empty-state">当前还没有错题记录，继续保持。</div>
-
-        <div v-if="remedialCount" class="insight-card">
-          <div class="insight-label">变式重练</div>
-          <div class="insight-value">{{ remedialCount }} 题</div>
-          <p class="panel-text">{{ remedialExerciseSet?.summary }}</p>
-        </div>
-      </section>
+        <section class="workspace-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="panel-kicker">知识图谱</div>
+              <h2>前置依赖</h2>
+            </div>
+            <Connection class="panel-icon" />
+          </div>
+          <div v-if="graphStatusView" class="request-status-card" :class="graphStatusView.tone">
+            <strong>{{ graphStatusView.title }}</strong>
+            <p>{{ graphStatusView.detail }}</p>
+            <span>已等待 {{ graphStatusView.elapsedLabel }}</span>
+          </div>
+          <template v-if="dependencyPaths.length || graphVisualization?.nodes.length">
+            <div v-if="dependencyPaths.length" class="dependency-list">
+              <article v-for="(path, index) in dependencyPaths" :key="`path-${index}`" class="dependency-card">
+                <div class="insight-label">依赖链 {{ index + 1 }}</div>
+                <div class="dependency-flow">
+                  <span v-for="(node, nodeIndex) in path" :key="`${node}-${nodeIndex}`" class="dependency-node">{{ node }}</span>
+                </div>
+              </article>
+            </div>
+            <div ref="graphCanvas" class="graph-canvas" />
+          </template>
+          <div v-else class="empty-state">点击“查询知识图谱”后，这里会展示当前知识点的依赖链。</div>
+        </section>
+      </div>
 
       <section class="workspace-panel wide">
         <div class="panel-heading">

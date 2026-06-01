@@ -403,16 +403,25 @@ select {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
   gap: 18px;
+  align-items: start;
 }
 
 .student-grid {
   grid-template-columns: 1.1fr 0.9fr;
 }
 
+.student-column {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  min-width: 0;
+}
+
 .workspace-panel {
   border-radius: 28px;
   background: var(--panel-strong);
-  padding: 24px;
+  padding: 20px;
+  align-self: start;
 }
 
 .workspace-panel.wide {
@@ -424,7 +433,7 @@ select {
   justify-content: space-between;
   gap: 16px;
   align-items: start;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .panel-kicker {
@@ -446,7 +455,7 @@ select {
 }
 
 .panel-text {
-  margin: 0 0 18px;
+  margin: 0 0 14px;
   color: var(--muted);
   line-height: 1.7;
 }
@@ -530,7 +539,7 @@ select {
 .report-grid {
   display: grid;
   gap: 14px;
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .journey-card,
@@ -643,7 +652,7 @@ select {
 .learning-content {
   display: grid;
   gap: 14px;
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .teacher-detail-stack {
@@ -655,7 +664,7 @@ select {
   display: grid;
   grid-template-columns: 220px 1fr;
   gap: 18px;
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .reader-outline {
@@ -953,8 +962,8 @@ select {
 
 .graph-canvas {
   width: 100%;
-  min-height: 320px;
-  margin-top: 18px;
+  min-height: 240px;
+  margin-top: 14px;
   border-radius: 20px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.68);
@@ -980,11 +989,13 @@ select {
 }
 
 .empty-state {
-  margin-top: 16px;
-  padding: 18px;
+  margin-top: 12px;
+  padding: 14px 16px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.62);
+  border: 1px dashed rgba(125, 85, 46, 0.16);
   color: var(--muted);
+  line-height: 1.7;
 }
 
 .debug-panel {
@@ -1020,6 +1031,10 @@ select {
 
   .workspace-panel.wide {
     grid-column: span 1;
+  }
+
+  .student-column {
+    gap: 16px;
   }
 
   .resource-meta-grid,
