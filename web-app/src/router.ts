@@ -2,7 +2,9 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from './stores/auth'
 
 import AdminView from './views/AdminView.vue'
+import CoursewareView from './views/CoursewareView.vue'
 import LoginView from './views/LoginView.vue'
+import MistakeNotebookView from './views/MistakeNotebookView.vue'
 import RegisterView from './views/RegisterView.vue'
 import StudentView from './views/StudentView.vue'
 import TeacherView from './views/TeacherView.vue'
@@ -34,6 +36,24 @@ const router = createRouter({
       path: '/student',
       name: 'student',
       component: StudentView,
+      meta: {
+        requiresAuth: true,
+        roles: ['student', 'teacher', 'admin'],
+      },
+    },
+    {
+      path: '/student/courseware',
+      name: 'student-courseware',
+      component: CoursewareView,
+      meta: {
+        requiresAuth: true,
+        roles: ['student', 'teacher', 'admin'],
+      },
+    },
+    {
+      path: '/student/mistakes',
+      name: 'student-mistakes',
+      component: MistakeNotebookView,
       meta: {
         requiresAuth: true,
         roles: ['student', 'teacher', 'admin'],

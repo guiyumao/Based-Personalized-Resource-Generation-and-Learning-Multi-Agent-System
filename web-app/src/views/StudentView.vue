@@ -85,6 +85,22 @@ type CoursewareSection = {
   blocks: CoursewareBlock[]
 }
 
+type StoredCoursewareSnapshot = {
+  subject: string
+  topic: string
+  goal: string
+  selectedVariantId: string
+  generatedAt: number
+  resourceResult: ResourceResult
+}
+
+type StoredMistakeSnapshot = {
+  userId: number
+  generatedAt: number
+  mistakeNotebook: MistakeNotebook | null
+  remedialExerciseSet: RemedialExerciseSet | null
+}
+
 type SubmittedExerciseState = {
   exerciseId: number
   userAnswer: string
@@ -160,6 +176,8 @@ const router = useRouter()
 const authStore = useAuthStore()
 const fallbackAnnouncements = new Set<string>()
 const QA_MISTAKE_STORAGE_KEY = 'student-workspace-qa-mistakes'
+const COURSEWARE_STORAGE_KEY = 'student-workspace-courseware'
+const MISTAKE_NOTEBOOK_STORAGE_KEY = 'student-workspace-mistakes'
 
 const serviceStatus = reactive({
   user: 'checking',
@@ -1192,6 +1210,7 @@ function syncQaMistakeRecord(result: QAResponsePayload, userId = exerciseForm.us
 
   persistQaMistakeRecords()
   mistakeNotebook.value = mergeMistakeNotebook(mistakeNotebook.value, userId)
+  persistCurrentMistakeSnapshot()
   return true
 }
 
@@ -1329,6 +1348,7 @@ function applyLocalPracticeState(payload: PracticeSubmissionPayload, feedback: P
   stageReport.value = buildFallbackReport('stage', payload.user_id)
   comprehensiveReport.value = buildFallbackReport('comprehensive', payload.user_id)
   syncLearnerFromDashboard(buildFallbackProfileDashboard(payload.user_id))
+  persistCurrentMistakeSnapshot()
 }
 
 function markTaskCompleted(taskType: string) {
@@ -2299,6 +2319,7 @@ async function generateCourseware() {
       normalized.variants?.find((item) => item.variant_id === selectedCoursewareVariantId.value)?.content ??
       resourceResult.value.content ??
       ''
+    persistCurrentCoursewareSnapshot()
     coursewareGenerationError.value = ''
     markTaskCompleted('courseware')
     finishGenerationProgress('courseware', '模型学习课件已生成完成。')
@@ -2326,6 +2347,59 @@ function selectCoursewareVariant(variantId: string) {
   if (variant) {
     exerciseForm.courseware_content = variant.content
   }
+  persistCurrentCoursewareSnapshot()
+}
+
+function persistCurrentCoursewareSnapshot() {
+  if (typeof window === 'undefined' || !resourceResult.value) {
+    return
+  }
+
+  const snapshot: StoredCoursewareSnapshot = {
+    subject: learningRequestForm.subject.trim(),
+    topic: learningRequestForm.topic.trim(),
+    goal: learningRequestForm.goal.trim(),
+    selectedVariantId: selectedCoursewareVariantId.value,
+    generatedAt: Date.now(),
+    resourceResult: resourceResult.value,
+  }
+
+  window.sessionStorage.setItem(COURSEWARE_STORAGE_KEY, JSON.stringify(snapshot))
+}
+
+function openCoursewarePage() {
+  if (!resourceResult.value) {
+    ElMessage.warning('请先生成正式课件，再进入独立课件页。')
+    return
+  }
+
+  persistCurrentCoursewareSnapshot()
+  void router.push({ name: 'student-courseware' })
+}
+
+function persistCurrentMistakeSnapshot() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const snapshot: StoredMistakeSnapshot = {
+    userId: exerciseForm.user_id,
+    generatedAt: Date.now(),
+    mistakeNotebook: mistakeNotebook.value,
+    remedialExerciseSet: remedialExerciseSet.value,
+  }
+
+  window.sessionStorage.setItem(MISTAKE_NOTEBOOK_STORAGE_KEY, JSON.stringify(snapshot))
+}
+
+function openMistakeNotebookPage() {
+  if (!mistakeNotebook.value && !remedialExerciseSet.value) {
+    ElMessage.warning('请先刷新错题本或生成重练题，再进入独立错题页。')
+    return
+  }
+
+  persistCurrentMistakeSnapshot()
+  void router.push({ name: 'student-mistakes' })
 }
 
 function buildExerciseContext(content?: string) {
@@ -2605,6 +2679,7 @@ async function fetchMistakeNotebook() {
     mistakeNotebook.value = rebuildMistakeNotebook()
     announceFallback('mistake-notebook', '错题本服务暂不可用，已切换到本地错题记录。')
   } finally {
+    persistCurrentMistakeSnapshot()
     loading.mistakes = false
     resetAsyncStatus('mistakes')
   }
@@ -2681,6 +2756,7 @@ async function fetchRemedialExercises() {
     }
     announceFallback('remedial-exercises', '错题重练服务暂不可用，已切换到本地变式题模式。')
   } finally {
+    persistCurrentMistakeSnapshot()
     loading.remedial = false
     resetAsyncStatus('remedial')
   }
@@ -3008,6 +3084,7 @@ onUnmounted(() => {
           <div class="action-row">
             <el-button type="warning" :loading="loading.courseware" @click="generateCourseware()">生成学习课件</el-button>
             <el-button plain :disabled="loading.courseware" @click="generateCourseware()">重新生成课件</el-button>
+            <el-button v-if="resourceResult" type="primary" plain @click="openCoursewarePage()">打开独立课件页</el-button>
             <el-button type="success" :loading="loading.exercises" @click="generateExercises()">生成课后自测</el-button>
             <el-button plain :disabled="loading.exercises" @click="generateExercises()">重新生成自测</el-button>
             <el-button type="danger" :loading="loading.remedial" @click="fetchRemedialExercises">错题变式重练</el-button>
@@ -3071,23 +3148,38 @@ onUnmounted(() => {
             <div class="insight-value">本次生成失败</div>
             <p class="panel-text">{{ coursewareGenerationError }}</p>
           </div>
-          <div v-if="resourceResult" class="reader-layout">
+          <div v-if="resourceResult" class="courseware-entry-layout">
             <aside class="reader-outline">
-              <div class="insight-label">课件目录</div>
+              <div class="insight-label">课件目录预览</div>
               <div class="outline-list">
                 <button
-                  v-for="section in resourceSections"
-                  :key="section.anchor"
+                  v-for="heading in coursewareOutline"
+                  :key="heading"
                   type="button"
-                  class="outline-item"
-                  @click="scrollToCoursewareSection(section.anchor)"
+                  class="outline-item static"
                 >
-                  {{ section.heading }}
+                  {{ heading }}
                 </button>
               </div>
             </aside>
 
             <div class="learning-content reader-content">
+              <article class="learning-section courseware-entry-card">
+                <h3>课件已移至独立页面</h3>
+                <div class="tag-row">
+                  <span class="agent-tag">正式课件</span>
+                  <span class="agent-tag">独立阅读</span>
+                  <span class="agent-tag">{{ resourceSections.length }} 个章节</span>
+                </div>
+                <p class="learning-line">
+                  当前工作台只保留课件生成状态和目录预览，完整课件正文已经放到单独网页里，便于专注阅读和后续继续生成练习题。
+                </p>
+                <div class="action-row">
+                  <el-button type="primary" @click="openCoursewarePage()">进入独立课件页</el-button>
+                  <el-button plain @click="generateExercises()">基于当前课件生成练习题</el-button>
+                </div>
+              </article>
+
               <article v-if="coursewareVariants.length > 1" class="learning-section">
                 <h3>可选课件版本</h3>
                 <div class="reference-list">
@@ -3106,18 +3198,6 @@ onUnmounted(() => {
                     </span>
                   </article>
                 </div>
-              </article>
-
-              <article class="learning-section">
-                <h3>学习建议</h3>
-                <div class="tag-row">
-                  <span class="agent-tag">先看概念</span>
-                  <span class="agent-tag">再读示例</span>
-                  <span class="agent-tag">最后做题</span>
-                </div>
-                <p class="learning-line">
-                  这份课件已经按章节拆开。建议先顺着目录学习，再回到练习区做题，提交后查看标准答案和解析。
-                </p>
               </article>
 
               <article v-if="coursewarePersonalization" class="learning-section">
@@ -3143,71 +3223,6 @@ onUnmounted(() => {
                 <ul class="markdown-list">
                   <li v-for="item in coursewarePersonalization.basis" :key="item">{{ item }}</li>
                 </ul>
-                <div v-if="coursewarePersonalization.weak_question_types.length" class="tag-row">
-                  <span
-                    v-for="item in coursewarePersonalization.weak_question_types"
-                    :key="`courseware-weak-${item}`"
-                    class="agent-tag"
-                  >
-                    {{ formatQuestionTypeLabel(item) }}
-                  </span>
-                </div>
-                <div v-if="coursewarePersonalization.recent_mistakes.length" class="reference-list">
-                  <article
-                    v-for="mistake in coursewarePersonalization.recent_mistakes"
-                    :key="`courseware-mistake-${mistake.exercise_id}`"
-                    class="reference-card"
-                  >
-                    <strong>
-                      {{ formatQuestionTypeLabel(mistake.question_type) }} / {{ formatDifficultyLabel(mistake.difficulty) }}
-                    </strong>
-                    <p>{{ mistake.prompt }}</p>
-                    <p v-if="mistake.user_answer">你的答案：{{ mistake.user_answer }}</p>
-                    <p v-if="mistake.correct_answer">标准答案：{{ mistake.correct_answer }}</p>
-                    <p>错因依据：{{ mistake.analysis }}</p>
-                  </article>
-                </div>
-              </article>
-
-              <section
-                v-for="section in resourceSections"
-                :id="section.anchor"
-                :key="section.anchor"
-                class="learning-section"
-              >
-                <h3>{{ section.heading }}</h3>
-                <template v-for="block in section.blocks" :key="`${section.anchor}-${block.type}-${block.lines.join('-')}`">
-                  <p v-if="block.type === 'paragraph'" class="learning-line">
-                    {{ block.lines.join(' ') }}
-                  </p>
-                  <ul v-else-if="block.type === 'unordered'" class="markdown-list">
-                    <li v-for="line in block.lines" :key="line">{{ line }}</li>
-                  </ul>
-                  <ol v-else-if="block.type === 'ordered'" class="markdown-list markdown-list-ordered">
-                    <li v-for="line in block.lines" :key="line">{{ line }}</li>
-                  </ol>
-                  <div v-else class="code-block">
-                    <div v-if="block.language" class="code-block-label">{{ block.language }}</div>
-                    <pre><code>{{ block.lines.join('\n') }}</code></pre>
-                  </div>
-                </template>
-              </section>
-
-              <article v-if="resourceResult.references?.length" class="learning-section">
-                <h3>参考材料</h3>
-                <div class="reference-list">
-                  <article
-                    v-for="reference in resourceResult.references"
-                    :key="reference.id ?? reference.content"
-                    class="reference-card"
-                  >
-                    <strong>{{ reference.id ?? '参考片段' }}</strong>
-                    <p>{{ reference.content }}</p>
-                    <span class="reference-meta">
-                      来源：{{ String(reference.metadata?.source ?? 'RAG 检索') }}
-                    </span>
-                  </article>
-                </div>
               </article>
             </div>
           </div>
@@ -3346,7 +3361,7 @@ onUnmounted(() => {
           <div v-else class="empty-state">点击“生成课后自测”后，这里会出现围绕当前课件内容生成的结构化题目与答题入口。</div>
         </section>
 
-        <section class="workspace-panel">
+        <section class="workspace-panel mistake-entry-panel">
           <div class="panel-heading">
             <div>
               <div class="panel-kicker">错题本</div>
@@ -3357,30 +3372,100 @@ onUnmounted(() => {
           <div class="action-row">
             <el-button :loading="loading.mistakes" @click="fetchMistakeNotebook">刷新错题本</el-button>
             <el-button type="danger" :loading="loading.remedial" @click="fetchRemedialExercises">生成变式重练题</el-button>
+            <el-button
+              v-if="mistakeNotebook || remedialExerciseSet"
+              type="primary"
+              plain
+              @click="openMistakeNotebookPage()"
+            >
+              打开独立错题页
+            </el-button>
           </div>
           <div v-if="mistakeStatusView" class="request-status-card" :class="mistakeStatusView.tone">
             <strong>{{ mistakeStatusView.title }}</strong>
             <p>{{ mistakeStatusView.detail }}</p>
             <span>已等待 {{ mistakeStatusView.elapsedLabel }}</span>
           </div>
-          <div v-if="hasMistakes" class="reference-list">
-            <article v-for="(item, index) in mistakeNotebook?.items" :key="`${item.exercise_id}-${index}`" class="reference-card">
-              <strong>{{ item.knowledge_point }} / {{ item.question_type }}</strong>
-              <p>你的答案：{{ item.user_answer }}</p>
-              <p>标准答案：{{ item.correct_answer }}</p>
-              <p>解析：{{ item.analysis }}</p>
-              <p>建议：{{ item.suggested_action }}</p>
-              <div class="action-row">
-                <el-button size="small" type="warning" @click="startRemedialFromMistake(item.knowledge_point)">生成同类重练题</el-button>
+          <div v-if="mistakeNotebook || remedialExerciseSet" class="courseware-entry-layout mistake-entry-layout">
+            <aside class="reader-outline">
+              <div class="insight-label">错题预览</div>
+              <div class="outline-list">
+                <button
+                  v-for="(item, index) in mistakeNotebook?.items.slice(0, 6) ?? []"
+                  :key="`${item.exercise_id}-${index}`"
+                  type="button"
+                  class="outline-item static"
+                >
+                  {{ item.knowledge_point }} / {{ formatQuestionTypeLabel(item.question_type) }}
+                </button>
               </div>
-            </article>
+            </aside>
+
+            <div class="learning-content reader-content">
+              <article class="learning-section courseware-entry-card">
+                <h3>错题复盘与重练已移至独立页面</h3>
+                <div class="tag-row">
+                  <span class="agent-tag">错题 {{ mistakeNotebook?.mistake_count ?? 0 }} 条</span>
+                  <span class="agent-tag">重练 {{ remedialCount }} 题</span>
+                  <span class="agent-tag">独立复盘</span>
+                </div>
+                <p class="learning-line">
+                  当前工作台只保留错题概览和进入入口，完整错题内容、标准答案、解析建议和变式重练结果已经放到独立网页里，便于集中复盘。
+                </p>
+                <div class="action-row">
+                  <el-button type="primary" @click="openMistakeNotebookPage()">进入独立错题页</el-button>
+                  <el-button plain @click="fetchRemedialExercises">继续生成变式重练题</el-button>
+                </div>
+              </article>
+
+              <article v-if="mistakeNotebook?.items.length" class="learning-section">
+                <h3>当前优先复盘</h3>
+                <div class="reference-list">
+                  <article class="reference-card">
+                    <strong>
+                      {{ mistakeNotebook.items[0].knowledge_point }} /
+                      {{ formatQuestionTypeLabel(mistakeNotebook.items[0].question_type) }}
+                    </strong>
+                    <p>你的答案：{{ mistakeNotebook.items[0].user_answer }}</p>
+                    <p>标准答案：{{ mistakeNotebook.items[0].correct_answer }}</p>
+                    <p>错因分析：{{ mistakeNotebook.items[0].analysis }}</p>
+                    <p>建议动作：{{ mistakeNotebook.items[0].suggested_action }}</p>
+                  </article>
+                </div>
+              </article>
+
+              <article v-if="remedialCount" class="learning-section">
+                <h3>最近一轮重练摘要</h3>
+                <div class="report-evidence-grid compact">
+                  <div class="report-evidence-card">
+                    <span>已生成题目</span>
+                    <strong>{{ remedialCount }}</strong>
+                  </div>
+                  <div class="report-evidence-card">
+                    <span>来源错题</span>
+                    <strong>{{ remedialExerciseSet?.generated_from_mistakes ?? 0 }}</strong>
+                  </div>
+                </div>
+                <p class="learning-line">{{ remedialExerciseSet?.summary }}</p>
+              </article>
+
+              <article v-if="remedialExerciseSet?.exercises.length" class="learning-section">
+                <h3>最近生成的变式题预览</h3>
+                <div class="reference-list">
+                  <article
+                    v-for="exercise in remedialExerciseSet.exercises.slice(0, 3)"
+                    :key="`student-remedial-preview-${exercise.exercise_id}`"
+                    class="reference-card"
+                  >
+                    <strong>{{ exercise.knowledge_point }} / {{ formatQuestionTypeLabel(exercise.question_type) }}</strong>
+                    <p>{{ exercise.prompt }}</p>
+                    <span class="reference-meta">进入独立错题页后可直接作答，提交后再显示答案与解析</span>
+                  </article>
+                </div>
+              </article>
+            </div>
           </div>
           <div v-else class="empty-state">当前还没有错题记录，继续保持。</div>
-          <div v-if="remedialCount" class="insight-card">
-            <div class="insight-label">变式重练</div>
-            <div class="insight-value">{{ remedialCount }} 题</div>
-            <p class="panel-text">{{ remedialExerciseSet?.summary }}</p>
-          </div>
         </section>
       </div>
 
