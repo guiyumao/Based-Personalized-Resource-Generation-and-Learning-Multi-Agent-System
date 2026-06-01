@@ -25,6 +25,7 @@ from services.evaluation_service.app.schemas.report import (
     MistakeNotebook,
     PracticeFeedback,
     PracticeSubmission,
+    QAMistakeSubmission,
     RemedialExerciseItem,
     RemedialExerciseSet,
     ReportDetail,
@@ -131,6 +132,54 @@ class ReportService:
             suggested_action=suggested_action,
             analysis=payload.analysis,
             mastery_after_update=mastery_after_update,
+        )
+
+    def record_qa_mistake(self, payload: QAMistakeSubmission) -> MistakeItem:
+        """Persist one QA-derived mistake so reports and notebooks can reuse it."""
+
+        exercise = self._resolve_or_create_qa_exercise(payload)
+        answer = (
+            self.db.query(AnswerRecord)
+            .filter(
+                AnswerRecord.user_id == payload.user_id,
+                AnswerRecord.exercise_id == exercise.id,
+            )
+            .order_by(AnswerRecord.id.asc())
+            .first()
+        )
+
+        if answer is None:
+            answer = AnswerRecord(
+                user_id=payload.user_id,
+                exercise_id=exercise.id,
+                user_answer=payload.wrong_answer,
+                is_correct=False,
+                time_spent=payload.time_spent,
+            )
+            self.db.add(answer)
+        else:
+            answer.user_answer = payload.wrong_answer
+            answer.is_correct = False
+            answer.time_spent = payload.time_spent
+
+        updated_profile = self.profile_updater.update_after_practice(
+            user_id=payload.user_id,
+            knowledge_point=payload.knowledge_point,
+            is_correct=False,
+            time_spent=payload.time_spent,
+            question_type=payload.question_type,
+        )
+        self.db.commit()
+
+        return MistakeItem(
+            user_id=payload.user_id,
+            exercise_id=exercise.id,
+            knowledge_point=payload.knowledge_point,
+            question_type=payload.question_type,
+            user_answer=payload.wrong_answer,
+            correct_answer=payload.correct_answer,
+            analysis=payload.analysis,
+            suggested_action=payload.suggested_action,
         )
 
     def generate_stage_report(self, user_id: int) -> ReportSummary:
@@ -461,6 +510,39 @@ class ReportService:
                 },
                 ensure_ascii=False,
             ),
+            answer=payload.correct_answer,
+            analysis=payload.analysis,
+        )
+        self.db.add(exercise)
+        self.db.flush()
+        return exercise
+
+    def _resolve_or_create_qa_exercise(self, payload: QAMistakeSubmission) -> Exercise:
+        exercise = self.db.get(Exercise, payload.exercise_id)
+        content = json.dumps(
+            {
+                "knowledge_point": payload.knowledge_point,
+                "question_type": payload.question_type,
+                "prompt": payload.question_summary,
+                "source": "qa",
+            },
+            ensure_ascii=False,
+        )
+        if exercise is not None:
+            exercise.type = payload.question_type
+            exercise.difficulty = self._infer_difficulty_level(payload.question_type)
+            exercise.content = content
+            exercise.answer = payload.correct_answer
+            exercise.analysis = payload.analysis
+            return exercise
+
+        knowledge_point = self._resolve_or_create_knowledge_point(payload.knowledge_point)
+        exercise = Exercise(
+            id=payload.exercise_id,
+            knowledge_point_id=knowledge_point.id,
+            type=payload.question_type,
+            difficulty=self._infer_difficulty_level(payload.question_type),
+            content=content,
             answer=payload.correct_answer,
             analysis=payload.analysis,
         )

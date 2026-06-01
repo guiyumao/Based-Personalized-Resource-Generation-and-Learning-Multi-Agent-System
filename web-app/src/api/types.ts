@@ -274,6 +274,19 @@ export type PracticeSubmissionPayload = {
   time_spent: number
 }
 
+export type QAMistakeSubmissionPayload = {
+  user_id: number
+  exercise_id: number
+  knowledge_point: string
+  question_type: 'choice' | 'blank' | 'judge' | 'short_answer' | 'programming'
+  question_summary: string
+  wrong_answer: string
+  correct_answer: string
+  analysis: string
+  suggested_action: string
+  time_spent: number
+}
+
 export type PracticeFeedback = {
   user_id: number
   exercise_id: number

@@ -9,8 +9,10 @@ from services.evaluation_service.app.schemas.report import (
     AnalyticsSuggestion,
     AnswerRecordIn,
     MistakeNotebook,
+    MistakeItem,
     PracticeFeedback,
     PracticeSubmission,
+    QAMistakeSubmission,
     RemedialExerciseSet,
     ReportDetail,
     ReportSummary,
@@ -39,6 +41,17 @@ def submit_practice_answer(payload: PracticeSubmission, db: Session = Depends(ge
     return ApiResponse(
         data=report_service.evaluate_practice(payload),
         message="Practice answer evaluated successfully.",
+    )
+
+
+@router.post("/mistakes/qa", response_model=ApiResponse[MistakeItem])
+def submit_qa_mistake(payload: QAMistakeSubmission, db: Session = Depends(get_db)) -> ApiResponse[MistakeItem]:
+    """Persist one QA-derived mistake into the evaluation database."""
+
+    report_service = ReportService(db)
+    return ApiResponse(
+        data=report_service.record_qa_mistake(payload),
+        message="QA mistake saved successfully.",
     )
 
 

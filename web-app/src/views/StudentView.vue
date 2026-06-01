@@ -29,11 +29,13 @@ import {
   type LearnerProfileDashboard,
   type LearningPathPayload,
   type LearningPathResponse,
+  type MistakeItem,
   type MistakeNotebook,
   type PersonalizationContext,
   type ProfileChatResponsePayload,
   type PracticeFeedback,
   type PracticeSubmissionPayload,
+  type QAMistakeSubmissionPayload,
   type QARequestPayload,
   type QAResponsePayload,
   type RemedialExerciseSet,
@@ -64,6 +66,11 @@ type GraphResult = {
 type LocalPracticeRecord = PracticeSubmissionPayload & {
   is_correct: boolean
   score: number
+}
+
+type LocalMistakeRecord = MistakeItem & {
+  user_id: number
+  source: 'practice' | 'qa'
 }
 
 type CoursewareBlock =
@@ -152,6 +159,7 @@ type GlobalGenerationBannerView = {
 const router = useRouter()
 const authStore = useAuthStore()
 const fallbackAnnouncements = new Set<string>()
+const QA_MISTAKE_STORAGE_KEY = 'student-workspace-qa-mistakes'
 
 const serviceStatus = reactive({
   user: 'checking',
@@ -223,6 +231,7 @@ const asyncRequestStatus = reactive<Record<AsyncStatusKey, AsyncRequestState>>({
 const activeTaskId = ref('')
 const currentExerciseIndex = ref(0)
 const localPracticeRecords = ref<LocalPracticeRecord[]>([])
+const localQaMistakeRecords = ref<LocalMistakeRecord[]>(readStoredQaMistakeRecords())
 
 const exerciseDrafts = reactive<Record<number, string>>({})
 const submittedExercises = reactive<Record<number, SubmittedExerciseState>>({})
@@ -397,6 +406,104 @@ const currentAnswerDraft = computed({
 const answeredCount = computed(() => Object.keys(submittedExercises).length)
 const hasMistakes = computed(() => Boolean(mistakeNotebook.value?.mistake_count))
 const remedialCount = computed(() => remedialExerciseSet.value?.exercises.length ?? 0)
+const sidebarOverviewMetrics = computed(() => {
+  const totalTasks = completionStats.value.total
+  const totalExercises = exerciseSet.value?.exercises.length ?? 0
+  const completedRatio = totalTasks ? Math.round((completionStats.value.completed / totalTasks) * 100) : 0
+  const activeDifficulty = activeTask.value ? difficultyLabelMap[activeTask.value.difficulty] ?? activeTask.value.difficulty : ''
+  const activeProgress =
+    totalExercises && currentExercise.value
+      ? `当前第 ${Math.min(currentExerciseIndex.value + 1, totalExercises)}/${totalExercises} 题`
+      : '练习生成后显示'
+
+  return [
+    {
+      label: '当前任务',
+      value: activeTask.value?.knowledge_point ?? '待选择',
+      hint: activeTask.value ? `${activeTask.value.title} · ${activeDifficulty}` : '从左侧任务列表选择任务',
+    },
+    {
+      label: '任务完成',
+      value: totalTasks ? `${completionStats.value.completed}/${totalTasks}` : '待开始',
+      hint: totalTasks ? `当前完成率 ${completedRatio}%` : '学习路径生成后显示',
+    },
+    {
+      label: '答题进度',
+      value: totalExercises ? `${answeredCount.value}/${totalExercises}` : '未生成',
+      hint: activeProgress,
+    },
+    {
+      label: '错题 / 重练',
+      value: `${mistakeNotebook.value?.mistake_count ?? 0} / ${remedialCount.value}`,
+      hint: remedialCount.value ? '左侧可直接进入变式重练' : hasMistakes.value ? '当前暂无待重练题目' : '继续保持当前节奏',
+    },
+  ]
+})
+const sidebarGenerationItems = computed(() => {
+  const items: Array<{ label: string; progress: number; status: string; detail: string }> = []
+
+  if (generationStatus.courseware.status !== 'idle' || resourceResult.value) {
+    items.push({
+      label: '学习课件',
+      progress:
+        resourceResult.value && generationStatus.courseware.status === 'idle'
+          ? 100
+          : generationStatus.courseware.progress,
+      status:
+        resourceResult.value && generationStatus.courseware.status === 'idle'
+          ? '已完成'
+          : coursewareProgressView.value.statusLabel,
+      detail:
+        resourceResult.value && generationStatus.courseware.status === 'idle'
+          ? coursewareTitle.value
+          : coursewareProgressView.value.title,
+    })
+  }
+
+  if (generationStatus.exercises.status !== 'idle' || exerciseSet.value) {
+    items.push({
+      label: '练习题组',
+      progress:
+        exerciseSet.value && generationStatus.exercises.status === 'idle'
+          ? 100
+          : generationStatus.exercises.progress,
+      status:
+        exerciseSet.value && generationStatus.exercises.status === 'idle'
+          ? '已完成'
+          : exerciseProgressView.value.statusLabel,
+      detail:
+        exerciseSet.value && generationStatus.exercises.status === 'idle'
+          ? `${exerciseSet.value.exercises.length} 道练习已返回`
+          : exerciseProgressView.value.title,
+    })
+  }
+
+  return items
+})
+const sidebarActionItems = computed(() => {
+  const items: string[] = []
+
+  if (stageReport.value?.evidence.weakest_knowledge_point) {
+    const accuracy = stageReport.value.evidence.weakest_knowledge_accuracy
+    items.push(
+      `优先补强 ${stageReport.value.evidence.weakest_knowledge_point}${accuracy !== null ? `，当前正确率 ${accuracy}%` : ''}。`,
+    )
+  }
+
+  if (stageReport.value?.next_actions.length) {
+    items.push(...stageReport.value.next_actions.slice(0, 2))
+  }
+
+  if (comprehensiveReport.value?.evidence.weakest_question_types.length) {
+    items.push(`重点训练题型：${comprehensiveReport.value.evidence.weakest_question_types.slice(0, 2).join('、')}`)
+  }
+
+  if (!items.length) {
+    items.push(activeTask.value ? `先完成“${activeTask.value.title}”这一项任务。` : '先在左侧选择任务并开始生成课件。')
+  }
+
+  return items.slice(0, 4)
+})
 const dependencyPaths = computed(() => {
   const dependencies = graphResult.value?.dependencies ?? []
   return dependencies.map((item) => item.path ?? []).filter((path) => path.length > 0)
@@ -409,6 +516,22 @@ const qaRouteUpdates = computed(() => qaResult.value?.structured_analysis.learni
 const qaKnowledgeGaps = computed(() => qaResult.value?.structured_analysis.identified_knowledge_gaps ?? [])
 const qaMisconceptions = computed(() => qaResult.value?.structured_analysis.misconceptions ?? [])
 const qaStudySuggestions = computed(() => qaResult.value?.structured_analysis.study_suggestions ?? [])
+const showQaLearningAnalysis = computed(() => {
+  const analysis = qaResult.value?.structured_analysis
+  if (!analysis) {
+    return false
+  }
+
+  return Boolean(
+    qaKnowledgeGaps.value.length ||
+      qaMisconceptions.value.length ||
+      qaRouteUpdates.value.length ||
+      qaRecommendations.value.length ||
+      qaStudySuggestions.value.length ||
+      analysis.recommended_next_knowledge_points.length ||
+      analysis.mistake_book_update.should_add,
+  )
+})
 const coursewareVariants = computed<ResourceVariant[]>(() => resourceResult.value?.variants ?? [])
 const activeCoursewareVariant = computed<ResourceVariant | null>(() => {
   const variants = coursewareVariants.value
@@ -859,12 +982,98 @@ function buildFallbackProfileDashboard(userId = exerciseForm.user_id): LearnerPr
   }
 }
 
-function rebuildMistakeNotebook(userId = exerciseForm.user_id): MistakeNotebook {
-  const records = localPracticeRecords.value.filter((item) => item.user_id === userId && !item.is_correct)
-  return {
+function readStoredQaMistakeRecords(): LocalMistakeRecord[] {
+  if (typeof window === 'undefined') {
+    return []
+  }
+
+  try {
+    const raw = window.localStorage.getItem(QA_MISTAKE_STORAGE_KEY)
+    if (!raw) {
+      return []
+    }
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+    return parsed.flatMap((item) => normalizeStoredQaMistakeRecord(item))
+  } catch {
+    return []
+  }
+}
+
+function normalizeStoredQaMistakeRecord(value: unknown): LocalMistakeRecord[] {
+  if (!value || typeof value !== 'object') {
+    return []
+  }
+
+  const item = value as Record<string, unknown>
+  const userId = Number(item.user_id)
+  const exerciseId = Number(item.exercise_id)
+  const knowledgePoint = typeof item.knowledge_point === 'string' ? item.knowledge_point.trim() : ''
+  const questionType = typeof item.question_type === 'string' ? item.question_type.trim() : ''
+  const userAnswer = typeof item.user_answer === 'string' ? item.user_answer.trim() : ''
+  const correctAnswer = typeof item.correct_answer === 'string' ? item.correct_answer.trim() : ''
+  const analysis = typeof item.analysis === 'string' ? item.analysis.trim() : ''
+  const suggestedAction = typeof item.suggested_action === 'string' ? item.suggested_action.trim() : ''
+  const source = item.source === 'practice' ? 'practice' : 'qa'
+
+  if (
+    !Number.isFinite(userId)
+    || !Number.isFinite(exerciseId)
+    || !knowledgePoint
+    || !questionType
+    || !analysis
+    || !suggestedAction
+  ) {
+    return []
+  }
+
+  return [{
     user_id: userId,
-    mistake_count: records.length,
-    items: records.map((item) => ({
+    exercise_id: exerciseId,
+    knowledge_point: knowledgePoint,
+    question_type: ['choice', 'blank', 'judge', 'short_answer', 'programming'].includes(questionType)
+      ? (questionType as LocalMistakeRecord['question_type'])
+      : 'short_answer',
+    user_answer: userAnswer,
+    correct_answer: correctAnswer,
+    analysis,
+    suggested_action: suggestedAction,
+    source,
+  }]
+}
+
+function persistQaMistakeRecords() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.setItem(QA_MISTAKE_STORAGE_KEY, JSON.stringify(localQaMistakeRecords.value))
+}
+
+function createSyntheticMistakeId(seed: string) {
+  let hash = 0
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) >>> 0
+  }
+  return 900000000 + (hash % 100000000)
+}
+
+function buildMistakeItemKey(item: Pick<MistakeItem, 'exercise_id' | 'knowledge_point' | 'question_type' | 'user_answer' | 'correct_answer' | 'analysis'>) {
+  return [
+    item.exercise_id,
+    item.knowledge_point.trim(),
+    item.question_type,
+    item.user_answer.trim(),
+    item.correct_answer.trim(),
+    item.analysis.trim(),
+  ].join('::')
+}
+
+function collectLocalMistakeItems(userId = exerciseForm.user_id): MistakeItem[] {
+  const practiceItems: MistakeItem[] = localPracticeRecords.value
+    .filter((item) => item.user_id === userId && !item.is_correct)
+    .map((item) => ({
       exercise_id: item.exercise_id,
       knowledge_point: item.knowledge_point,
       question_type: item.question_type,
@@ -872,7 +1081,150 @@ function rebuildMistakeNotebook(userId = exerciseForm.user_id): MistakeNotebook 
       correct_answer: item.correct_answer,
       analysis: item.analysis,
       suggested_action: '先读懂解析，再去做错题变式重练，不再重复提交原题。',
-    })),
+    }))
+
+  const qaItems: MistakeItem[] = localQaMistakeRecords.value
+    .filter((item) => item.user_id === userId)
+    .map((item) => ({
+      exercise_id: item.exercise_id,
+      knowledge_point: item.knowledge_point,
+      question_type: item.question_type,
+      user_answer: item.user_answer,
+      correct_answer: item.correct_answer,
+      analysis: item.analysis,
+      suggested_action: item.suggested_action,
+    }))
+
+  const merged: MistakeItem[] = []
+  const seen = new Set<string>()
+  ;[...practiceItems, ...qaItems].forEach((item) => {
+    const key = buildMistakeItemKey(item)
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    merged.push(item)
+  })
+
+  return merged
+}
+
+function rebuildMistakeNotebook(userId = exerciseForm.user_id): MistakeNotebook {
+  const records = collectLocalMistakeItems(userId)
+  return {
+    user_id: userId,
+    mistake_count: records.length,
+    items: records,
+  }
+}
+
+function mergeMistakeNotebook(base: MistakeNotebook | null, userId = exerciseForm.user_id): MistakeNotebook {
+  const merged: MistakeItem[] = []
+  const seen = new Set<string>()
+  const baseItems = base?.user_id === userId ? base.items : []
+  const localItems = collectLocalMistakeItems(userId)
+
+  ;[...baseItems, ...localItems].forEach((item) => {
+    const key = buildMistakeItemKey(item)
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    merged.push(item)
+  })
+
+  return {
+    user_id: userId,
+    mistake_count: merged.length,
+    items: merged,
+  }
+}
+
+function buildQaMistakeRecord(result: QAResponsePayload, userId = exerciseForm.user_id): LocalMistakeRecord | null {
+  const update = result.structured_analysis.mistake_book_update
+  if (!update.should_add) {
+    return null
+  }
+
+  const questionSummary = update.question_summary.trim() || qaForm.question.trim()
+  const wrongReason = update.wrong_reason.trim() || qaForm.wrong_answer?.trim() || qaForm.student_answer?.trim() || '未提供具体错误答案'
+  const correctApproach = update.correct_approach.trim() || '先复盘这次错误，再用自己的话重新说一遍正确思路。'
+  const knowledgePoint = (
+    result.structured_analysis.recommended_next_knowledge_points[0]
+    || qaForm.current_knowledge_points[0]
+    || pathForm.knowledge_point
+    || result.subject
+    || '问答复盘'
+  ).trim()
+  const seed = `${userId}::${knowledgePoint}::${questionSummary}::${wrongReason}::${correctApproach}`
+
+  return {
+    user_id: userId,
+    exercise_id: createSyntheticMistakeId(seed),
+    knowledge_point: knowledgePoint || '问答复盘',
+    question_type: 'short_answer',
+    user_answer: wrongReason,
+    correct_answer: correctApproach,
+    analysis: `题目摘要：${questionSummary}\n问题分析：${wrongReason}`,
+    suggested_action: correctApproach,
+    source: 'qa',
+  }
+}
+
+function syncQaMistakeRecord(result: QAResponsePayload, userId = exerciseForm.user_id) {
+  const record = buildQaMistakeRecord(result, userId)
+  if (!record) {
+    return false
+  }
+
+  const existingIndex = localQaMistakeRecords.value.findIndex((item) => item.exercise_id === record.exercise_id)
+  if (existingIndex >= 0) {
+    const existing = localQaMistakeRecords.value[existingIndex]
+    const existingKey = buildMistakeItemKey(existing)
+    const nextKey = buildMistakeItemKey(record)
+    if (existingKey === nextKey && existing.suggested_action === record.suggested_action) {
+      return false
+    }
+    localQaMistakeRecords.value.splice(existingIndex, 1, record)
+  } else {
+    localQaMistakeRecords.value.unshift(record)
+  }
+
+  persistQaMistakeRecords()
+  mistakeNotebook.value = mergeMistakeNotebook(mistakeNotebook.value, userId)
+  return true
+}
+
+async function syncQaMistakeRecordToEvaluation(result: QAResponsePayload, userId = exerciseForm.user_id) {
+  const record = buildQaMistakeRecord(result, userId)
+  if (!record) {
+    return false
+  }
+
+  const update = result.structured_analysis.mistake_book_update
+  const payload: QAMistakeSubmissionPayload = {
+    user_id: userId,
+    exercise_id: record.exercise_id,
+    knowledge_point: record.knowledge_point,
+    question_type: record.question_type,
+    question_summary: update.question_summary.trim() || qaForm.question.trim(),
+    wrong_answer: record.user_answer,
+    correct_answer: record.correct_answer,
+    analysis: record.analysis,
+    suggested_action: record.suggested_action,
+    time_spent: 0,
+  }
+
+  try {
+    await evaluationApi.post('/evaluation/mistakes/qa', payload)
+    await Promise.all([
+      fetchMistakeNotebook(),
+      fetchReports(),
+      fetchProfileDashboard(userId),
+    ])
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -1691,6 +2043,18 @@ function buildQaLearningHistory() {
   }
 }
 
+function isLikelyLearningQuestion(question: string) {
+  const trimmed = question.trim()
+  if (!trimmed) {
+    return false
+  }
+
+  const lower = trimmed.toLowerCase()
+  return /python|java|c\+\+|循环|for|while|if|代码|编程|函数|算法|题目|错题|作业|考试|学习|知识点|数学|物理|化学|英语|讲解|解析|证明|推导/.test(
+    lower,
+  )
+}
+
 function buildFallbackQaResponse(): QAResponsePayload {
   const question = qaForm.question.trim()
   const knowledgePoint =
@@ -1699,7 +2063,7 @@ function buildFallbackQaResponse(): QAResponsePayload {
     exerciseForm.knowledge_point ||
     '当前问题'
   const lowerQuestion = question.toLowerCase()
-  const hasLearningContext = /python|循环|for|while|if|代码|编程|函数|算法|题目|错题|学习/.test(lowerQuestion)
+  const hasLearningContext = isLikelyLearningQuestion(question)
   const hasWrongContext = Boolean(qaForm.student_answer?.trim() || qaForm.wrong_answer?.trim())
   const shouldAddMistake = hasWrongContext && /题|错|答案|作业|解析|复盘/.test(question)
 
@@ -1707,9 +2071,7 @@ function buildFallbackQaResponse(): QAResponsePayload {
     ? `你提到的问题目前更像一个学习问题，我会先围绕问题本身讲解；如果你愿意继续做学习分析，可以再补充题目背景、你的思路或者错误答案。`
     : `你刚刚问的是：“${question}”。这个问题本身不一定属于错题复盘或知识漏洞诊断场景，所以我不会强行把它归到当前课件知识点上。若你想继续做学习分析，可以补充题目或作答过程。`
   let knowledgeGaps = hasLearningContext ? [knowledgePoint] : []
-  let misconceptions = hasLearningContext
-    ? ['当前理解还需要把概念、条件和执行过程连起来。']
-    : ['当前问题未明显暴露具体知识漏洞，暂不强行归因。']
+  let misconceptions = hasLearningContext ? ['当前理解还需要把概念、条件和执行过程连起来。'] : []
   let nextActions = hasLearningContext
     ? ['先听讲解，再根据是否有错误作答决定要不要继续复盘。']
     : ['如果你希望继续做学习分析，可以补充题目背景、作答思路或错误答案。']
@@ -1784,35 +2146,41 @@ function buildFallbackQaResponse(): QAResponsePayload {
     structured_analysis: {
       identified_knowledge_gaps: knowledgeGaps,
       misconceptions,
-      difficulty_level: 'intermediate',
-      learning_state: '当前处于“已经接触概念，但执行过程还没有真正想透”的阶段，适合通过讲解加少量诊断题快速补牢。',
-      recommended_next_knowledge_points: [knowledgePoint],
-      learning_route_updates: [
-        {
-          knowledge_point: knowledgePoint,
-          priority: 'high',
-          action: routeAction,
-          reason: routeReason,
-        },
-      ],
-      resource_recommendations: [
-        {
-          resource_type: 'courseware',
-          title: `${knowledgePoint} 精讲课件`,
-          reason: '先把概念、条件和执行步骤重新讲透，再做题效果更好。',
-        },
-        {
-          resource_type: 'exercise',
-          title: `${knowledgePoint} 基础诊断题`,
-          reason: '通过少量题目确认是否真的理解了关键逻辑。',
-        },
-      ],
-      study_suggestions: nextActions,
+      difficulty_level: hasLearningContext ? 'intermediate' : 'foundation',
+      learning_state: hasLearningContext
+        ? '当前处于“已经接触概念，但执行过程还没有真正想透”的阶段，适合通过讲解加少量诊断题快速补牢。'
+        : '本轮问题属于通用问答，未触发学习分析。',
+      recommended_next_knowledge_points: hasLearningContext ? [knowledgePoint] : [],
+      learning_route_updates: hasLearningContext
+        ? [
+            {
+              knowledge_point: knowledgePoint,
+              priority: 'high',
+              action: routeAction,
+              reason: routeReason,
+            },
+          ]
+        : [],
+      resource_recommendations: hasLearningContext
+        ? [
+            {
+              resource_type: 'courseware',
+              title: `${knowledgePoint} 精讲课件`,
+              reason: '先把概念、条件和执行步骤重新讲透，再做题效果更好。',
+            },
+            {
+              resource_type: 'exercise',
+              title: `${knowledgePoint} 基础诊断题`,
+              reason: '通过少量题目确认是否真的理解了关键逻辑。',
+            },
+          ]
+        : [],
+      study_suggestions: hasLearningContext ? nextActions : [],
       mistake_book_update: {
         should_add: shouldAddMistake,
         question_summary: question || `关于 ${knowledgePoint} 的提问`,
-        wrong_reason: wrongReason,
-        correct_approach: correctApproach,
+        wrong_reason: shouldAddMistake ? wrongReason : '',
+        correct_approach: shouldAddMistake ? correctApproach : '',
       },
     },
   }
@@ -2232,7 +2600,7 @@ async function fetchMistakeNotebook() {
   try {
     const userId = exerciseForm.user_id
     const { data } = await evaluationApi.get<ApiEnvelope<MistakeNotebook>>(`/evaluation/mistakes/${userId}/detail`)
-    mistakeNotebook.value = data.data
+    mistakeNotebook.value = mergeMistakeNotebook(data.data, userId)
   } catch {
     mistakeNotebook.value = rebuildMistakeNotebook()
     announceFallback('mistake-notebook', '错题本服务暂不可用，已切换到本地错题记录。')
@@ -2345,11 +2713,11 @@ async function askQaAgent() {
   }
   applyLearningRequestToForms()
   if (!qaForm.question.trim()) {
-    qaError.value = '请先输入你的问题，再开始智能讲解。'
+    qaError.value = '请先输入你的问题，再开始智能回答。'
     return
   }
   loading.qa = true
-  startAsyncStatus('qa', '智能讲解')
+  startAsyncStatus('qa', '智能回答')
   qaError.value = ''
   qaResult.value = null
   await nextTick()
@@ -2357,14 +2725,15 @@ async function askQaAgent() {
   try {
     qaForm.student_id = String(authStore.user?.userId ?? exerciseForm.user_id)
     qaForm.subject = pathForm.subject
-    qaForm.current_knowledge_points = [
-      pathForm.knowledge_point,
-      exerciseForm.knowledge_point,
-      resourceResult.value?.knowledge_point,
-    ].filter((item): item is string => Boolean(item && item.trim()))
-    qaForm.learning_route = learningPath.value ?? {}
-    qaForm.error_book = mistakeNotebook.value ?? {}
-    qaForm.learning_history = buildQaLearningHistory()
+    const learningQuestion = isLikelyLearningQuestion(qaForm.question)
+    qaForm.current_knowledge_points = learningQuestion
+      ? [pathForm.knowledge_point, exerciseForm.knowledge_point, resourceResult.value?.knowledge_point].filter(
+          (item): item is string => Boolean(item && item.trim()),
+        )
+      : []
+    qaForm.learning_route = learningQuestion ? (learningPath.value ?? {}) : {}
+    qaForm.error_book = learningQuestion ? (mistakeNotebook.value ?? {}) : {}
+    qaForm.learning_history = learningQuestion ? buildQaLearningHistory() : {}
 
     lastQaRequest.value = {
       ...qaForm,
@@ -2373,9 +2742,19 @@ async function askQaAgent() {
     const { data } = await qaApi.post<EnvelopeLike<QAResponsePayload>>('/qa/analyze', qaForm)
     lastQaRawResponse.value = data
     qaResult.value = unwrapApiData(data)
+    const addedToMistakeNotebook = syncQaMistakeRecord(qaResult.value, Number(qaForm.student_id) || exerciseForm.user_id)
+    const syncedQaMistakeRemotely = addedToMistakeNotebook
+      ? await syncQaMistakeRecordToEvaluation(qaResult.value, Number(qaForm.student_id) || exerciseForm.user_id)
+      : false
     await nextTick()
     scrollToQaResult()
-    ElMessage.success('智能讲解结果已生成')
+    ElMessage.success(
+      syncedQaMistakeRemotely
+        ? '智能回答结果已生成，并已同步到错题本和学习报告。'
+        : addedToMistakeNotebook
+          ? '智能回答结果已生成，并已同步到错题本。'
+          : '智能回答结果已生成',
+    )
   } catch (error) {
     const message =
       typeof error === 'object' &&
@@ -2385,13 +2764,22 @@ async function askQaAgent() {
         ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
         : ''
     qaResult.value = buildFallbackQaResponse()
+    const addedToMistakeNotebook = syncQaMistakeRecord(qaResult.value, Number(qaForm.student_id) || exerciseForm.user_id)
+    const syncedQaMistakeRemotely = addedToMistakeNotebook
+      ? await syncQaMistakeRecordToEvaluation(qaResult.value, Number(qaForm.student_id) || exerciseForm.user_id)
+      : false
     qaError.value = message
-      ? `远程答疑暂时不可用，当前已切换为本地讲解模式：${message}`
-      : '远程答疑暂时不可用，当前已切换为本地讲解模式。'
+      ? `远程问答暂时不可用，当前已切换为本地回答模式：${message}`
+      : '远程问答暂时不可用，当前已切换为本地回答模式。'
     lastQaRawResponse.value = error
     await nextTick()
     scrollToQaResult()
-    announceFallback('qa-agent', '智能答疑远程服务暂不可用，已切换为本地讲解模式。')
+    if (syncedQaMistakeRemotely) {
+      ElMessage.success('已根据本地问答结果同步更新错题本和学习报告。')
+    } else if (addedToMistakeNotebook) {
+      ElMessage.success('已根据本地问答结果同步更新错题本。')
+    }
+    announceFallback('qa-agent', '智能问答远程服务暂不可用，已切换为本地回答模式。')
   } finally {
     loading.qa = false
     resetAsyncStatus('qa')
@@ -2432,7 +2820,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="dashboard-shell">
+  <div class="dashboard-shell student-workspace-shell">
     <div class="aurora aurora-a" />
     <div class="aurora aurora-b" />
 
@@ -3088,13 +3476,78 @@ onUnmounted(() => {
           </template>
           <div v-else class="empty-state">点击“查询知识图谱”后，这里会展示当前知识点的依赖链。</div>
         </section>
+
+        <section class="workspace-panel sidebar-briefing-panel">
+          <div class="panel-heading">
+            <div>
+              <div class="panel-kicker">学习总览</div>
+              <h2>本轮状态</h2>
+            </div>
+            <CircleCheck class="panel-icon" />
+          </div>
+          <div class="sidebar-metric-grid">
+            <article v-for="item in sidebarOverviewMetrics" :key="item.label" class="sidebar-metric-card">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <p>{{ item.hint }}</p>
+            </article>
+          </div>
+
+          <article class="learning-section">
+            <h3>生成进度</h3>
+            <div v-if="sidebarGenerationItems.length" class="sidebar-progress-list">
+              <div v-for="item in sidebarGenerationItems" :key="item.label" class="sidebar-progress-card">
+                <div class="sidebar-progress-topline">
+                  <strong>{{ item.label }}</strong>
+                  <span>{{ item.status }}</span>
+                </div>
+                <p>{{ item.detail }}</p>
+                <el-progress :percentage="item.progress" :stroke-width="10" :show-text="false" />
+              </div>
+            </div>
+            <div v-else class="empty-state compact">开始生成课件或练习后，这里会实时显示进度。</div>
+          </article>
+
+          <article class="learning-section">
+            <h3>接下来建议</h3>
+            <ul class="markdown-list">
+              <li v-for="item in sidebarActionItems" :key="item">{{ item }}</li>
+            </ul>
+          </article>
+
+          <article v-if="stageReport" class="learning-section">
+            <h3>阶段速览</h3>
+            <p class="learning-line">{{ stageReport.summary }}</p>
+            <div class="report-evidence-grid compact">
+              <div class="report-evidence-card">
+                <span>正确率</span>
+                <strong>{{ stageReport.evidence.accuracy }}%</strong>
+              </div>
+              <div class="report-evidence-card">
+                <span>作答</span>
+                <strong>{{ stageReport.evidence.total_answers }}</strong>
+              </div>
+              <div class="report-evidence-card">
+                <span>平均耗时</span>
+                <strong>{{ stageReport.evidence.average_time_spent }} 秒</strong>
+              </div>
+              <div class="report-evidence-card">
+                <span>错题</span>
+                <strong>{{ stageReport.evidence.mistake_count }}</strong>
+              </div>
+            </div>
+            <p v-if="stageReport.evidence.weakest_knowledge_point" class="learning-line">
+              当前薄弱点：{{ stageReport.evidence.weakest_knowledge_point }}
+            </p>
+          </article>
+        </section>
       </div>
 
       <section class="workspace-panel wide">
         <div class="panel-heading">
           <div>
-            <div class="panel-kicker">智能答疑</div>
-            <h2>提问、讲解与学习分析</h2>
+            <div class="panel-kicker">智能问答</div>
+            <h2>提问、回答与按需分析</h2>
           </div>
           <MagicStick class="panel-icon" />
         </div>
@@ -3105,7 +3558,7 @@ onUnmounted(() => {
               v-model="qaForm.question"
               type="textarea"
               :rows="4"
-              placeholder="请输入你当前不会的知识点、题目疑问，或者为什么做错。"
+              placeholder="请输入任何你想问的问题；学习类问题会附带分析，通用问题会直接回答。"
             />
             <div class="action-row">
               <el-input
@@ -3118,7 +3571,7 @@ onUnmounted(() => {
               />
             </div>
             <div class="action-row">
-              <el-button type="primary" :loading="loading.qa" @click="askQaAgent">开始智能讲解</el-button>
+              <el-button type="primary" :loading="loading.qa" @click="askQaAgent">开始智能回答</el-button>
             </div>
           </article>
 
@@ -3129,12 +3582,12 @@ onUnmounted(() => {
           </article>
 
           <article v-if="loading.qa" ref="qaResultAnchor" class="learning-section">
-            <h3>答疑处理中</h3>
-            <p class="learning-line">正在调用 DeepSeek 生成具体讲解与学习分析，请稍等几秒。如果远程服务较慢，页面会自动切换到本地讲解模式。</p>
+            <h3>问答处理中</h3>
+            <p class="learning-line">正在生成回答；如果问题需要联网信息，系统会优先检索参考结果后再作答。若远程服务较慢，页面会自动切换到本地回答模式。</p>
           </article>
 
           <article v-if="qaResult" ref="qaResultAnchor" class="learning-section">
-            <h3>老师讲解</h3>
+            <h3>智能回答</h3>
             <p class="learning-line preserve-linebreaks">{{ qaResult.student_response }}</p>
           </article>
 
@@ -3143,7 +3596,7 @@ onUnmounted(() => {
             <p class="learning-line">{{ qaError }}</p>
           </article>
 
-          <template v-if="qaResult">
+          <template v-if="qaResult && showQaLearningAnalysis">
             <article class="learning-section">
               <h3>系统识别出的知识漏洞</h3>
               <div class="tag-row">
@@ -3187,10 +3640,10 @@ onUnmounted(() => {
               <ul class="markdown-list">
                 <li v-for="item in qaStudySuggestions" :key="item">{{ item }}</li>
               </ul>
-              <div class="insight-card">
+              <div v-if="qaResult.structured_analysis.mistake_book_update.should_add" class="insight-card">
                 <div class="insight-label">错题本更新建议</div>
                 <div class="insight-value">
-                  {{ qaResult.structured_analysis.mistake_book_update.should_add ? '建议加入错题本' : '暂不加入错题本' }}
+                  建议加入错题本
                 </div>
                 <p class="panel-text">题目摘要：{{ qaResult.structured_analysis.mistake_book_update.question_summary }}</p>
                 <p class="panel-text">错误原因：{{ qaResult.structured_analysis.mistake_book_update.wrong_reason }}</p>
@@ -3661,10 +4114,169 @@ onUnmounted(() => {
   box-shadow: 0 12px 28px rgba(191, 116, 63, 0.12);
 }
 
+.student-workspace-shell .global-status-banner {
+  top: 16px;
+}
+
+.student-workspace-shell .request-status-card {
+  border-color: rgba(94, 131, 183, 0.18);
+  background: linear-gradient(135deg, rgba(242, 247, 255, 0.96), rgba(234, 242, 252, 0.94));
+  box-shadow: 0 16px 36px rgba(10, 26, 46, 0.08);
+}
+
+.student-workspace-shell .request-status-card strong {
+  color: #163152;
+}
+
+.student-workspace-shell .request-status-card p {
+  color: #536887;
+}
+
+.student-workspace-shell .request-status-card span {
+  color: #6e819d;
+}
+
+.student-workspace-shell .request-status-card.warning {
+  border-color: rgba(255, 157, 92, 0.26);
+  background: linear-gradient(135deg, rgba(255, 247, 235, 0.98), rgba(255, 239, 221, 0.94));
+}
+
+.student-workspace-shell .request-status-card.warning strong,
+.student-workspace-shell .request-status-card.warning span {
+  color: #9d5816;
+}
+
+.student-workspace-shell .request-status-card.warning p {
+  color: #8a683d;
+}
+
+.student-workspace-shell .request-status-card.danger {
+  border-color: rgba(224, 108, 77, 0.24);
+  background: linear-gradient(135deg, rgba(255, 241, 238, 0.98), rgba(255, 233, 227, 0.94));
+}
+
+.student-workspace-shell .request-status-card.danger strong,
+.student-workspace-shell .request-status-card.danger span {
+  color: #9a3d2d;
+}
+
+.student-workspace-shell .request-status-card.danger p {
+  color: #825350;
+}
+
+.student-workspace-shell .generation-status-pill {
+  background: rgba(36, 201, 184, 0.12);
+  color: #0c756d;
+}
+
+.student-workspace-shell .generation-stage-detail {
+  color: #173459;
+}
+
+.student-workspace-shell .generation-stage-note {
+  color: #617795;
+}
+
+.student-workspace-shell .generation-step-card {
+  border-color: rgba(94, 131, 183, 0.16);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.student-workspace-shell .generation-step-card.completed {
+  border-color: rgba(56, 176, 135, 0.28);
+  background: rgba(235, 251, 245, 0.96);
+}
+
+.student-workspace-shell .generation-step-card.current {
+  border-color: rgba(255, 139, 82, 0.28);
+  background: rgba(255, 247, 240, 0.98);
+  box-shadow: 0 12px 26px rgba(255, 139, 82, 0.14);
+}
+
+.student-workspace-shell .generation-step-index {
+  background: rgba(36, 201, 184, 0.14);
+  color: #0f7f79;
+}
+
+.student-workspace-shell .generation-step-card.current .generation-step-index {
+  background: linear-gradient(135deg, #ff8b52, #ffb36e);
+}
+
+.student-workspace-shell .generation-step-copy strong {
+  color: #173459;
+}
+
+.student-workspace-shell .generation-step-copy p {
+  color: #687b96;
+}
+
+.student-workspace-shell .clickable-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 34px rgba(15, 42, 74, 0.14);
+}
+
+.student-workspace-shell .clickable-card.active {
+  border-color: rgba(36, 201, 184, 0.32);
+  background: linear-gradient(180deg, rgba(240, 253, 250, 0.98), rgba(230, 247, 244, 0.96));
+  box-shadow: 0 16px 36px rgba(36, 201, 184, 0.12);
+}
+
 .learning-request-panel {
   background:
     radial-gradient(circle at top right, rgba(191, 116, 63, 0.14), transparent 34%),
     linear-gradient(135deg, rgba(255, 250, 244, 0.98), rgba(255, 255, 255, 0.94));
+}
+
+.student-workspace-shell .learning-request-panel {
+  background:
+    radial-gradient(circle at top right, rgba(36, 201, 184, 0.18), transparent 32%),
+    radial-gradient(circle at left bottom, rgba(255, 139, 82, 0.12), transparent 30%),
+    linear-gradient(135deg, rgba(245, 250, 255, 0.98), rgba(236, 243, 252, 0.96));
+}
+
+.student-workspace-shell :deep(.el-input__wrapper),
+.student-workspace-shell :deep(.el-textarea__inner) {
+  background: rgba(255, 255, 255, 0.84);
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px rgba(94, 131, 183, 0.14);
+}
+
+.student-workspace-shell :deep(.el-input__wrapper.is-focus),
+.student-workspace-shell :deep(.el-textarea__inner:focus) {
+  box-shadow:
+    inset 0 0 0 1px rgba(36, 201, 184, 0.42),
+    0 0 0 4px rgba(36, 201, 184, 0.08);
+}
+
+.student-workspace-shell :deep(.el-input__inner),
+.student-workspace-shell :deep(.el-textarea__inner) {
+  color: #163152;
+}
+
+.student-workspace-shell :deep(.el-button) {
+  border-radius: 14px !important;
+  font-weight: 600;
+  border-color: rgba(94, 131, 183, 0.18);
+}
+
+.student-workspace-shell :deep(.el-button--default) {
+  background: rgba(255, 255, 255, 0.8);
+  color: #173459;
+}
+
+.student-workspace-shell :deep(.el-button--primary) {
+  color: #071321;
+  border-color: transparent;
+  background: linear-gradient(135deg, #22d1bf, #ff975d);
+  box-shadow: 0 12px 24px rgba(36, 201, 184, 0.18);
+}
+
+.student-workspace-shell :deep(.el-progress-bar__outer) {
+  background: rgba(18, 35, 58, 0.08);
+}
+
+.student-workspace-shell :deep(.el-progress-bar__inner) {
+  background: linear-gradient(90deg, #22d1bf, #ff975d);
 }
 
 .learning-request-grid {

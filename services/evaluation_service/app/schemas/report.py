@@ -39,6 +39,21 @@ class PracticeSubmission(BaseModel):
     time_spent: int = Field(ge=0, default=0)
 
 
+class QAMistakeSubmission(BaseModel):
+    """One QA-derived mistake item that should enter the learner mistake notebook."""
+
+    user_id: int
+    exercise_id: int
+    knowledge_point: str
+    question_type: Literal["choice", "blank", "judge", "short_answer", "programming"] = "short_answer"
+    question_summary: str
+    wrong_answer: str
+    correct_answer: str
+    analysis: str
+    suggested_action: str
+    time_spent: int = Field(ge=0, default=0)
+
+
 class PracticeFeedback(BaseModel):
     """Immediate evaluation feedback for one submitted answer."""
 
