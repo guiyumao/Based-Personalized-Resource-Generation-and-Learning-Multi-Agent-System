@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import logging
 from pathlib import Path
 import re
 from typing import Any
@@ -19,10 +20,17 @@ from services.agent_service.app.services.personalization import (
 from services.agent_service.app.services.rag import ChromaRetriever
 
 
+logger = logging.getLogger(__name__)
+
+
 @lru_cache(maxsize=1)
 def _load_prompt_template(filename: str) -> str:
     prompt_path = Path("prompts") / filename
     return prompt_path.read_text(encoding="utf-8")
+
+
+class ResourceGenerationError(RuntimeError):
+    """Raised when the service cannot return a model-generated resource."""
 
 
 class ResourceGenerationService:
@@ -381,8 +389,19 @@ class ResourceGenerationService:
             )
             chain = prompt | llm | StrOutputParser()
             return chain.invoke(variables)
-        except Exception:
-            return self._fallback_generation(variables)
+        except Exception as exc:
+            logger.exception("Model-based courseware generation failed")
+            raise ResourceGenerationError("Model-based courseware generation failed.") from exc
+
+    def _resolve_variant_styles(self, preferred_style: str) -> list[str]:
+        style_order = [preferred_style, "concise", "case", "interactive"]
+        variant_styles: list[str] = []
+        for style in style_order:
+            if style not in variant_styles:
+                variant_styles.append(style)
+
+        max_variants = max(1, self.settings.resource_courseware_variant_count)
+        return variant_styles[:max_variants]
 
     def _build_variant_prompt(self, base_variables: dict[str, Any], style: str) -> dict[str, Any]:
         """Build one style-specific prompt payload."""
@@ -414,178 +433,6 @@ class ResourceGenerationService:
             return first_line[2:].strip()
         return f"{knowledge_point} {style} 课件"
 
-    def _fallback_generation(self, variables: dict[str, Any]) -> str:
-        knowledge_point = str(variables["knowledge_point"])
-        resource_type = str(variables["resource_type"])
-        resource_style = str(variables["resource_style"])
-        context_text = str(variables["context_text"])
-        grounding_text = str(variables.get("grounding_text", ""))
-        learner_profile = variables.get("learner_profile", {})
-        personalization_basis = variables.get("personalization_basis", [])
-        if isinstance(personalization_basis, str):
-            personalization_basis = [
-                line.removeprefix("- ").strip()
-                for line in personalization_basis.splitlines()
-                if line.strip()
-            ]
-        recent_mistakes_text = str(variables.get("recent_mistakes_text", "暂无错题记录。"))
-
-        if resource_type == "courseware":
-            return self._build_fallback_courseware(
-                knowledge_point=knowledge_point,
-                resource_style=resource_style,
-                learner_profile=learner_profile,
-                context_text=context_text,
-                grounding_text=grounding_text,
-                personalization_basis=personalization_basis,
-                recent_mistakes_text=recent_mistakes_text,
-            )
-
-        return (
-            f"# {knowledge_point} {resource_type}\n\n"
-            "## 本次个性化依据\n"
-            + "\n".join(f"- {item}" for item in personalization_basis)
-            + "\n\n## 知识底稿\n"
-            + (grounding_text or "当前暂无结构化知识底稿。")
-            + "\n\n## 检索参考\n"
-            + (context_text or "当前暂无额外检索参考。")
-        )
-
-    def _build_fallback_courseware(
-        self,
-        knowledge_point: str,
-        resource_style: str,
-        learner_profile: dict[str, Any],
-        context_text: str,
-        grounding_text: str,
-        personalization_basis: list[str],
-        recent_mistakes_text: str,
-    ) -> str:
-        learning_style = str(learner_profile.get("learning_style", "visual"))
-        mastery = learner_profile.get("mastery", "unknown")
-        article = self.knowledge_base.get_article(knowledge_point)
-
-        if article is None:
-            return self._build_generic_courseware(
-                knowledge_point=knowledge_point,
-                resource_style=resource_style,
-                learning_style=learning_style,
-                mastery=mastery,
-                context_text=context_text,
-                grounding_text=grounding_text,
-                personalization_basis=personalization_basis,
-            )
-
-        concept_points = "\n".join(f"- {item}" for item in article.concepts[:4])
-        mistake_points = "\n".join(f"- {item}" for item in article.mistakes[:4])
-        application_points = "\n".join(f"- {item}" for item in article.applications[:3])
-        self_check_points = "\n".join(f"- {item}" for item in article.checks[:4])
-        syntax_blocks = "\n\n".join(f"```python\n{item}\n```" for item in article.syntax[:2])
-        example_block = article.examples[0] if article.examples else ""
-        adaptive_hint = (
-            "你已经有一定基础，这次重点要放在“为什么这样写更合适”“怎样避免低级错误重复出现”上。"
-            if isinstance(mastery, (int, float)) and mastery >= 70
-            else "这次先不要追求写得快，重点把循环在做什么、什么时候停、为什么会出错真正想清楚。"
-        )
-
-        basis_lines = "\n".join(f"- {item}" for item in personalization_basis)
-        reference_text = context_text or grounding_text or "当前暂无额外参考材料。"
-
-        return (
-            f"# {knowledge_point} 学习课件\n\n"
-            "## 课程导入\n"
-            f"{article.summary} 你可以先想一个问题：如果程序里有一件事情需要重复做很多次，"
-            "我们是把同样的代码写十遍，还是想办法让程序自动完成？这正是今天这个知识点要解决的问题。\n\n"
-            "## 学习目标\n"
-            f"- 说清 {knowledge_point} 解决的核心问题。\n"
-            "- 能区分常见场景下应该用哪种写法。\n"
-            "- 能根据题目要求写出一个基础示例，并检查边界和更新步骤。\n"
-            "- 能识别自己最容易出错的位置，并知道如何修正。\n\n"
-            "## 你的当前学习情况\n"
-            f"{basis_lines}\n"
-            f"- 呈现风格：{resource_style}\n"
-            f"- 学习偏好参考：{learning_style}\n"
-            f"- 个性化提醒：{adaptive_hint}\n\n"
-            "## 知识讲解\n"
-            f"{concept_points}\n\n"
-            "理解这个知识点时，不要只记“怎么写”，一定要一起想清“为什么重复”“重复谁”“什么时候停”。"
-            "只要这三个问题没有想清楚，真正做题时就很容易乱。\n\n"
-            "## 重点难点突破\n"
-            "很多同学表面上会写语法，但一到题目里就出错，通常卡在这两类地方：\n"
-            "1. 不知道该怎么选思路，看到重复任务却分不清应该遍历已知对象，还是根据条件持续执行。\n"
-            "2. 不会检查边界，尤其是循环次数、索引起止、条件是否会变化。\n\n"
-            "结合你最近的真实作答记录，这次特别要注意下面这些问题：\n"
-            f"{recent_mistakes_text}\n\n"
-            "## 关键语法\n"
-            f"{syntax_blocks}\n\n"
-            "上面的语法不是让你机械背诵，而是帮助你建立一套判断方法："
-            "先看任务对象，再看结束条件，最后看每一轮如何推进。\n\n"
-            "## 示例讲解\n"
-            "下面我们用一个最典型的例子，把“循环到底帮我们做了什么”讲透：\n\n"
-            f"```python\n{example_block}\n```\n\n"
-            "请重点观察：\n"
-            "- 循环对象是谁。\n"
-            "- 每一轮到底执行了哪些动作。\n"
-            "- 判断条件在哪一层，为什么要放在那里。\n"
-            "- 如果把缩进或条件写错，会出现什么后果。\n\n"
-            "## 课堂小结\n"
-            f"- {knowledge_point} 的本质，是把重复工作交给程序按规则自动执行。\n"
-            "- 写题时不要只顾着敲代码，要先把对象、条件、边界、更新这四件事写明白。\n"
-            "- 一旦出错，优先检查：循环对象、结束条件、变量更新、缩进层级。\n\n"
-            "## 学完后自测\n"
-            f"{self_check_points}\n\n"
-            "## 拓展延伸\n"
-            f"{application_points}\n\n"
-            "学完这一节后，你可以继续尝试把它和条件判断、列表处理、函数封装结合起来。"
-            "真正掌握一个知识点，不是会背定义，而是看到题目时知道什么时候该用它、为什么这样用、写完后怎么检查。\n\n"
-            "## 参考材料\n"
-            f"{reference_text}\n"
-        )
-
-    def _build_generic_courseware(
-        self,
-        knowledge_point: str,
-        resource_style: str,
-        learning_style: str,
-        mastery: Any,
-        context_text: str,
-        grounding_text: str,
-        personalization_basis: list[str],
-    ) -> str:
-        basis_lines = "\n".join(f"- {item}" for item in personalization_basis)
-        return (
-            f"# {knowledge_point} 学习课件\n\n"
-            "## 课程导入\n"
-            f"{knowledge_point} 是当前学习阶段的重要基础能力。真正学习它时，不能只停留在定义层面，而要想清楚它到底帮助我们解决什么问题。\n\n"
-            "## 学习目标\n"
-            f"- 理解 {knowledge_point} 的核心作用。\n"
-            "- 能结合一个具体场景说明它的用法。\n"
-            "- 能识别典型错误并进行修正。\n\n"
-            "## 你的当前学习情况\n"
-            f"{basis_lines}\n"
-            f"- 呈现风格：{resource_style}\n"
-            f"- 学习偏好参考：{learning_style}\n"
-            f"- 当前掌握度参考：{mastery}\n\n"
-            "## 知识讲解\n"
-            f"{grounding_text or f'建议先从 {knowledge_point} 的定义、作用、场景和常见错误四个角度建立理解。'}\n\n"
-            "## 重点难点突破\n"
-            "学习任何新知识点，最容易出现的问题往往不是完全不会，而是“知道一点但没有真正理解为什么”。"
-            "所以接下来要重点把概念、步骤、适用条件和错误边界连起来看。\n\n"
-            "## 示例讲解\n"
-            "建议你先自己尝试写一个最小示例，再回过头对照讲解检查哪里理解得还不够稳。\n\n"
-            "## 课堂小结\n"
-            f"- 先理解 {knowledge_point} 为什么存在，再记住它怎么使用。\n"
-            "- 做题时主动检查条件、边界和步骤是否完整。\n\n"
-            "## 学完后自测\n"
-            f"- 我能不能用自己的话解释 {knowledge_point}？\n"
-            f"- 我能不能举出一个 {knowledge_point} 的真实应用场景？\n"
-            "- 我能不能指出这个知识点最容易错在哪里？\n\n"
-            "## 拓展延伸\n"
-            "接下来建议再配合几道练习题，把抽象概念真正转化成可输出的能力。\n\n"
-            "## 参考材料\n"
-            f"{context_text or grounding_text or '当前暂无额外参考材料。'}\n"
-        )
-
     def generate_courseware(self, request: ResourceGenerationRequest) -> dict[str, Any]:
         retrieved_context = self.retriever.retrieve(
             query=f"{request.knowledge_point} {request.resource_type}",
@@ -613,14 +460,8 @@ class ResourceGenerationService:
             "personalization_basis_text": "\n".join(f"- {item}" for item in personalization["basis"]),
             "recent_mistakes_text": self._build_recent_mistakes_text(snapshot),
         }
-        style_order = [request.resource_style, "concise", "case", "interactive"]
-        variant_styles: list[str] = []
-        for style in style_order:
-            if style not in variant_styles:
-                variant_styles.append(style)
-
         variants: list[dict[str, Any]] = []
-        for index, style in enumerate(variant_styles[:3], start=1):
+        for index, style in enumerate(self._resolve_variant_styles(request.resource_style), start=1):
             variant_variables = self._build_variant_prompt(variables, style)
             content = self._invoke_llm(variant_variables)
             variants.append(
@@ -696,14 +537,8 @@ class ResourceGenerationService:
             "personalization_basis_text": "\n".join(f"- {item}" for item in plan_basis),
             "recent_mistakes_text": self._build_recent_mistakes_text(snapshot),
         }
-        style_order = [request.resource_style, "concise", "case", "interactive"]
-        variant_styles: list[str] = []
-        for style in style_order:
-            if style not in variant_styles:
-                variant_styles.append(style)
-
         variants: list[dict[str, Any]] = []
-        for index, style in enumerate(variant_styles[:3], start=1):
+        for index, style in enumerate(self._resolve_variant_styles(request.resource_style), start=1):
             variant_variables = self._build_variant_prompt(variables, style)
             content = self._invoke_llm(variant_variables)
             variants.append(

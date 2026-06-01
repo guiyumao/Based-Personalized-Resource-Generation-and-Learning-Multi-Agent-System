@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from common.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeGraphRepository:
@@ -33,16 +36,34 @@ class KnowledgeGraphRepository:
 
         nodes = [
             {"id": knowledge_point, "label": knowledge_point, "category": "current"},
-            {"id": "前置-1", "label": "顺序结构", "category": "prerequisite"},
-            {"id": "前置-2", "label": "条件判断", "category": "prerequisite"},
-            {"id": "推荐-1", "label": "列表推导式", "category": "recommended"},
+            {"id": "prerequisite-1", "label": "顺序结构", "category": "prerequisite"},
+            {"id": "prerequisite-2", "label": "条件判断", "category": "prerequisite"},
+            {"id": "recommended-1", "label": "列表推导式", "category": "recommended"},
         ]
         edges = [
-            {"source": knowledge_point, "target": "前置-1", "label": "DEPENDS_ON"},
-            {"source": knowledge_point, "target": "前置-2", "label": "DEPENDS_ON"},
-            {"source": knowledge_point, "target": "推荐-1", "label": "RECOMMENDS"},
+            {"source": knowledge_point, "target": "prerequisite-1", "label": "DEPENDS_ON"},
+            {"source": knowledge_point, "target": "prerequisite-2", "label": "DEPENDS_ON"},
+            {"source": knowledge_point, "target": "recommended-1", "label": "RECOMMENDS"},
         ]
         return {"nodes": nodes, "edges": edges}
+
+    def _fallback_dependency_paths(self, knowledge_point: str) -> list[dict[str, Any]]:
+        """Return deterministic dependency paths when Neo4j is unavailable."""
+
+        return [
+            {"path": [knowledge_point, "顺序结构"]},
+            {"path": [knowledge_point, "条件判断"]},
+        ]
+
+    def _fallback_related_resources(self) -> list[dict[str, Any]]:
+        """Return deterministic related resources when Neo4j is unavailable."""
+
+        return [{"name": "示例资源", "type": "courseware", "uri": "/resources/demo"}]
+
+    def _fallback_recommendations(self) -> list[dict[str, Any]]:
+        """Return deterministic next-point recommendations when Neo4j is unavailable."""
+
+        return [{"name": "列表推导式", "difficulty": 2, "importance": 5}]
 
     def create_knowledge_point(
         self,
@@ -85,10 +106,15 @@ class KnowledgeGraphRepository:
         RETURN [node IN nodes(path) | node.name] AS dependency_path
         """
         if self._driver is None:
-            return [{"path": [knowledge_point, "示例前置知识点"]}]
-        with self._driver.session() as session:
-            result = session.run(query, knowledge_point=knowledge_point, max_depth=max_depth)
-            return [{"path": record["dependency_path"]} for record in result]
+            return self._fallback_dependency_paths(knowledge_point)
+        try:
+            with self._driver.session() as session:
+                result = session.run(query, knowledge_point=knowledge_point, max_depth=max_depth)
+                dependency_paths = [{"path": record["dependency_path"]} for record in result]
+                return dependency_paths or self._fallback_dependency_paths(knowledge_point)
+        except Exception:
+            logger.exception("Knowledge graph dependency query failed, using fallback paths.")
+            return self._fallback_dependency_paths(knowledge_point)
 
     def find_related_resources(self, knowledge_point: str) -> list[dict[str, Any]]:
         """Return resource nodes associated with a knowledge point."""
@@ -98,10 +124,15 @@ class KnowledgeGraphRepository:
         RETURN resource.name AS name, resource.type AS type, resource.uri AS uri
         """
         if self._driver is None:
-            return [{"name": "示例资源", "type": "courseware", "uri": "/resources/demo"}]
-        with self._driver.session() as session:
-            result = session.run(query, knowledge_point=knowledge_point)
-            return [record.data() for record in result]
+            return self._fallback_related_resources()
+        try:
+            with self._driver.session() as session:
+                result = session.run(query, knowledge_point=knowledge_point)
+                resources = [record.data() for record in result]
+                return resources or self._fallback_related_resources()
+        except Exception:
+            logger.exception("Knowledge graph resource query failed, using fallback resources.")
+            return self._fallback_related_resources()
 
     def recommend_next_points(self, knowledge_point: str) -> list[dict[str, Any]]:
         """Recommend next knowledge points via `RECOMMENDS` links."""
@@ -112,10 +143,15 @@ class KnowledgeGraphRepository:
         ORDER BY next.importance DESC, next.difficulty ASC
         """
         if self._driver is None:
-            return [{"name": "推荐知识点", "difficulty": 2, "importance": 5}]
-        with self._driver.session() as session:
-            result = session.run(query, knowledge_point=knowledge_point)
-            return [record.data() for record in result]
+            return self._fallback_recommendations()
+        try:
+            with self._driver.session() as session:
+                result = session.run(query, knowledge_point=knowledge_point)
+                recommendations = [record.data() for record in result]
+                return recommendations or self._fallback_recommendations()
+        except Exception:
+            logger.exception("Knowledge graph recommendation query failed, using fallback recommendations.")
+            return self._fallback_recommendations()
 
     def get_visualization_graph(self, knowledge_point: str, max_depth: int = 2) -> dict[str, list[dict[str, Any]]]:
         """Return node-edge graph data for frontend visualization."""
@@ -133,7 +169,7 @@ class KnowledgeGraphRepository:
             with self._driver.session() as session:
                 record = session.run(query, knowledge_point=knowledge_point, max_depth=max_depth).single()
                 if record is None:
-                    return {"nodes": [], "edges": []}
+                    return self._fallback_visualization_graph(knowledge_point)
 
                 nodes = [{"id": knowledge_point, "label": knowledge_point, "category": "current"}]
                 edges: list[dict[str, Any]] = []
@@ -155,4 +191,5 @@ class KnowledgeGraphRepository:
                 unique_nodes = list({node["id"]: node for node in nodes}.values())
                 return {"nodes": unique_nodes, "edges": edges}
         except Exception:
+            logger.exception("Knowledge graph visualization query failed, using fallback graph.")
             return self._fallback_visualization_graph(knowledge_point)

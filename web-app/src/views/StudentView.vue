@@ -92,7 +92,7 @@ type EnvelopeLike<T> = T | ApiEnvelope<T>
 type GenerationKind = 'courseware' | 'exercises'
 type AsyncStatusKey = 'profile' | 'graph' | 'mistakes' | 'remedial' | 'reports' | 'qa' | 'path' | 'coordinate'
 
-type GenerationPhaseStatus = 'idle' | 'running' | 'background' | 'done' | 'fallback'
+type GenerationPhaseStatus = 'idle' | 'running' | 'background' | 'done' | 'fallback' | 'error'
 type AsyncPhaseStatus = 'idle' | 'waiting' | 'slow' | 'stalled'
 
 type GenerationProgressState = {
@@ -142,6 +142,13 @@ type AsyncStatusView = {
   tone: 'info' | 'warning' | 'danger'
 }
 
+type GlobalGenerationBannerView = {
+  label: string
+  progress: number
+  statusLabel: string
+  stageLabel: string
+}
+
 const router = useRouter()
 const authStore = useAuthStore()
 const fallbackAnnouncements = new Set<string>()
@@ -183,7 +190,6 @@ const qaResult = ref<QAResponsePayload | null>(null)
 const qaError = ref('')
 const lastQaRequest = ref<Record<string, unknown> | null>(null)
 const lastQaRawResponse = ref<unknown>(null)
-const coursewareDeliveryMode = ref<'remote' | 'fallback' | 'upgrading'>('remote')
 const exerciseDeliveryMode = ref<'remote' | 'fallback' | 'upgrading'>('remote')
 const selectedCoursewareVariantId = ref('')
 const generationStatus = reactive<Record<GenerationKind, GenerationProgressState>>({
@@ -240,25 +246,26 @@ const graphCanvas = ref<HTMLDivElement | null>(null)
 const exerciseResultAnchor = ref<HTMLElement | null>(null)
 const qaResultAnchor = ref<HTMLElement | null>(null)
 let graphNetwork: Network | null = null
+let autoAdvanceExerciseTimer: ReturnType<typeof setTimeout> | null = null
 const generationProgressTimers: Partial<Record<GenerationKind, ReturnType<typeof setInterval>>> = {}
 const asyncStatusTimers: Partial<Record<AsyncStatusKey, ReturnType<typeof setInterval>>> = {}
 let coursewareRequestVersion = 0
 let exerciseRequestVersion = 0
 
-const DEFAULT_SUBJECT = 'Python 程序设计'
-const DEFAULT_TOPIC = 'Python 循环'
-const DEFAULT_GRADE = '大一'
-const DEFAULT_QA_PROMPT = `我想学习 ${DEFAULT_TOPIC}，请先帮我讲清楚核心概念。`
+const DEFAULT_SUBJECT = ''
+const DEFAULT_TOPIC = ''
+const DEFAULT_GRADE = ''
+const DEFAULT_QA_PROMPT = ''
 
 const learningRequestForm = reactive({
   subject: DEFAULT_SUBJECT,
   topic: DEFAULT_TOPIC,
-  goal: '先理解核心概念，再生成配套课件和自测题。',
+  goal: '',
 })
 
 const coordinationForm = reactive<CoordinationPayload>({
   user_id: authStore.user?.userId ?? 1,
-  intent: `请围绕 ${DEFAULT_SUBJECT} 中的“${DEFAULT_TOPIC}”生成个性化课件、练习题和学习路径建议。`,
+  intent: '',
   knowledge_point: DEFAULT_TOPIC,
   payload: {
     subject: DEFAULT_SUBJECT,
@@ -310,7 +317,7 @@ const qaForm = reactive<QARequestPayload>({
   question: DEFAULT_QA_PROMPT,
   student_answer: '',
   wrong_answer: '',
-  current_knowledge_points: [DEFAULT_TOPIC],
+  current_knowledge_points: [],
   learning_route: {},
   error_book: {},
   learning_history: {},
@@ -447,6 +454,27 @@ const coursewarePersonalization = computed(() => resourceResult.value?.personali
 const exercisePersonalization = computed(() => exerciseSet.value?.personalization ?? null)
 const coursewareProgressView = computed(() => buildGenerationProgressView('courseware'))
 const exerciseProgressView = computed(() => buildGenerationProgressView('exercises'))
+const globalGenerationBannerView = computed<GlobalGenerationBannerView | null>(() => {
+  if (generationStatus.courseware.hint && generationStatus.courseware.status !== 'idle') {
+    return {
+      label: '学习课件',
+      progress: generationStatus.courseware.progress,
+      statusLabel: coursewareProgressView.value.statusLabel,
+      stageLabel: coursewareProgressView.value.title,
+    }
+  }
+
+  if (generationStatus.exercises.hint && generationStatus.exercises.status !== 'idle') {
+    return {
+      label: '练习题',
+      progress: generationStatus.exercises.progress,
+      statusLabel: exerciseProgressView.value.statusLabel,
+      stageLabel: exerciseProgressView.value.title,
+    }
+  }
+
+  return null
+})
 const pathStatusView = computed(() => buildAsyncStatusView('path'))
 const coordinationStatusView = computed(() => buildAsyncStatusView('coordinate'))
 const profileStatusView = computed(() => buildAsyncStatusView('profile'))
@@ -977,8 +1005,8 @@ function buildCoordinationIntent(subject: string, topic: string, goal: string) {
 }
 
 function applyLearningRequestToForms() {
-  const subject = learningRequestForm.subject.trim() || DEFAULT_SUBJECT
-  const topic = learningRequestForm.topic.trim() || DEFAULT_TOPIC
+  const subject = learningRequestForm.subject.trim()
+  const topic = learningRequestForm.topic.trim()
   const goal = learningRequestForm.goal.trim()
 
   learningRequestForm.subject = subject
@@ -1167,6 +1195,15 @@ function buildGenerationStatusView(kind: GenerationKind, label: string): AsyncSt
 
   const progressView = buildGenerationProgressView(kind)
 
+  if (state.status === 'error') {
+    return {
+      title: `${label}生成失败`,
+      detail: `当前停留在“${progressView.title}”阶段。${state.hint}`,
+      elapsedLabel: progressView.elapsedLabel,
+      tone: 'danger',
+    }
+  }
+
   if (state.status === 'background') {
     return {
       title: `${label}已进入后台增强`,
@@ -1179,7 +1216,7 @@ function buildGenerationStatusView(kind: GenerationKind, label: string): AsyncSt
   if (state.elapsedSeconds >= 18) {
     return {
       title: `${label}生成时间偏长`,
-      detail: `当前还在“${progressView.title}”阶段等待服务返回。如果继续超过 20 秒没有变化，建议重新点击一次。`,
+      detail: `当前还在“${progressView.title}”阶段等待服务返回。如果继续超过 40 秒没有变化，建议重新点击一次。`,
       elapsedLabel: progressView.elapsedLabel,
       tone: 'danger',
     }
@@ -1206,6 +1243,9 @@ function buildGenerationProgressView(kind: GenerationKind): GenerationProgressVi
   const state = generationStatus[kind]
   const steps = generationStageDefinitions[kind]
   const totalStages = steps.length
+  const isCourseware = kind === 'courseware'
+  const expectedSeconds = isCourseware ? 35 : 8
+  const estimateRangeLabel = isCourseware ? '10-35 秒' : '3-8 秒'
   const currentIndex = steps.reduce((activeIndex, step, index) => {
     return state.progress >= step.threshold ? index : activeIndex
   }, 0)
@@ -1219,24 +1259,32 @@ function buildGenerationProgressView(kind: GenerationKind): GenerationProgressVi
   if (state.status === 'running') {
     statusLabel = `第 ${currentIndex + 1}/${totalStages} 步`
     if (state.elapsedSeconds < 3) {
-      remainingLabel = '预计还需 3-8 秒'
-    } else if (state.elapsedSeconds < 8) {
-      remainingLabel = `预计还需 ${Math.max(1, 8 - state.elapsedSeconds)} 秒`
+      remainingLabel = `预计还需 ${estimateRangeLabel}`
+    } else if (state.elapsedSeconds < expectedSeconds) {
+      remainingLabel = `预计还需 ${Math.max(1, expectedSeconds - state.elapsedSeconds)} 秒`
     } else {
       remainingLabel = '已超过常规时长，仍在继续生成'
     }
   } else if (state.status === 'background') {
-    statusLabel = '已切到后台增强'
-    remainingLabel = '你可以先学习，后台仍在完善正式结果'
-    detail = '快速版内容已经可用，系统正在继续请求更完整的正式内容。'
+    statusLabel = isCourseware ? '仍在继续生成' : '已切到后台增强'
+    remainingLabel = isCourseware ? '页面会在生成完成后直接展示正式课件' : '你可以先学习，后台仍在完善正式结果'
+    detail = isCourseware
+      ? '系统仍在继续等待模型返回完整课件。'
+      : '快速版内容已经可用，系统正在继续请求更完整的正式内容。'
   } else if (state.status === 'done') {
     statusLabel = '已完成'
     remainingLabel = '结果已经返回页面'
-    detail = '课件或题组已经生成完成，可以直接继续学习。'
+    detail = isCourseware ? '正式学习课件已经返回，可以直接开始学习。' : '课后自测已经生成完成，可以直接继续练习。'
   } else if (state.status === 'fallback') {
-    statusLabel = '已切换快速版'
-    remainingLabel = '当前先使用快速版结果'
-    detail = '远程生成较慢或失败，页面已切换为可直接使用的快速版。'
+    statusLabel = isCourseware ? '本轮未完成' : '已切换快速版'
+    remainingLabel = isCourseware ? '当前没有可展示的课件内容' : '当前先使用快速版结果'
+    detail = isCourseware ? '模型未返回可展示课件，请重试。' : '远程生成较慢或失败，页面已切换为可直接使用的快速版。'
+  } else if (state.status === 'error') {
+    statusLabel = '生成失败'
+    remainingLabel = isCourseware ? '当前未返回正式课件' : '当前未返回可展示题组'
+    detail = isCourseware
+      ? '本次不会切换为本地快速课件，请调整需求后重新生成。'
+      : '本次题组生成失败，请稍后重试。'
   }
 
   return {
@@ -1815,7 +1863,7 @@ function setGenerationProgressBackground(kind: GenerationKind, message: string) 
 function finishGenerationProgress(
   kind: GenerationKind,
   message: string,
-  status: Extract<GenerationPhaseStatus, 'done' | 'fallback'> = 'done',
+  status: Extract<GenerationPhaseStatus, 'done' | 'fallback' | 'error'> = 'done',
 ) {
   stopGenerationProgress(kind)
   generationStatus[kind].progress = 100
@@ -1854,47 +1902,18 @@ async function generateCourseware() {
   const requestVersion = ++coursewareRequestVersion
   applyLearningRequestToForms()
   loading.courseware = true
-  startGenerationProgress('courseware', '正在生成学习课件，预计等待 3-8 秒。')
+  startGenerationProgress('courseware', '正在调用模型生成正式学习课件，预计等待 10-35 秒。')
   coursewareGenerationError.value = ''
-  const fallbackContent = buildFallbackCoursewareContent(resourceForm.knowledge_point)
-  resourceResult.value = {
-    user_id: resourceForm.user_id,
-    knowledge_point: resourceForm.knowledge_point,
-    resource_type: resourceForm.resource_type,
-    resource_style: resourceForm.resource_style,
-    references: [],
-    variants: [
-      {
-        variant_id: 'fallback-interactive',
-        title: `${resourceForm.knowledge_point} 快速课件`,
-        summary: '本地快速版课件，可先开始学习。',
-        resource_style: 'interactive',
-        content: fallbackContent,
-        is_recommended: true,
-      },
-    ],
-    content: fallbackContent,
-  }
-  selectedCoursewareVariantId.value = 'fallback-interactive'
-  exerciseForm.courseware_content = fallbackContent
-  coursewareDeliveryMode.value = 'upgrading'
-  let fallbackTakeoverTriggered = false
-  const takeoverTimer = setTimeout(() => {
-    if (requestVersion !== coursewareRequestVersion) {
-      return
-    }
-    fallbackTakeoverTriggered = true
-    loading.courseware = false
-    setGenerationProgressBackground('courseware', '已先展示快速版课件，后台正在继续增强正式版。')
-    ElMessage.info('已先展示快速版课件，可先开始学习。')
-  }, 2200)
+  resourceResult.value = null
+  selectedCoursewareVariantId.value = ''
+  exerciseForm.courseware_content = ''
   try {
     resourceForm.resource_type = 'courseware'
     resourceForm.request_text = `${learningRequestForm.goal}，知识点：${resourceForm.knowledge_point}`
     lastCoursewareRequest.value = {
       ...resourceForm,
     }
-    const { data } = await postContentWithTimeout<EnvelopeLike<ResourceResult>>('/resources/generate', resourceForm, 12000)
+    const { data } = await postContentWithTimeout<EnvelopeLike<ResourceResult>>('/resources/generate', resourceForm, 60000)
     if (requestVersion !== coursewareRequestVersion) {
       return
     }
@@ -1913,43 +1932,20 @@ async function generateCourseware() {
       resourceResult.value.content ??
       ''
     coursewareGenerationError.value = ''
-    coursewareDeliveryMode.value = 'remote'
     markTaskCompleted('courseware')
-    finishGenerationProgress(
-      'courseware',
-      fallbackTakeoverTriggered ? '正式学习课件已更新完成。' : '学习课件已生成完成。',
-    )
-    ElMessage.success(fallbackTakeoverTriggered ? '正式学习课件已更新' : '学习课件已生成')
+    finishGenerationProgress('courseware', '模型学习课件已生成完成。')
+    ElMessage.success('模型学习课件已生成')
   } catch {
     if (requestVersion !== coursewareRequestVersion) {
       return
     }
-    resourceResult.value = {
-      user_id: resourceForm.user_id,
-      knowledge_point: resourceForm.knowledge_point,
-      resource_type: resourceForm.resource_type,
-      resource_style: resourceForm.resource_style,
-      references: [],
-      variants: [
-        {
-          variant_id: 'fallback-interactive',
-          title: `${resourceForm.knowledge_point} 快速课件`,
-          summary: '本地快速版课件，可先开始学习。',
-          resource_style: 'interactive',
-          content: fallbackContent,
-          is_recommended: true,
-        },
-      ],
-      content: fallbackContent,
-    }
-    selectedCoursewareVariantId.value = 'fallback-interactive'
-    exerciseForm.courseware_content = fallbackContent
-    coursewareDeliveryMode.value = 'fallback'
-    coursewareGenerationError.value = '远程课件生成超时或失败，当前已切换为快速版本地课件，页面不会卡住。'
-    finishGenerationProgress('courseware', '远程生成较慢，已切换为快速版课件。', 'fallback')
-    ElMessage.warning('远程课件生成较慢，已切换为快速版课件')
+    resourceResult.value = null
+    selectedCoursewareVariantId.value = ''
+    exerciseForm.courseware_content = ''
+    coursewareGenerationError.value = '模型课件生成失败或超时，请重试，当前不会再切换为本地快速课件。'
+    finishGenerationProgress('courseware', '模型课件生成失败，请重试。', 'error')
+    ElMessage.error('模型课件生成失败，请重试')
   } finally {
-    clearTimeout(takeoverTimer)
     if (requestVersion === coursewareRequestVersion) {
       loading.courseware = false
     }
@@ -2182,17 +2178,36 @@ async function submitPractice() {
     learner.mastery = Math.min(100, Math.max(0, learner.mastery + (feedback.is_correct ? 4 : -2)))
     await Promise.all([fetchMistakeNotebook(), fetchReports(), fetchProfileDashboard(payload.user_id)])
     ElMessage.success(feedback.is_correct ? '回答正确。' : '已返回标准答案与解析。')
+    scheduleNextExerciseAutoAdvance()
   } catch {
     const fallback = buildFallbackPracticeFeedback(payload)
     applyLocalPracticeState(payload, fallback)
     ElMessage.success(fallback.is_correct ? '回答正确。' : '已返回标准答案与解析。')
     announceFallback('practice-submit', '评估服务暂不可用，已切换到本地判分模式。')
+    scheduleNextExerciseAutoAdvance()
   } finally {
     loading.submit = false
   }
 }
 
+function scheduleNextExerciseAutoAdvance() {
+  if (!exerciseSet.value || !currentSubmission.value) {
+    return
+  }
+  if (autoAdvanceExerciseTimer) {
+    clearTimeout(autoAdvanceExerciseTimer)
+  }
+  autoAdvanceExerciseTimer = setTimeout(() => {
+    autoAdvanceExerciseTimer = null
+    goToNextExercise()
+  }, 1200)
+}
+
 function goToNextExercise() {
+  if (autoAdvanceExerciseTimer) {
+    clearTimeout(autoAdvanceExerciseTimer)
+    autoAdvanceExerciseTimer = null
+  }
   if (!exerciseSet.value) {
     return
   }
@@ -2407,6 +2422,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (autoAdvanceExerciseTimer) {
+    clearTimeout(autoAdvanceExerciseTimer)
+    autoAdvanceExerciseTimer = null
+  }
   resetGenerationProgress()
   resetAsyncStatus()
 })
@@ -2469,14 +2488,36 @@ onUnmounted(() => {
       </article>
     </section>
 
-    <main class="workspace-grid student-grid">
-      <div v-if="globalStatusView" class="request-status-card global-status-banner" :class="globalStatusView.tone">
-        <div class="global-status-head">
+    <div v-if="globalStatusView" class="request-status-card global-status-banner" :class="globalStatusView.tone">
+      <div class="global-status-layout">
+        <div class="global-status-copy">
           <strong>{{ globalStatusView.title }}</strong>
-          <span>已等待 {{ globalStatusView.elapsedLabel }}</span>
+          <p>{{ globalStatusView.detail }}</p>
         </div>
-        <p>{{ globalStatusView.detail }}</p>
+        <div class="global-status-side">
+          <span>已等待 {{ globalStatusView.elapsedLabel }}</span>
+          <div v-if="globalGenerationBannerView" class="global-progress-value">
+            {{ globalGenerationBannerView.progress }}%
+          </div>
+        </div>
       </div>
+      <div v-if="globalGenerationBannerView" class="global-progress-block">
+        <div class="global-progress-meta">
+          <span>{{ globalGenerationBannerView.label }} · {{ globalGenerationBannerView.statusLabel }}</span>
+          <span>当前阶段：{{ globalGenerationBannerView.stageLabel }}</span>
+        </div>
+        <el-progress
+          :percentage="globalGenerationBannerView.progress"
+          :stroke-width="8"
+          :show-text="false"
+          striped
+          striped-flow
+          :duration="8"
+        />
+      </div>
+    </div>
+
+    <main class="workspace-grid student-grid">
 
       <section class="workspace-panel wide learning-request-panel">
         <div class="panel-heading">
@@ -2557,43 +2598,6 @@ onUnmounted(() => {
               </button>
             </div>
           </article>
-        </div>
-        <div v-if="generationStatus.courseware.hint" class="generation-hint">
-          <div class="generation-hint-title">课件生成进度</div>
-          <div class="generation-status-row">
-            <span class="generation-status-pill">{{ coursewareProgressView.statusLabel }}</span>
-            <span class="generation-status-pill">已耗时 {{ coursewareProgressView.elapsedLabel }}</span>
-            <span class="generation-status-pill">{{ coursewareProgressView.remainingLabel }}</span>
-          </div>
-          <div class="generation-hint-line">
-            <span class="generation-hint-dot" :class="{ running: loading.courseware }"></span>
-            <span>{{ coursewareProgressView.title }}</span>
-            <strong>{{ generationStatus.courseware.progress }}%</strong>
-          </div>
-          <p class="generation-stage-detail">{{ generationStatus.courseware.hint }}</p>
-          <p class="generation-stage-note">{{ coursewareProgressView.detail }}</p>
-          <el-progress
-            :percentage="generationStatus.courseware.progress"
-            :stroke-width="10"
-            :show-text="false"
-            striped
-            striped-flow
-            :duration="8"
-          />
-          <div class="generation-step-list">
-            <div
-              v-for="step in coursewareProgressView.steps"
-              :key="`courseware-step-${step.index}`"
-              class="generation-step-card"
-              :class="step.state"
-            >
-              <span class="generation-step-index">{{ step.index }}</span>
-              <div class="generation-step-copy">
-                <strong>{{ step.title }}</strong>
-                <p>{{ step.description }}</p>
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -2711,15 +2715,53 @@ onUnmounted(() => {
           </div>
           <Document class="panel-icon" />
         </div>
+        <div v-if="generationStatus.courseware.hint" class="generation-hint courseware-progress-panel">
+          <div class="courseware-progress-header">
+            <div>
+              <div class="generation-hint-title">课件生成进度</div>
+              <p class="courseware-progress-meta">模型会根据当前学习目标和知识点直接生成正式课件内容。</p>
+            </div>
+            <strong class="courseware-progress-percentage">{{ generationStatus.courseware.progress }}%</strong>
+          </div>
+          <div class="generation-status-row">
+            <span class="generation-status-pill">{{ coursewareProgressView.statusLabel }}</span>
+            <span class="generation-status-pill">已耗时 {{ coursewareProgressView.elapsedLabel }}</span>
+            <span class="generation-status-pill">{{ coursewareProgressView.remainingLabel }}</span>
+          </div>
+          <div class="generation-hint-line">
+            <span class="generation-hint-dot" :class="{ running: loading.courseware }"></span>
+            <span>{{ coursewareProgressView.title }}</span>
+            <strong>阶段 {{ coursewareProgressView.stageIndex }}/{{ coursewareProgressView.totalStages }}</strong>
+          </div>
+          <p class="generation-stage-detail">{{ generationStatus.courseware.hint }}</p>
+          <p class="generation-stage-note">{{ coursewareProgressView.detail }}</p>
+          <el-progress
+            :percentage="generationStatus.courseware.progress"
+            :stroke-width="12"
+            :show-text="false"
+            striped
+            striped-flow
+            :duration="8"
+          />
+          <div class="generation-step-list">
+            <div
+              v-for="step in coursewareProgressView.steps"
+              :key="`courseware-step-${step.index}`"
+              class="generation-step-card"
+              :class="step.state"
+            >
+              <span class="generation-step-index">{{ step.index }}</span>
+              <div class="generation-step-copy">
+                <strong>{{ step.title }}</strong>
+                <p>{{ step.description }}</p>
+              </div>
+            </div>
+          </div>
+        </div>
         <div v-if="coursewareGenerationError" class="feedback-card wrong">
           <div class="insight-label">课件生成状态</div>
-          <div class="insight-value">已自动脱困</div>
+          <div class="insight-value">本次生成失败</div>
           <p class="panel-text">{{ coursewareGenerationError }}</p>
-        </div>
-        <div v-else-if="coursewareDeliveryMode === 'upgrading'" class="insight-card">
-          <div class="insight-label">课件生成状态</div>
-          <div class="insight-value">已先展示快速版课件</div>
-          <p class="panel-text">你可以先开始学习，后台正在继续尝试生成更完整的远程正式版内容。</p>
         </div>
         <div v-if="resourceResult" class="reader-layout">
           <aside class="reader-outline">
@@ -3001,7 +3043,7 @@ onUnmounted(() => {
             <div class="insight-label">作答状态</div>
             <div class="insight-value">本题已提交，不能再次作答</div>
             <p class="panel-text">
-              你的答案已经锁定。现在可以查看标准答案与解析，或进入下一题。
+              你的答案已经锁定。系统会自动进入下一题，你也可以先查看标准答案与解析。
             </p>
           </div>
 
@@ -3446,25 +3488,86 @@ onUnmounted(() => {
 }
 
 .global-status-banner {
-  grid-column: 1 / -1;
   position: sticky;
   top: 12px;
   z-index: 12;
-  margin-bottom: 2px;
+  margin: 18px 0 4px;
 }
 
-.global-status-head {
+.global-status-layout {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 18px;
 }
 
-.global-status-head span {
+.global-status-copy {
+  min-width: 0;
+}
+
+.global-status-copy strong {
+  display: block;
+  margin: 0 0 6px;
+}
+
+.global-status-copy p {
+  margin: 0;
+}
+
+.global-status-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.global-status-side span {
   font-size: 12px;
   color: inherit;
   opacity: 0.78;
   white-space: nowrap;
+}
+
+.global-progress-block {
+  margin-top: 12px;
+}
+
+.global-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: inherit;
+}
+
+.global-progress-meta span {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.86;
+}
+
+.global-progress-value {
+  font-size: 24px;
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.global-progress-block .el-progress {
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .global-status-layout {
+    flex-direction: column;
+  }
+
+  .global-status-side {
+    align-items: flex-start;
+  }
 }
 
 .request-status-card {

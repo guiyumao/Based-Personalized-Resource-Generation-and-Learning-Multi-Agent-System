@@ -90,8 +90,9 @@ class Settings:
     deepseek_api_base: str = os.getenv("DEEPSEEK_API_BASE", "")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     chroma_persist_directory: str = os.getenv("CHROMA_PERSIST_DIRECTORY", "./.chroma")
-    llm_request_timeout_seconds: int = _get_int("LLM_REQUEST_TIMEOUT_SECONDS", 8)
+    llm_request_timeout_seconds: int = _get_int("LLM_REQUEST_TIMEOUT_SECONDS", 30)
     resource_rag_top_k: int = _get_int("RESOURCE_RAG_TOP_K", 2)
+    resource_courseware_variant_count: int = _get_int("RESOURCE_COURSEWARE_VARIANT_COUNT", 1)
     exercise_context_max_chars: int = _get_int("EXERCISE_CONTEXT_MAX_CHARS", 900)
 
 

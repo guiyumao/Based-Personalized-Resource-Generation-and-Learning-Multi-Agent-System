@@ -835,6 +835,35 @@ select {
   margin-bottom: 16px;
 }
 
+.courseware-progress-panel {
+  margin-bottom: 16px;
+}
+
+.courseware-progress-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.courseware-progress-meta {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.courseware-progress-percentage {
+  flex: 0 0 auto;
+  min-width: 72px;
+  text-align: right;
+  color: var(--accent-deep);
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 .generation-hint-title {
   color: var(--text);
   font-size: 13px;
@@ -872,6 +901,17 @@ select {
   background: var(--accent);
   box-shadow: 0 0 0 6px rgba(181, 84, 47, 0.12);
   animation: hintPulse 1.2s ease-in-out infinite;
+}
+
+@media (max-width: 760px) {
+  .courseware-progress-header {
+    align-items: flex-end;
+  }
+
+  .courseware-progress-percentage {
+    min-width: 60px;
+    font-size: 24px;
+  }
 }
 
 @keyframes hintPulse {

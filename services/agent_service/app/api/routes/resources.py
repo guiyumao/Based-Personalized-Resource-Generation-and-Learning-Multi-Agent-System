@@ -1,9 +1,12 @@
 """Routes for resource generation agent."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from common.schemas.agent import ResourceGenerationRequest, ResourceGenerationResponse
-from services.agent_service.app.services.resource_generation import ResourceGenerationService
+from services.agent_service.app.services.resource_generation import (
+    ResourceGenerationError,
+    ResourceGenerationService,
+)
 
 router = APIRouter()
 
@@ -13,4 +16,7 @@ def generate_resource(payload: ResourceGenerationRequest) -> ResourceGenerationR
     """Generate a personalized resource with RAG context."""
 
     service = ResourceGenerationService()
-    return ResourceGenerationResponse(**service.generate_courseware_with_plan(payload))
+    try:
+        return ResourceGenerationResponse(**service.generate_courseware_with_plan(payload))
+    except ResourceGenerationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
