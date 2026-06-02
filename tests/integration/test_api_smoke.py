@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 
 from services.agent_service.app.main import app as agent_app
+from services.evaluation_service.app.main import app as evaluation_app
 from services.system_service.app.main import app as system_app
 from services.teacher_service.app.main import app as teacher_app
 from services.user_service.app.main import app as user_app
@@ -24,6 +25,15 @@ def test_agent_service_health() -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["service"] == "agent-service"
+
+
+def test_evaluation_service_health() -> None:
+    """Evaluation service should expose a health endpoint."""
+
+    client = TestClient(evaluation_app)
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["service"] == "evaluation-service"
 
 
 def test_teacher_service_health() -> None:

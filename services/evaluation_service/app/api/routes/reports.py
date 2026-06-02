@@ -1,154 +1,231 @@
-"""Evaluation and report routes."""
+"""Evaluation and reporting routes."""
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from __future__ import annotations
 
-from common.db.session import get_db
+from fastapi import APIRouter, HTTPException
+
 from common.schemas.response import ApiResponse
 from services.evaluation_service.app.schemas.report import (
     AnalyticsSuggestion,
+    AnswerEvaluationResult,
     AnswerRecordIn,
-    MistakeNotebook,
+    AnswerRecordSubmission,
+    BatchAnswerSubmission,
+    BatchEvaluationResponse,
     MistakeItem,
+    MistakeNotebook,
+    MonthlyReportResponse,
     PracticeFeedback,
     PracticeSubmission,
     QAMistakeSubmission,
     RemedialExerciseSet,
     ReportDetail,
     ReportSummary,
+    StageReportResponse,
 )
 from services.evaluation_service.app.services.report_service import ReportService
 
 router = APIRouter()
 
 
-@router.post("/answers", response_model=ApiResponse[AnswerRecordIn])
-def submit_answer_record(payload: AnswerRecordIn, db: Session = Depends(get_db)) -> ApiResponse[AnswerRecordIn]:
-    """Submit one answer record for evaluation."""
+@router.post("/submit", response_model=ApiResponse[AnswerEvaluationResult])
+async def submit_answer(payload: AnswerRecordSubmission) -> ApiResponse[AnswerEvaluationResult]:
+    """Process one answer submission."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.submit_answer(payload),
-        message="Answer record submitted successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.submit_answer(payload)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Answer evaluated successfully.")
+
+
+@router.post("/batch_submit", response_model=ApiResponse[BatchEvaluationResponse])
+async def batch_submit(payload: BatchAnswerSubmission) -> ApiResponse[BatchEvaluationResponse]:
+    """Process a batch of answer submissions."""
+
+    service = ReportService()
+    try:
+        result = await service.batch_submit(payload)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Batch evaluation completed successfully.")
+
+
+@router.get("/stage-report/{user_id}/{chapter_id}", response_model=ApiResponse[StageReportResponse])
+async def get_stage_report(user_id: str, chapter_id: str) -> ApiResponse[StageReportResponse]:
+    """Generate a chapter-level stage report."""
+
+    service = ReportService()
+    try:
+        result = await service.generate_stage_report(user_id, chapter_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Stage report generated successfully.")
+
+
+@router.get("/monthly-report/{user_id}", response_model=ApiResponse[MonthlyReportResponse])
+async def get_monthly_report(user_id: str) -> ApiResponse[MonthlyReportResponse]:
+    """Generate a rolling 30-day monthly report."""
+
+    service = ReportService()
+    try:
+        result = await service.generate_monthly_report(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Monthly report generated successfully.")
+
+
+@router.post("/answers", response_model=ApiResponse[AnswerEvaluationResult])
+async def submit_answer_record(payload: AnswerRecordIn) -> ApiResponse[AnswerEvaluationResult]:
+    """Compatibility route for legacy raw answer submission."""
+
+    service = ReportService()
+    try:
+        result = await service.submit_legacy_answer(payload)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Answer record submitted successfully.")
 
 
 @router.post("/practice/submit", response_model=ApiResponse[PracticeFeedback])
-def submit_practice_answer(payload: PracticeSubmission, db: Session = Depends(get_db)) -> ApiResponse[PracticeFeedback]:
-    """Evaluate one practice answer and return immediate feedback."""
+async def submit_practice_answer(payload: PracticeSubmission) -> ApiResponse[PracticeFeedback]:
+    """Compatibility route for student practice submissions."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.evaluate_practice(payload),
-        message="Practice answer evaluated successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.evaluate_practice(payload)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Practice answer evaluated successfully.")
 
 
 @router.post("/mistakes/qa", response_model=ApiResponse[MistakeItem])
-def submit_qa_mistake(payload: QAMistakeSubmission, db: Session = Depends(get_db)) -> ApiResponse[MistakeItem]:
-    """Persist one QA-derived mistake into the evaluation database."""
+async def submit_qa_mistake(payload: QAMistakeSubmission) -> ApiResponse[MistakeItem]:
+    """Compatibility route for QA-derived mistakes."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.record_qa_mistake(payload),
-        message="QA mistake saved successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.record_qa_mistake(payload)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="QA mistake stored successfully.")
 
 
 @router.get("/reports/stage/{user_id}", response_model=ApiResponse[ReportSummary])
-def get_stage_report(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[ReportSummary]:
-    """Generate a stage report."""
+async def get_stage_report_legacy(user_id: int) -> ApiResponse[ReportSummary]:
+    """Compatibility route for old stage summary callers."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.generate_stage_report(user_id),
-        message="Stage report generated successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.generate_stage_report_summary_legacy(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Stage report generated successfully.")
 
 
 @router.get("/reports/stage/{user_id}/detail", response_model=ApiResponse[ReportDetail])
-def get_stage_report_detail(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[ReportDetail]:
-    """Generate a detailed stage report for the student workspace."""
+async def get_stage_report_detail(user_id: int) -> ApiResponse[ReportDetail]:
+    """Compatibility route for old detailed stage report callers."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.generate_stage_report_detail(user_id),
-        message="Detailed stage report generated successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.generate_stage_report_detail(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Detailed stage report generated successfully.")
 
 
 @router.get("/reports/comprehensive/{user_id}", response_model=ApiResponse[ReportSummary])
-def get_comprehensive_report(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[ReportSummary]:
-    """Generate a comprehensive report."""
+async def get_comprehensive_report(user_id: int) -> ApiResponse[ReportSummary]:
+    """Compatibility route for monthly summary callers."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.generate_comprehensive_report(user_id),
-        message="Comprehensive report generated successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.generate_comprehensive_report(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Comprehensive report generated successfully.")
 
 
 @router.get("/reports/comprehensive/{user_id}/detail", response_model=ApiResponse[ReportDetail])
-def get_comprehensive_report_detail(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[ReportDetail]:
-    """Generate a detailed comprehensive report for the student workspace."""
+async def get_comprehensive_report_detail(user_id: int) -> ApiResponse[ReportDetail]:
+    """Compatibility route for detailed monthly report callers."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.generate_comprehensive_report_detail(user_id),
-        message="Detailed comprehensive report generated successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.generate_comprehensive_report_detail(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Detailed comprehensive report generated successfully.")
 
 
 @router.get("/mistakes/{user_id}", response_model=ApiResponse[dict[str, object]])
-def get_mistake_statistics(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict[str, object]]:
+async def get_mistake_statistics(user_id: int) -> ApiResponse[dict[str, object]]:
     """Return mistake statistics."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.get_mistake_statistics(user_id),
-        message="Mistake statistics fetched successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.get_mistake_statistics(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Mistake statistics fetched successfully.")
 
 
 @router.get("/mistakes/{user_id}/detail", response_model=ApiResponse[MistakeNotebook])
-def get_mistake_notebook(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[MistakeNotebook]:
+async def get_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebook]:
     """Return the learner mistake notebook."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.get_mistake_notebook(user_id),
-        message="Mistake notebook fetched successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.get_mistake_notebook(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Mistake notebook fetched successfully.")
 
 
 @router.get("/mistakes/{user_id}/remedial", response_model=ApiResponse[RemedialExerciseSet])
-def get_remedial_exercises(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[RemedialExerciseSet]:
-    """Generate remedial exercises from the learner's mistake notebook."""
+async def get_remedial_exercises(user_id: int) -> ApiResponse[RemedialExerciseSet]:
+    """Return remedial exercises derived from real mistakes."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.generate_remedial_exercises(user_id),
-        message="Remedial exercises generated successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.generate_remedial_exercises(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Remedial exercises generated successfully.")
 
 
 @router.get("/profiles/{user_id}/snapshot", response_model=ApiResponse[dict[str, object]])
-def get_profile_snapshot(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict[str, object]]:
-    """Return a learner profile dashboard snapshot derived from recent practice."""
+async def get_profile_snapshot(user_id: int) -> ApiResponse[dict[str, object]]:
+    """Return a learner profile snapshot."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.generate_profile_snapshot(user_id),
-        message="Profile snapshot generated successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.generate_profile_snapshot(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Profile snapshot generated successfully.")
 
 
 @router.get("/reports/suggestions/{user_id}", response_model=ApiResponse[AnalyticsSuggestion])
-def get_learning_suggestions(user_id: int, db: Session = Depends(get_db)) -> ApiResponse[AnalyticsSuggestion]:
-    """Return personalized learning suggestions distilled from practice history."""
+async def get_learning_suggestions(user_id: int) -> ApiResponse[AnalyticsSuggestion]:
+    """Return personalized suggestions based on real answer data."""
 
-    report_service = ReportService(db)
-    return ApiResponse(
-        data=report_service.generate_learning_suggestions(user_id),
-        message="Learning suggestions generated successfully.",
-    )
+    service = ReportService()
+    try:
+        result = await service.generate_learning_suggestions(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Learning suggestions generated successfully.")
+
+
+def _translate_service_error(exc: Exception) -> HTTPException:
+    """Map service-layer exceptions into HTTP errors."""
+
+    message = str(exc)
+    if "not found" in message.lower():
+        return HTTPException(status_code=404, detail=message)
+    if isinstance(exc, ValueError):
+        return HTTPException(status_code=400, detail=message)
+    return HTTPException(status_code=503, detail=message or "Evaluation service failed.")

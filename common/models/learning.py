@@ -150,6 +150,12 @@ class AnswerRecord(Base):
     user_answer: Mapped[str] = mapped_column(Text, nullable=False)
     is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     time_spent: Mapped[int] = mapped_column(Integer, default=0)
+    evaluation_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
 
     user: Mapped[User] = relationship(back_populates="answer_records")
 

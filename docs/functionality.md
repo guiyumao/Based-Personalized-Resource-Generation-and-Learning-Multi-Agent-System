@@ -101,6 +101,10 @@
 
 | Method | Path | Handler | Description |
 | --- | --- | --- | --- |
+| `POST` | `/evaluation/submit` | `submit_answer` | Evaluate one answer submission and persist real feedback, mastery updates, and events. |
+| `POST` | `/evaluation/batch_submit` | `batch_submit` | Evaluate a batch of answer submissions and return aggregate accuracy. |
+| `GET` | `/evaluation/stage-report/{user_id}/{chapter_id}` | `get_stage_report` | Generate a chapter-level stage report from real answer history. |
+| `GET` | `/evaluation/monthly-report/{user_id}` | `get_monthly_report` | Generate a rolling 30-day monthly report. |
 | `POST` | `/evaluation/answers` | `submit_answer_record` | Submit one answer record for evaluation. |
 | `POST` | `/evaluation/practice/submit` | `submit_practice_answer` | Evaluate one practice answer and return immediate feedback. |
 | `GET` | `/evaluation/reports/stage/{user_id}` | `get_stage_report` | Generate a stage report. |
@@ -111,6 +115,7 @@
 | `GET` | `/evaluation/mistakes/{user_id}/detail` | `get_mistake_notebook` | Return the learner mistake notebook. |
 | `GET` | `/evaluation/mistakes/{user_id}/remedial` | `get_remedial_exercises` | Generate remedial exercises from the learner's mistake notebook. |
 | `GET` | `/evaluation/profiles/{user_id}/snapshot` | `get_profile_snapshot` | Return a learner profile dashboard snapshot derived from recent practice. |
+| `GET` | `/evaluation/reports/suggestions/{user_id}` | `get_learning_suggestions` | Return personalized suggestions distilled from persisted answer history. |
 
 ### 2.4 教师服务 `teacher-service`
 

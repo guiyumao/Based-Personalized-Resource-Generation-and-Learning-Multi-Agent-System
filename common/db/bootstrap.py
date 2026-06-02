@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from common.db.base import Base
@@ -15,6 +16,7 @@ def ensure_database_schema() -> None:
     """Create all database tables when running local services directly."""
 
     Base.metadata.create_all(bind=engine)
+    _ensure_legacy_columns()
 
 
 def ensure_default_admin(db: Session) -> None:
@@ -69,3 +71,26 @@ def ensure_default_admin(db: Session) -> None:
 
     if updated:
         db.commit()
+
+
+def _ensure_legacy_columns() -> None:
+    """Backfill columns that were added after the initial local schema."""
+
+    inspector = inspect(engine)
+    if "answer_records" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("answer_records")}
+    statements: list[str] = []
+
+    if "evaluation_json" not in existing_columns:
+        statements.append("ALTER TABLE answer_records ADD COLUMN evaluation_json JSON")
+    if "created_at" not in existing_columns:
+        statements.append("ALTER TABLE answer_records ADD COLUMN created_at DATETIME")
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
