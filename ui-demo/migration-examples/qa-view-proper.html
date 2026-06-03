@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="ocean">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QA View 迁移示例 — 完整智能问答</title>
+  <style>
+    /* ═══ Theme System (same 5 themes) ═══ */
+    :root,[data-theme="ocean"]{--bg:#080e1a;--panel:rgba(16,26,44,.78);--panel-strong:rgba(20,32,52,.92);--line:rgba(80,160,190,.12);--text:#e2ebf4;--muted:#7b90a8;--accent:#00c8aa;--accent-deep:#0a8a78;--green:#2dd4a8;--red:#f87171;--shadow:0 24px 60px rgba(0,0,0,.35)}
+    [data-theme="warm"]{--bg:#1e1814;--panel:rgba(42,32,24,.78);--panel-strong:rgba(50,38,28,.92);--line:rgba(180,140,100,.15);--text:#f2e6d8;--muted:#a89480;--accent:#e8924a;--accent-deep:#c07030;--green:#6db88d;--red:#e07060}
+    [data-theme="cosmic"]{--bg:#0d0a1a;--panel:rgba(22,16,42,.72);--panel-strong:rgba(28,20,50,.92);--line:rgba(140,120,200,.14);--text:#e4def8;--muted:#8b7cb8;--accent:#a78bfa;--accent-deep:#7c5fd4;--green:#6ee7b7;--red:#fca5a5}
+    [data-theme="minimal"]{--bg:#f0f2f5;--panel:rgba(255,255,255,.9);--panel-strong:rgba(255,255,255,.98);--line:rgba(0,0,0,.08);--text:#1a1a2e;--muted:#6b7280;--accent:#2563eb;--accent-deep:#1d4ed8;--green:#10b981;--red:#ef4444}
+    [data-theme="forest"]{--bg:#0a1a10;--panel:rgba(18,32,22,.72);--panel-strong:rgba(22,38,26,.92);--line:rgba(80,160,110,.14);--text:#ddf0e4;--muted:#7aaa8e;--accent:#48c884;--accent-deep:#2d9a5e;--green:#56d992;--red:#f0837a}
+
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);padding:28px;min-height:100vh;transition:background .5s,color .5s}
+    h2{font-size:22px;margin-bottom:6px}
+    h3{font-size:16px;margin-bottom:8px}
+    p{line-height:1.7}
+
+    /* ═══ Demo layout ═══ */
+    .demo-header{margin-bottom:24px}
+    .demo-header .badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:11px;font-weight:650;letter-spacing:.04em;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);margin-bottom:8px}
+    .demo-header .desc{color:var(--muted);font-size:14px}
+    .qa-layout{display:grid;grid-template-columns:1fr;max-width:860px;gap:20px}
+
+    /* ═══ Panels ═══ */
+    .panel{padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line);transition:all .3s}
+    .panel-heading{display:flex;justify-content:space-between;align-items:start;margin-bottom:14px}
+    .panel-kicker{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+
+    /* ═══ QA Input ═══ */
+    .qa-input-row{display:flex;gap:12px;align-items:start}
+    .qa-input-row textarea{flex:1;padding:12px 16px;border-radius:14px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:14px;resize:vertical;min-height:80px;outline:none;font-family:inherit;transition:border-color .2s}
+    .qa-input-row textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent)}
+    .qa-sub-fields{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+    .qa-sub-fields input{flex:1;padding:10px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px;outline:none;min-width:160px;font-family:inherit}
+    .qa-sub-fields input:focus{border-color:var(--accent)}
+    .btn-ask{padding:11px 28px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:#fff;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap;font-family:inherit;transition:all .2s}
+    .btn-ask:hover{transform:translateY(-1px);box-shadow:0 8px 28px color-mix(in srgb,var(--accent) 30%,transparent)}
+    .btn-ask:disabled{opacity:.5;cursor:not-allowed}
+
+    /* ═══ QA Response ═══ */
+    .qa-response{white-space:pre-wrap;line-height:1.8;font-size:14px;padding:16px 18px;border-radius:14px;background:color-mix(in srgb,var(--accent) 6%,transparent);border:1px solid var(--line)}
+    .qa-response.loading{animation:pulse 1.5s ease-in-out infinite}
+    @keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
+
+    /* ═══ Structured Analysis ═══ */
+    .analysis-block{margin-top:16px}
+    .analysis-block h4{font-size:15px;margin-bottom:10px;color:var(--accent)}
+    .tag-row{display:flex;gap:8px;flex-wrap:wrap}
+    .agent-tag{display:inline-flex;padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}
+    .misconception-list{margin:0;padding-left:20px;color:var(--muted);line-height:1.8}
+    .misconception-list li+li{margin-top:6px}
+    .ref-card{padding:14px 16px;border-radius:12px;background:color-mix(in srgb,var(--accent) 4%,transparent);border:1px solid var(--line);margin-bottom:8px}
+    .ref-card strong{display:block;margin-bottom:4px}
+    .ref-card p{font-size:13px;color:var(--muted);margin:2px 0}
+    .mistake-update-card{padding:16px;border-radius:12px;background:color-mix(in srgb,var(--accent2,var(--accent)) 8%,transparent);border:1px solid var(--line);margin-top:10px}
+    .mistake-update-card .label{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:6px}
+    .empty-state{padding:12px;border-radius:10px;background:color-mix(in srgb,var(--muted) 8%,transparent);color:var(--muted);font-size:13px;text-align:center}
+
+    /* ═══ Sidebar: history ═══ */
+    .qa-history{max-height:400px;overflow-y:auto;display:grid;gap:10px}
+    .qa-history-item{padding:12px 14px;border-radius:12px;cursor:pointer;border:1px solid var(--line);transition:all .2s;font-size:13px}
+    .qa-history-item:hover{background:var(--panel);border-color:var(--accent)}
+    .qa-history-item .q{font-weight:600;margin-bottom:4px}
+    .qa-history-item .t{font-size:11px;color:var(--muted)}
+
+    /* ═══ Corner theme dots ═══ */
+    .corner-themes{position:fixed;top:18px;right:24px;z-index:10;display:flex;gap:8px}
+    .t-dot{width:14px;height:14px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .2s}
+    .t-dot:hover{transform:scale(1.25)}
+    .t-dot.active{border-color:var(--text)}
+
+    /* ═══ Code comparison ═══ */
+    .code-comparison{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:30px}
+    .code-block{border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+    .code-block .title{padding:10px 16px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line)}
+    .code-block pre{margin:0;padding:16px;overflow:auto;font-size:12px;line-height:1.6;font-family:"Cascadia Code",Consolas,monospace}
+    .code-block.bad{background:color-mix(in srgb,var(--red) 6%,transparent)}
+    .code-block.good{background:color-mix(in srgb,var(--green) 6%,transparent)}
+  </style>
+</head>
+<body>
+
+  <!-- Theme dots -->
+  <div class="corner-themes">
+    <span class="t-dot active" style="background:#00c8aa;color:#00c8aa" onclick="switchTheme('ocean')"></span>
+    <span class="t-dot" style="background:#e8924a;color:#e8924a" onclick="switchTheme('warm')"></span>
+    <span class="t-dot" style="background:#a78bfa;color:#a78bfa" onclick="switchTheme('cosmic')"></span>
+    <span class="t-dot" style="background:#2563eb;color:#2563eb" onclick="switchTheme('minimal')"></span>
+    <span class="t-dot" style="background:#48c884;color:#48c884" onclick="switchTheme('forest')"></span>
+  </div>
+
+  <!-- ═══ QA VIEW ═══ -->
+  <div class="demo-header">
+    <div class="badge">迁移示例</div>
+    <h2>💬 智能问答 — 完整迁移版</h2>
+    <p class="desc">
+      此示例展示从 StudentView 完整迁移后的 QaView 应有的效果。
+      包含：问题输入、答案展示、结构化分析（知识漏洞/思维误区/路线更新/推荐/错题本建议）。
+    </p>
+  </div>
+
+  <div class="qa-layout">
+
+    <!-- ═══ Question Input ═══ -->
+    <div class="panel">
+      <div class="panel-heading">
+        <div>
+          <div class="panel-kicker">智能问答</div>
+          <h2>提问、回答与按需分析</h2>
+        </div>
+      </div>
+
+      <textarea id="qaQuestion" placeholder="请输入任何你想问的问题；学习类问题会附带分析，通用问题会直接回答。">如何理解不定积分中的换元法？为什么有时候用第一类换元，有时候用第二类换元？</textarea>
+
+      <div class="qa-sub-fields">
+        <input id="qaStudentAnswer" placeholder="可选：填写你自己的答案或思路" value="直接用公式代换就可以" />
+        <input id="qaWrongAnswer" placeholder="可选：填写你的错误答案" />
+      </div>
+
+      <div style="margin-top:12px;display:flex;gap:12px;align-items:center">
+        <button class="btn-ask" id="btnAsk" onclick="askQA()">开始智能回答</button>
+        <span id="qaStatus" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+    </div>
+
+    <!-- ═══ Loading ═══ -->
+    <div id="loadingBlock" class="panel qa-response loading" style="display:none">
+      <strong>🤖 问答处理中...</strong><br>
+      正在生成回答；如果问题需要联网信息，系统会优先检索参考结果后再作答。
+      若远程服务较慢，页面会自动切换到本地回答模式。
+    </div>
+
+    <!-- ═══ Error ═══ -->
+    <div id="errorBlock" class="panel" style="display:none">
+      <h3>⚠️ 答疑状态</h3>
+      <p id="errorText" style="color:var(--muted)"></p>
+    </div>
+
+    <!-- ═══ Student Response ═══ -->
+    <div id="responseBlock" class="panel" style="display:none">
+      <h3>📝 智能回答</h3>
+      <div class="qa-response" id="responseText"></div>
+    </div>
+
+    <!-- ═══ Structured Analysis ═══ -->
+    <div id="analysisBlock" style="display:none">
+
+      <!-- Knowledge Gaps -->
+      <div class="panel analysis-block">
+        <h4>🔍 系统识别出的知识漏洞</h4>
+        <div class="tag-row" id="knowledgeGaps"></div>
+        <p style="margin-top:10px;color:var(--muted);font-size:14px" id="learningState"></p>
+      </div>
+
+      <!-- Misconceptions -->
+      <div class="panel analysis-block">
+        <h4>💭 可能存在的思维误区</h4>
+        <ul class="misconception-list" id="misconceptions"></ul>
+      </div>
+
+      <!-- Route Updates -->
+      <div class="panel analysis-block">
+        <h4>🗺️ 学习路线更新建议</h4>
+        <div id="routeUpdates"></div>
+      </div>
+
+      <!-- Resource Recommendations -->
+      <div class="panel analysis-block">
+        <h4>📚 个性化推荐</h4>
+        <div id="recommendations"></div>
+      </div>
+
+      <!-- Study Suggestions -->
+      <div class="panel analysis-block">
+        <h4>💡 学习建议</h4>
+        <ul class="misconception-list" id="studySuggestions"></ul>
+        <div id="mistakeBookUpdate"></div>
+      </div>
+    </div>
+
+    <!-- ═══ History ═══ -->
+    <div class="panel">
+      <div class="panel-heading">
+        <h3>📋 问答历史</h3>
+        <span style="font-size:12px;color:var(--muted)" id="historyCount">0 条记录</span>
+      </div>
+      <div class="qa-history" id="qaHistory">
+        <div class="empty-state">暂无问答记录，提出一个问题开始吧</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Code Comparison ═══ -->
+  <div class="demo-header" style="margin-top:40px">
+    <div class="badge">迁移对比</div>
+    <h2>❌ 错误做法 vs ✅ 正确做法</h2>
+    <p class="desc">CoursewareView / MistakeNotebookView 的风格冲突就是「错误做法」的典型案例</p>
+  </div>
+
+  <div class="code-comparison">
+    <div class="code-block bad">
+      <div class="title">❌ 错误：保留旧的全屏壳</div>
+      <pre>&lt;!-- CoursewareView.vue 当前写法 --&gt;
+&lt;template&gt;
+  &lt;div class="dashboard-shell student-workspace-shell"&gt;
+    &lt;div class="aurora aurora-a"&gt;&lt;/div&gt;
+    &lt;div class="aurora aurora-b"&gt;&lt;/div&gt;
+    &lt;main&gt;
+      &lt;!-- 课件内容 --&gt;
+    &lt;/main&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+
+&lt;style scoped&gt;
+/* 自己又定义了一套深色背景 */
+.dashboard-shell {
+  background: radial-gradient(...);
+  min-height: 100vh;
+}
+&lt;/style&gt;</pre>
+    </div>
+    <div class="code-block good">
+      <div class="title">✅ 正确：去掉壳，用主题变量</div>
+      <pre>&lt;!-- CoursewareView.vue 正确写法 --&gt;
+&lt;template&gt;
+  &lt;div class="courseware-page"&gt;
+    &lt;!-- 直接放课件内容，AppLayout 已提供背景 --&gt;
+    &lt;header class="page-hero"&gt;
+      &lt;h1&gt;{{ title }}&lt;/h1&gt;
+    &lt;/header&gt;
+    &lt;div class="reader-layout"&gt;
+      &lt;aside class="outline-sidebar"&gt;...&lt;/aside&gt;
+      &lt;article class="content-area"&gt;...&lt;/article&gt;
+    &lt;/div&gt;
+  &lt;/div&gt;
+&lt;/template&gt;
+
+&lt;style scoped&gt;
+/* 使用主题变量，不做全屏覆盖 */
+.courseware-page {
+  max-width: 1100px;
+}
+.outline-sidebar {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+&lt;/style&gt;</pre>
+    </div>
+  </div>
+
+  <!-- ═══ Explanation ═══ -->
+  <div class="panel" style="margin-top:20px;max-width:860px">
+    <h3>📖 为什么 CoursewareView 和 MistakeNotebookView 风格不统一</h3>
+    <p style="color:var(--muted);line-height:1.8;margin-top:8px">
+      这两个文件<strong>没有被修改</strong>——它们仍然使用旧的全屏布局（<code>dashboard-shell student-workspace-shell</code>），
+      自带深色背景、极光装饰、和硬编码颜色。<br><br>
+      当 AppLayout 把它们包在侧边栏+顶栏布局中时，它们的全屏 CSS 和新布局冲突，导致：
+    </p>
+    <ul class="misconception-list" style="margin-top:10px">
+      <li>内容区有自己的 <code>min-height: 100vh</code>，在布局内撑出多余的滚动条</li>
+      <li>极光装饰（<code>.aurora-a/b</code>）在布局内定位异常</li>
+      <li>硬编码深色（<code>#08111f</code>）不跟随主题切换</li>
+      <li>CSS 网格叠加层（<code>::before</code>）与 AppLayout 背景重叠</li>
+    </ul>
+    <p style="color:var(--muted);line-height:1.8;margin-top:10px">
+      <strong>修复方法</strong>：去掉 <code>dashboard-shell</code> / <code>student-workspace-shell</code> / <code>.aurora</code>，
+      把面板色、文字色、边框色全部换为 <code>var(--bg)</code> / <code>var(--panel)</code> / <code>var(--line)</code> / <code>var(--text)</code>。
+    </p>
+  </div>
+
+  <script>
+    // ═══ QA Logic (simulating the real askQaAgent flow) ═══
+    let qaHistory = []
+    let loading = false
+
+    async function askQA() {
+      if (loading) return
+      const question = document.getElementById('qaQuestion').value.trim()
+      if (!question) { alert('请输入问题'); return }
+
+      loading = true
+      document.getElementById('btnAsk').disabled = true
+      document.getElementById('qaStatus').textContent = '正在处理...'
+
+      // Show loading
+      hideAll()
+      document.getElementById('loadingBlock').style.display = 'block'
+      document.getElementById('loadingBlock').scrollIntoView({ behavior: 'smooth' })
+
+      // Simulate API call (in real code: qaApi.post('/qa/analyze', qaForm))
+      await new Promise(r => setTimeout(r, 1500))
+
+      // ─── Simulated API response ───
+      // In real code: const { data } = await qaApi.post('/qa/analyze', qaForm)
+      //               qaResult.value = unwrapApiData(data)
+      const mockResult = {
+        student_response: `理解换元法的关键在于区分两类换元的适用场景：
+
+**第一类换元法（凑微分法）**
+适用于被积函数可以表示为 f(g(x))·g'(x) 的形式。核心思路是"凑"出内函数的导数。
+
+例如：∫ 2x·cos(x²) dx
+这里 g(x)=x²，g'(x)=2x 正好在积分式中，因此：
+= ∫ cos(x²) · 2x dx = ∫ cos(u) du = sin(u) + C = sin(x²) + C
+
+**第二类换元法**
+通过引入新变量 t = φ⁻¹(x) 来替换自变量 x，适用于：
+- 根号内有二次函数（如 √(a²-x²)，用三角换元 x=a·sin t）
+- 被积函数中有明显的复合结构但无法凑出内函数导数`,
+        structured_analysis: {
+          identified_knowledge_gaps: ['换元法适用条件判断', '凑微分法的识别模式', '三角换元公式'],
+          misconceptions: [
+            '认为所有含根号的积分都必须用第二类换元',
+            '第一类和第二类换元可以随意混用',
+            '忽略了换元后积分上下限也需要变换',
+          ],
+          learning_state: '学习者对不定积分基本公式掌握较好，但在换元法的选择策略上存在困惑。建议通过对比练习强化两类换元的区分能力。',
+          difficulty_level: 'intermediate',
+          learning_route_updates: [
+            { knowledge_point: '换元积分法', priority: 'high', action: '增加换元法专项练习 5 题', reason: '当前阶段核心薄弱点' },
+            { knowledge_point: '分部积分法', priority: 'medium', action: '与换元法对比学习', reason: '两方法常在同一题中配合使用' },
+          ],
+          resource_recommendations: [
+            { resource_type: 'courseware', title: '换元法速查手册', reason: '系统化整理两类换元的适用条件' },
+            { resource_type: 'exercise', title: '换元法专项练习', reason: '针对性强化换元法选择策略' },
+          ],
+          study_suggestions: [
+            '先用 3 道题练习识别"被积函数中是否出现某函数及其导数"',
+            '整理一个换元法选择决策树：先看能否凑微分，再看根号形式',
+            '建议在错题本中按"选错换元类型"分类记录错题',
+          ],
+          mistake_book_update: {
+            should_add: true,
+            question_summary: '如何选择第一类换元法 vs 第二类换元法',
+            wrong_reason: '直接用公式代换就可以——缺乏对两类换元适用条件的系统认识',
+            correct_approach: '先检查被积函数中是否出现了某个函数及其导数的乘积（第一类）；再检查根号内是否有 a²±x² 形式（第二类三角换元）',
+          },
+          recommended_next_knowledge_points: ['有理函数积分', '定积分的换元法'],
+          context_snippets: [],
+          confidence: 0.85,
+        },
+      }
+
+      // Hide loading, show results
+      document.getElementById('loadingBlock').style.display = 'none'
+      renderResult(mockResult)
+
+      // Save to history
+      qaHistory.unshift({ question, time: new Date().toLocaleTimeString() })
+      if (qaHistory.length > 10) qaHistory.pop()
+      renderHistory()
+
+      loading = false
+      document.getElementById('btnAsk').disabled = false
+      document.getElementById('qaStatus').textContent = '完成 ✓'
+      setTimeout(() => document.getElementById('qaStatus').textContent = '', 2000)
+    }
+
+    function hideAll() {
+      document.getElementById('loadingBlock').style.display = 'none'
+      document.getElementById('errorBlock').style.display = 'none'
+      document.getElementById('responseBlock').style.display = 'none'
+      document.getElementById('analysisBlock').style.display = 'none'
+    }
+
+    function renderResult(result) {
+      // Show response
+      document.getElementById('responseBlock').style.display = 'block'
+      document.getElementById('responseText').textContent = result.student_response
+
+      // Show analysis
+      document.getElementById('analysisBlock').style.display = 'block'
+
+      // Knowledge gaps
+      const gaps = result.structured_analysis.identified_knowledge_gaps
+      document.getElementById('knowledgeGaps').innerHTML = gaps.map(g =>
+        `<span class="agent-tag">${g}</span>`).join('')
+      document.getElementById('learningState').textContent = result.structured_analysis.learning_state
+
+      // Misconceptions
+      document.getElementById('misconceptions').innerHTML = result.structured_analysis.misconceptions.map(m =>
+        `<li>${m}</li>`).join('')
+
+      // Route updates
+      const updates = result.structured_analysis.learning_route_updates
+      document.getElementById('routeUpdates').innerHTML = updates.length
+        ? updates.map(u => `
+            <div class="ref-card">
+              <strong>${u.knowledge_point} / ${u.priority}</strong>
+              <p>建议动作：${u.action}</p>
+              <p>原因：${u.reason}</p>
+            </div>`).join('')
+        : '<div class="empty-state">当前没有额外的路线调整建议。</div>'
+
+      // Recommendations
+      const recs = result.structured_analysis.resource_recommendations
+      document.getElementById('recommendations').innerHTML = recs.map(r => `
+          <div class="ref-card">
+            <strong>${r.title}</strong>
+            <p>类型：${r.resource_type} &nbsp;|&nbsp; 推荐理由：${r.reason}</p>
+          </div>`).join('')
+
+      // Study suggestions
+      document.getElementById('studySuggestions').innerHTML = result.structured_analysis.study_suggestions.map(s =>
+        `<li>${s}</li>`).join('')
+
+      // Mistake book update
+      const mb = result.structured_analysis.mistake_book_update
+      document.getElementById('mistakeBookUpdate').innerHTML = mb.should_add
+        ? `<div class="mistake-update-card">
+            <div class="label">错题本更新建议 — 建议加入错题本</div>
+            <p style="color:var(--text);font-size:14px;margin:6px 0">题目摘要：${mb.question_summary}</p>
+            <p style="color:var(--muted);font-size:13px">错误原因：${mb.wrong_reason}</p>
+            <p style="color:var(--muted);font-size:13px">正确思路：${mb.correct_approach}</p>
+          </div>`
+        : '<div class="empty-state">此问题无需加入错题本。</div>'
+
+      // Scroll to result
+      document.getElementById('responseBlock').scrollIntoView({ behavior: 'smooth' })
+    }
+
+    function renderHistory() {
+      const container = document.getElementById('qaHistory')
+      document.getElementById('historyCount').textContent = `${qaHistory.length} 条记录`
+      if (!qaHistory.length) {
+        container.innerHTML = '<div class="empty-state">暂无问答记录，提出一个问题开始吧</div>'
+        return
+      }
+      container.innerHTML = qaHistory.map((h,i) => `
+        <div class="qa-history-item" onclick="document.getElementById('qaQuestion').value='${h.question.replace(/'/g,"\\'")}';window.scrollTo({top:0,behavior:'smooth'})">
+          <div class="q">${h.question.slice(0,60)}${h.question.length>60?'...':''}</div>
+          <div class="t">${h.time}</div>
+        </div>`).join('')
+    }
+
+    function switchTheme(key) {
+      document.documentElement.setAttribute('data-theme', key)
+      document.querySelectorAll('.t-dot').forEach(d => d.classList.remove('active'))
+      document.querySelector(`.t-dot[style*="${key==='ocean'?'00c8aa':key==='warm'?'e8924a':key==='cosmic'?'a78bfa':key==='minimal'?'2563eb':'48c884'}"]`)?.classList.add('active')
+    }
+  </script>
+</body>
+</html>

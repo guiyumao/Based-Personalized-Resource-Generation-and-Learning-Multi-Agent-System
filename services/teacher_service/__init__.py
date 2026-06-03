@@ -1,0 +1,1 @@
+"""Teacher service package root."""
