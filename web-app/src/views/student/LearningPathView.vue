@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import { agentApi, type LearningPathPayload, type LearningPathResponse } from '../../api'
@@ -16,12 +16,36 @@ const learningPath = ref<LearningPathResponse | null>(null)
 const activeTaskId = ref('')
 const loading = ref(false)
 const pathError = ref('')
+const coordination = ref<{ agents: string[]; plan_summary?: string } | null>(null)
 
+// ── Load existing path on mount ──
+onMounted(async () => {
+  try {
+    const { data } = await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)
+    if (data && data.stages?.length) {
+      learningPath.value = data
+      activeTaskId.value = data.stages[0]?.tasks[0]?.task_id ?? ''
+    }
+  } catch { /* no existing path */ }
+})
+
+// ── Generate path (with coordination) ──
 async function generateLearningPath() {
   if (!pathForm.knowledge_point.trim()) { ElMessage.warning('请先输入学习主题'); return }
-  loading.value = true; pathError.value = ''
+  loading.value = true; pathError.value = ''; coordination.value = null
   try {
     pathForm.user_id = user.userId
+    // Step 1: Coordinate with agents
+    try {
+      const coordRes = await agentApi.post('/agents/coordinate', {
+        user_id: user.userId,
+        intent: `围绕 ${pathForm.subject} 中的"${pathForm.knowledge_point}"生成个性化学习路径`,
+        knowledge_point: pathForm.knowledge_point,
+      })
+      coordination.value = (coordRes.data as any).data ?? coordRes.data
+    } catch { /* coordination is optional */ }
+
+    // Step 2: Generate path
     const { data } = await agentApi.post<LearningPathResponse>('/paths/generate', pathForm)
     learningPath.value = data
     activeTaskId.value = data.stages[0]?.tasks[0]?.task_id ?? ''
@@ -32,6 +56,28 @@ async function generateLearningPath() {
     ElMessage.error(pathError.value)
   } finally {
     loading.value = false
+  }
+}
+
+// ── Adjust task state ──
+async function adjustTask(taskId: string, action: 'complete' | 'skip') {
+  try {
+    await agentApi.post('/paths/adjust', { user_id: user.userId, task_id: taskId, action })
+    // Optimistic update
+    if (learningPath.value) {
+      for (const stage of learningPath.value.stages) {
+        for (const task of stage.tasks) {
+          if (task.task_id === taskId) {
+            task.completed = action === 'complete'
+            break
+          }
+        }
+      }
+    }
+    ElMessage.success(action === 'complete' ? '任务已标记完成' : '任务已跳过')
+  } catch (error: any) {
+    const detail = error?.response?.data?.detail ?? error?.message ?? ''
+    ElMessage.error(`操作失败：${detail}`)
   }
 }
 
@@ -64,25 +110,43 @@ const progressPct = computed(() => totalStages.value > 0 ? Math.round((completed
             <div style="padding:16px;border-radius:14px;background:color-mix(in srgb,var(--accent) 4%,transparent);border:1px solid var(--line)">
               <h4 style="margin:0 0 4px">{{ stage.title }}</h4>
               <p style="margin:0;font-size:13px;color:var(--muted)">{{ stage.description }}</p>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
                 <span v-for="t in stage.tasks" :key="t.task_id" style="padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600"
                   :style="t.completed?{background:'color-mix(in srgb,var(--green) 14%,transparent)',color:'var(--green)'}:{background:'color-mix(in srgb,var(--accent) 10%,transparent)',color:'var(--accent)'}">
                   {{ t.completed ? '✓' : '○' }} {{ t.title }}
+                </span>
+                <!-- Task action buttons -->
+                <span v-for="t in stage.tasks" :key="'btn-'+t.task_id" style="display:inline-flex;gap:4px;margin-left:4px">
+                  <button v-if="!t.completed" @click="adjustTask(t.task_id, 'complete')"
+                    style="width:20px;height:20px;border-radius:50%;border:1px solid var(--green);background:transparent;color:var(--green);cursor:pointer;font-size:11px;line-height:1;padding:0" title="标记完成">✓</button>
+                  <button v-if="t.completed" @click="adjustTask(t.task_id, 'skip')"
+                    style="width:20px;height:20px;border-radius:50%;border:1px solid var(--muted);background:transparent;color:var(--muted);cursor:pointer;font-size:11px;line-height:1;padding:0" title="取消完成">↩</button>
                 </span>
               </div>
             </div>
           </div>
         </div>
-        <div v-else-if="!pathError" style="text-align:center;padding:40px;color:var(--muted)">输入学科知识和学习主题，点击"生成路径"开始</div>
+        <div v-else-if="!pathError && !learningPath" style="text-align:center;padding:40px;color:var(--muted)">输入学科和知识点，点击"生成路径"开始</div>
       </div>
 
-      <div style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line);align-self:start">
-        <h3 style="margin:0 0 14px">📊 路径统计</h3>
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="color:var(--muted)">总体进度</span><span style="font-weight:700;color:var(--accent)">{{ progressPct }}%</span></div>
-        <div style="height:6px;border-radius:3px;background:color-mix(in srgb,var(--muted) 15%,transparent);overflow:hidden"><div :style="{width:progressPct+'%',height:'100%',background:'linear-gradient(90deg,var(--accent),var(--accent-deep))',borderRadius:'3px'}"></div></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
-          <div style="text-align:center;padding:16px;border-radius:14px;background:color-mix(in srgb,var(--accent) 5%,transparent);border:1px solid var(--line)"><div style="font-size:28px;font-weight:700;color:var(--accent)">{{ completedStages }}</div><div style="font-size:11px;color:var(--muted)">已完成阶段</div></div>
-          <div style="text-align:center;padding:16px;border-radius:14px;background:color-mix(in srgb,var(--accent) 5%,transparent);border:1px solid var(--line)"><div style="font-size:28px;font-weight:700;color:var(--accent-deep)">{{ totalStages - completedStages }}</div><div style="font-size:11px;color:var(--muted)">剩余阶段</div></div>
+      <div style="display:grid;gap:16px;align-content:start">
+        <div style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line)">
+          <h3 style="margin:0 0 14px">📊 路径统计</h3>
+          <div style="display:flex;justify-content:space-between;margin-bottom:8px"><span style="color:var(--muted)">总体进度</span><span style="font-weight:700;color:var(--accent)">{{ progressPct }}%</span></div>
+          <div style="height:6px;border-radius:3px;background:color-mix(in srgb,var(--muted) 15%,transparent);overflow:hidden"><div :style="{width:progressPct+'%',height:'100%',background:'linear-gradient(90deg,var(--accent),var(--accent-deep))',borderRadius:'3px'}"></div></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
+            <div style="text-align:center;padding:16px;border-radius:14px;background:color-mix(in srgb,var(--accent) 5%,transparent);border:1px solid var(--line)"><div style="font-size:28px;font-weight:700;color:var(--accent)">{{ completedStages }}</div><div style="font-size:11px;color:var(--muted)">已完成阶段</div></div>
+            <div style="text-align:center;padding:16px;border-radius:14px;background:color-mix(in srgb,var(--accent) 5%,transparent);border:1px solid var(--line)"><div style="font-size:28px;font-weight:700;color:var(--accent-deep)">{{ totalStages - completedStages }}</div><div style="font-size:11px;color:var(--muted)">剩余阶段</div></div>
+          </div>
+        </div>
+
+        <!-- Coordination result -->
+        <div v-if="coordination" style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line)">
+          <h3 style="margin:0 0 10px">🤖 Agent 协调结果</h3>
+          <div v-if="coordination.agents?.length" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+            <span v-for="a in coordination.agents" :key="a" style="padding:4px 10px;border-radius:999px;font-size:11px;font-weight:600;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)">{{ a }}</span>
+          </div>
+          <p v-if="coordination.plan_summary" style="font-size:13px;color:var(--muted);line-height:1.6">{{ coordination.plan_summary }}</p>
         </div>
       </div>
     </div>

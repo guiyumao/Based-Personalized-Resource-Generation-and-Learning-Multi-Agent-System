@@ -62,6 +62,14 @@ async function submitAnswer() {
     const { data } = await evaluationApi.post<ApiEnvelope<PracticeFeedback>>('/evaluation/practice/submit', payload)
     submittedExercises[ex.exercise_id] = (data as any).data ?? data
     ElMessage.success(submittedExercises[ex.exercise_id].is_correct ? '回答正确' : '已返回解析')
+    // Auto-report wrong answer to mistake book
+    if (!submittedExercises[ex.exercise_id].is_correct) {
+      try { await evaluationApi.post('/evaluation/mistakes/qa', {
+        student_id: String(user.userId), subject: exerciseForm.knowledge_point, grade: '大学',
+        question: ex.prompt, student_answer: draft, correct_answer: ex.answer,
+        current_knowledge_points: [ex.knowledge_point], learning_route: {}, error_book: {}, learning_history: {},
+      }) } catch { /* best-effort */ }
+    }
   } catch (error: any) {
     const detail = error?.response?.data?.detail ?? error?.message ?? '未知错误'
     submitError.value = `提交失败：${detail}`

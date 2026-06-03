@@ -87,6 +87,11 @@ const router = createRouter({
           name: 'student-qa',
           component: () => import('./views/student/QaView.vue'),
         },
+        {
+          path: 'resources',
+          name: 'student-resources',
+          component: () => import('./views/student/ResourceView.vue'),
+        },
         // Legacy StudentView removed — all features migrated to individual sub-views
       ],
     },

@@ -26,6 +26,7 @@ const menuItems: MenuItem[] = [
   { key: 'knowledge-graph',label: '知识图谱',   icon: '🔗', route: '/student/knowledge-graph',roles: ['student', 'teacher', 'admin'] },
   { key: 'report',         label: '学习报告',   icon: '📈', route: '/student/report',         roles: ['student', 'teacher', 'admin'] },
   { key: 'qa',             label: '智能问答',   icon: '💬', route: '/student/qa',             roles: ['student', 'teacher', 'admin'] },
+  { key: 'resources',      label: '学习资源',   icon: '📁', route: '/student/resources',      roles: ['student', 'teacher', 'admin'] },
 ]
 
 const visibleItems = computed(() =>

@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
-import { qaApi, type QAResponsePayload, type QARequestPayload } from '../../api'
+import { evaluationApi, qaApi, type QAResponsePayload, type QARequestPayload } from '../../api'
 
 const authStore = useAuthStore()
 const user = authStore.user!
@@ -37,6 +37,15 @@ async function askQaAgent() {
     const { data } = await qaApi.post<QAResponsePayload>('/qa/analyze', qaForm)
     qaResult.value = data
     ElMessage.success('智能回答已生成')
+    // Auto-submit to mistake book if analysis suggests it
+    if (data.structured_analysis?.mistake_book_update?.should_add) {
+      try { await evaluationApi.post('/evaluation/mistakes/qa', {
+        student_id: String(user.userId), subject: qaForm.subject, grade: qaForm.grade,
+        question: qaForm.question, student_answer: qaForm.student_answer, wrong_answer: qaForm.wrong_answer,
+        current_knowledge_points: qaForm.current_knowledge_points, learning_route: qaForm.learning_route,
+        error_book: qaForm.error_book, learning_history: qaForm.learning_history,
+      }) } catch { /* best-effort */ }
+    }
   } catch (error: any) {
     const detail = error?.response?.data?.detail ?? error?.message ?? '未知错误'
     qaError.value = `请求失败：${detail}`

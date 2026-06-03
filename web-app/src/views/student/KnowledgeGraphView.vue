@@ -8,6 +8,7 @@ const knowledgePoint = ref('')
 const loading = ref(false)
 const graphVisualization = ref<GraphVisualizationResponse | null>(null)
 const dependencyPaths = ref<string[][]>([])
+const relatedResources = ref<any[]>([])
 const graphError = ref('')
 const canvasRef = ref<HTMLDivElement | null>(null)
 let network: Network | null = null
@@ -29,6 +30,11 @@ async function queryGraph() {
     const depData = (depRes.data as any).data ?? depRes.data
     dependencyPaths.value = depData?.paths ?? []
     ElMessage.success('知识图谱已返回')
+    // Fetch related resources in parallel
+    try {
+      const rrRes = await agentApi.get(`/graph/related-resources/${encodeURIComponent(knowledgePoint.value)}`)
+      relatedResources.value = (rrRes.data as any).data ?? (rrRes.data as any).resources ?? []
+    } catch { relatedResources.value = [] }
     await nextTick()
     renderGraph()
   } catch (error: any) {
@@ -66,6 +72,13 @@ function renderGraph() {
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">依赖路径</div>
       <div v-for="(path,i) in dependencyPaths" :key="i" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
         <span v-for="(kp,j) in path" :key="j"><span style="padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)">{{ kp }}</span><span v-if="j<path.length-1" style="color:var(--muted);margin:0 4px">→</span></span>
+      </div>
+    </div>
+    <div v-if="relatedResources.length" style="margin-top:16px;padding:16px 20px;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">📚 关联资源</div>
+      <div v-for="(r,i) in relatedResources" :key="i" style="padding:8px 0;border-bottom:1px solid var(--line);font-size:13px">
+        <strong>{{ r.title ?? r.name ?? '资源' }}</strong>
+        <span style="color:var(--muted);margin-left:8px">{{ r.type ?? r.resource_type ?? '' }}</span>
       </div>
     </div>
   </div>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useAuthStore } from '../../stores/auth'
-import { evaluationApi, userApi, type ApiEnvelope, type LearnerProfileDashboard, type ReportDetail } from '../../api'
+import { agentApi, evaluationApi, userApi, type ApiEnvelope, type LearnerProfileDashboard, type ReportDetail } from '../../api'
 
 const authStore = useAuthStore()
 const user = authStore.user!
@@ -33,6 +33,10 @@ const masteryPct = computed(() => {
 })
 
 const recentActivity = ref<{ text: string; time: string; color: string }[]>([])
+const suggestions = ref<string[]>([])
+const profileSnapshot = ref<any>(null)
+const mistakeStats = ref<any>(null)
+const resources = ref<any[]>([])
 
 async function fetchRecentActivity() {
   try {
@@ -45,9 +49,29 @@ async function fetchRecentActivity() {
   } catch { recentActivity.value = [] }
 }
 
+async function fetchSuggestions() {
+  try { const { data } = await evaluationApi.get(`/evaluation/reports/suggestions/${user.userId}`); suggestions.value = (data as any).data?.suggestions ?? (data as any).suggestions ?? [] }
+  catch { suggestions.value = [] }
+}
+
+async function fetchProfileSnapshot() {
+  try { const { data } = await evaluationApi.get(`/evaluation/profiles/${user.userId}/snapshot`); profileSnapshot.value = (data as any).data ?? data }
+  catch { profileSnapshot.value = null }
+}
+
+async function fetchMistakeStats() {
+  try { const { data } = await evaluationApi.get(`/evaluation/mistakes/${user.userId}`); mistakeStats.value = (data as any).data ?? data }
+  catch { mistakeStats.value = null }
+}
+
+async function fetchResources() {
+  try { const { data } = await agentApi.get('/resources'); resources.value = (data as any).data ?? (Array.isArray(data) ? data : []) }
+  catch { resources.value = [] }
+}
+
 onMounted(() => {
   checkHealth(8001, 'user'); checkHealth(8002, 'agent'); checkHealth(8004, 'evaluation')
-  fetchDashboard(); fetchRecentActivity()
+  fetchDashboard(); fetchRecentActivity(); fetchSuggestions(); fetchProfileSnapshot(); fetchMistakeStats(); fetchResources()
 })
 </script>
 
@@ -97,6 +121,42 @@ onMounted(() => {
           </div>
         </div>
         <div v-else style="text-align:center;padding:20px;color:var(--muted)">暂无数据，完成练习后将自动生成</div>
+      </div>
+    </div>
+
+    <!-- AI Suggestions -->
+    <div v-if="suggestions.length" style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-top:20px">
+      <h3 style="margin-bottom:14px">📝 AI 学习建议</h3>
+      <ul style="padding-left:20px;color:var(--muted);line-height:1.8">
+        <li v-for="(s, i) in suggestions" :key="i" style="margin-top:4px">{{ s }}</li>
+      </ul>
+    </div>
+
+    <!-- Mistake stats -->
+    <div v-if="mistakeStats" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:20px">
+      <div style="padding:18px;text-align:center;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
+        <div style="font-size:12px;color:var(--muted)">总错题数</div>
+        <div style="font-size:28px;font-weight:700;color:var(--red);margin-top:6px">{{ mistakeStats.total ?? mistakeStats.count ?? '-' }}</div>
+      </div>
+      <div style="padding:18px;text-align:center;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
+        <div style="font-size:12px;color:var(--muted)">已掌握</div>
+        <div style="font-size:28px;font-weight:700;color:var(--green);margin-top:6px">{{ mistakeStats.mastered ?? mistakeStats.resolved ?? '-' }}</div>
+      </div>
+      <div style="padding:18px;text-align:center;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
+        <div style="font-size:12px;color:var(--muted)">待重练</div>
+        <div style="font-size:28px;font-weight:700;color:var(--accent);margin-top:6px">{{ mistakeStats.pending ?? mistakeStats.unresolved ?? '-' }}</div>
+      </div>
+    </div>
+
+    <!-- Resource library -->
+    <div v-if="resources.length" style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-top:20px">
+      <h3 style="margin-bottom:14px">📁 学习资源库</h3>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+        <div v-for="r in resources.slice(0, 6)" :key="r.id ?? r.resource_id"
+          style="padding:14px;border-radius:12px;border:1px solid var(--line);background:color-mix(in srgb,var(--accent) 4%,transparent)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">{{ r.title ?? r.name ?? '未命名资源' }}</div>
+          <div style="font-size:11px;color:var(--muted)">{{ r.type ?? r.resource_type ?? '' }} · {{ r.status ?? '' }}</div>
+        </div>
       </div>
     </div>
   </div>
