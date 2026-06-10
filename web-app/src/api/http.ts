@@ -1,15 +1,28 @@
 import axios from 'axios'
 
-const userBaseUrl = 'http://127.0.0.1:8001'
-const agentBaseUrl = 'http://127.0.0.1:8002'
-const evaluationBaseUrl = 'http://127.0.0.1:8004'
-const teacherBaseUrl = 'http://127.0.0.1:8005'
-const systemBaseUrl = 'http://127.0.0.1:8006'
+type ServiceKey = 'user' | 'agent' | 'resource' | 'evaluation' | 'teacher' | 'system'
+
+function readRequiredEnv(name: string) {
+  const value = import.meta.env[name]
+  if (!value) {
+    throw new Error(`Missing required frontend environment variable: ${name}`)
+  }
+  return value
+}
+
+export const serviceEndpoints: Record<ServiceKey, string> = {
+  user: readRequiredEnv('VITE_USER_API_BASE_URL'),
+  agent: readRequiredEnv('VITE_AGENT_API_BASE_URL'),
+  resource: readRequiredEnv('VITE_RESOURCE_API_BASE_URL'),
+  evaluation: readRequiredEnv('VITE_EVALUATION_API_BASE_URL'),
+  teacher: readRequiredEnv('VITE_TEACHER_API_BASE_URL'),
+  system: readRequiredEnv('VITE_SYSTEM_API_BASE_URL'),
+}
 
 function createHttpClient(baseURL: string) {
   const client = axios.create({
     baseURL,
-    timeout: 15000,
+    timeout: 120000,  // 2 min — DeepSeek LLM can take 30-60s per request
   })
 
   client.interceptors.request.use((config) => {
@@ -31,10 +44,11 @@ function createHttpClient(baseURL: string) {
   return client
 }
 
-export const userApi = createHttpClient(userBaseUrl)
-export const agentApi = createHttpClient(agentBaseUrl)
-export const qaApi = createHttpClient(agentBaseUrl)
-export const contentApi = createHttpClient(agentBaseUrl)
-export const evaluationApi = createHttpClient(evaluationBaseUrl)
-export const teacherApi = createHttpClient(teacherBaseUrl)
-export const systemApi = createHttpClient(systemBaseUrl)
+export const userApi = createHttpClient(serviceEndpoints.user)
+export const agentApi = createHttpClient(serviceEndpoints.agent)
+export const qaApi = createHttpClient(serviceEndpoints.agent)
+export const contentApi = createHttpClient(serviceEndpoints.agent)
+export const evaluationApi = createHttpClient(serviceEndpoints.evaluation)
+export const teacherApi = createHttpClient(serviceEndpoints.teacher)
+export const systemApi = createHttpClient(serviceEndpoints.system)
+export const resourceApi = createHttpClient(serviceEndpoints.resource)

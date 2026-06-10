@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from common.logging.setup import configure_logging
-from services.agent_service.app.api.routes import agents, graph, learning, qa, resources
+from services.agent_service.app.api.routes import agents, chat, graph, learning, qa, resources
 
 configure_logging("agent-service")
 
@@ -28,6 +28,7 @@ app.include_router(graph.router, prefix="/graph", tags=["knowledge-graph"])
 app.include_router(resources.router, prefix="/resources", tags=["resource-generation"])
 app.include_router(learning.router, tags=["learning"])
 app.include_router(qa.router, prefix="/qa", tags=["qa"])
+app.include_router(chat.router, prefix="/chat", tags=["chat"])
 
 
 @app.get("/health", summary="Health check")

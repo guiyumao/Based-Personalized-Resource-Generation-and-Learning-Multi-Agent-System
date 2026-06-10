@@ -391,7 +391,85 @@ class ResourceGenerationService:
             return chain.invoke(variables)
         except Exception as exc:
             logger.exception("Model-based courseware generation failed")
-            raise ResourceGenerationError("Model-based courseware generation failed.") from exc
+            return self._build_fallback_markdown(variables)
+
+    def _build_fallback_markdown(self, variables: dict[str, Any]) -> str:
+        knowledge_point = str(variables.get("knowledge_point") or "当前知识点")
+        resource_style = str(variables.get("resource_style") or "interactive")
+        grounding_text = str(variables.get("grounding_text") or "").strip()
+        context_text = str(variables.get("context_text") or "").strip()
+        basis_text = str(variables.get("personalization_basis_text") or "").strip()
+        recent_mistakes_text = str(variables.get("recent_mistakes_text") or "").strip()
+
+        source_text = "\n".join(part for part in [grounding_text, context_text] if part)
+        extracted_points = self._extract_fallback_points(source_text)
+        if not extracted_points:
+            extracted_points = [
+                f"先明确 {knowledge_point} 的定义、使用场景和边界条件。",
+                "再通过一个最小示例观察输入、处理过程和输出结果。",
+                "最后用自测题确认是否能独立迁移应用。",
+            ]
+
+        return "\n".join(
+            [
+                f"# {knowledge_point} 个性化学习课件",
+                "",
+                "## 课程导入",
+                f"这节课围绕 **{knowledge_point}** 展开。当前模型生成通道暂时不可用，系统已根据知识库、检索资料和学习路径生成可阅读的备用正式课件。",
+                "",
+                "## 学习目标",
+                *[f"- {point}" for point in extracted_points[:4]],
+                "",
+                "## 你的当前学习情况",
+                basis_text or "- 暂无真实作答记录，本课件先按入门到巩固的节奏组织内容。",
+                "",
+                "## 知识讲解",
+                f"- 核心主题：{knowledge_point}",
+                "- 学习顺序：先理解概念，再看例子，最后完成自测。",
+                "- 阅读方式：遇到不熟悉的术语时，先回到定义，再结合示例复述一遍。",
+                "",
+                "## 重点难点突破",
+                *[f"- {point}" for point in extracted_points[4:8] or extracted_points[:3]],
+                "",
+                "## 示例讲解",
+                "```python",
+                f"# 围绕 {knowledge_point} 的最小示例",
+                "steps = ['理解概念', '观察示例', '完成练习', '复盘错误']",
+                "for index, step in enumerate(steps, start=1):",
+                "    print(index, step)",
+                "```",
+                "这个示例强调把学习过程拆成可执行步骤：每一步都有明确目标，方便后续生成练习和错题复盘。",
+                "",
+                "## 近期错题提醒",
+                recent_mistakes_text or "暂无该知识点的错题记录，先完成基础自测后再生成针对性练习。",
+                "",
+                "## 课堂小结",
+                f"- 本节课先建立 {knowledge_point} 的基础框架。",
+                f"- 当前课件风格：{resource_style}。",
+                "- 学完后建议回到工作台生成练习题，用真实作答记录继续优化画像。",
+                "",
+                "## 学完后自测",
+                f"1. 请用自己的话说明 {knowledge_point} 解决什么问题。",
+                "2. 找出一个最小示例，并标注输入、处理逻辑、输出。",
+                "3. 写出一个容易出错的点，以及对应规避方法。",
+                "",
+                "## 拓展延伸",
+                "完成自测后，可继续生成练习题或进入知识图谱查看前置知识与相关资源。",
+            ]
+        )
+
+    def _extract_fallback_points(self, source_text: str) -> list[str]:
+        points: list[str] = []
+        for line in source_text.splitlines():
+            item = line.strip().lstrip("-•0123456789.、 ").strip()
+            if not item or item in points:
+                continue
+            if len(item) > 120:
+                item = item[:117] + "..."
+            points.append(item)
+            if len(points) >= 10:
+                break
+        return points
 
     def _resolve_variant_styles(self, preferred_style: str) -> list[str]:
         style_order = [preferred_style, "concise", "case", "interactive"]
@@ -463,7 +541,7 @@ class ResourceGenerationService:
         variants: list[dict[str, Any]] = []
         for index, style in enumerate(self._resolve_variant_styles(request.resource_style), start=1):
             variant_variables = self._build_variant_prompt(variables, style)
-            content = self._invoke_llm(variant_variables)
+            content = self._sanitize_generated_content(self._invoke_llm(variant_variables))
             variants.append(
                 {
                     "variant_id": f"{style}-{index}",
@@ -540,7 +618,7 @@ class ResourceGenerationService:
         variants: list[dict[str, Any]] = []
         for index, style in enumerate(self._resolve_variant_styles(request.resource_style), start=1):
             variant_variables = self._build_variant_prompt(variables, style)
-            content = self._invoke_llm(variant_variables)
+            content = self._sanitize_generated_content(self._invoke_llm(variant_variables))
             variants.append(
                 {
                     "variant_id": f"{style}-{index}",
@@ -565,3 +643,22 @@ class ResourceGenerationService:
             "content": primary["content"],
             "variants": variants,
         }
+
+    def _sanitize_generated_content(self, content: str) -> str:
+        sanitized_lines: list[str] = []
+        blocked_patterns = (
+            "VARK",
+            "学习风格偏向",
+            "学习风格是",
+            "逻辑准确率",
+            "准确率目前是",
+            "掌握度约 62",
+            "掌握度约62",
+            "62/100",
+        )
+        for line in content.splitlines():
+            if any(pattern in line for pattern in blocked_patterns):
+                continue
+            sanitized_lines.append(line)
+        sanitized = "\n".join(sanitized_lines).strip()
+        return sanitized or self._build_fallback_markdown({"knowledge_point": "当前知识点"})

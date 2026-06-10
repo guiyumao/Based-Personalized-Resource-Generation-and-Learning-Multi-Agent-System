@@ -43,6 +43,14 @@ async function handleLogin() {
       },
     })
     ElMessage.success('登录成功')
+    // Check if profile setup is needed (first login)
+    try {
+      const { data: status } = await userApi.get(`/users/${data.user_id}/profile/status`)
+      if (!status.completed && !status.skipped) {
+        await router.replace('/profile-setup')
+        return
+      }
+    } catch { /* proceed to workspace */ }
     await router.replace(authStore.homeRoute)
   } catch (error: unknown) {
     ElMessage.error(extractErrorMessage(error, '登录失败，请检查用户名和密码'))

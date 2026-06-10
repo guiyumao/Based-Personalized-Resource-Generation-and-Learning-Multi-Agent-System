@@ -22,7 +22,7 @@ export const useAuthStore = defineStore('auth', {
     isAuthenticated: (state) => Boolean(state.token),
     homeRoute: (state) => {
       if (state.user?.role === 'teacher') {
-        return '/teacher'
+        return '/teacher/overview'
       }
       if (state.user?.role === 'admin') {
         return '/admin'

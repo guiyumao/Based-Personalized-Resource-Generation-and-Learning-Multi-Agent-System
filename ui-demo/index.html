@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智学平台 — UI 改进方案</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #080e1a;
+      color: #e2ebf4;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .hero {
+      text-align: center;
+      padding: 60px 24px 40px;
+      max-width: 700px;
+    }
+
+    .hero h1 {
+      font-size: clamp(32px, 5vw, 48px);
+      font-weight: 800;
+      background: linear-gradient(135deg, #e0f8ff, #60d0c0, #4da3e0);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 12px;
+    }
+
+    .hero p {
+      color: #7b90a8;
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .demos-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      width: min(100%, 960px);
+      padding: 0 24px 60px;
+    }
+
+    .demo-card {
+      position: relative;
+      border-radius: 20px;
+      background: rgba(16, 26, 44, 0.72);
+      border: 1px solid rgba(80, 160, 190, 0.12);
+      backdrop-filter: blur(14px);
+      padding: 32px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.3s cubic-bezier(0.33, 1, 0.68, 1);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .demo-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(0, 200, 170, 0.3);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35), 0 4px 20px rgba(0, 0, 0, 0.15);
+    }
+
+    .demo-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+
+    .demo-card:nth-child(1)::before {
+      background: linear-gradient(90deg, #00c8aa, #0088cc);
+    }
+
+    .demo-card:nth-child(2)::before {
+      background: linear-gradient(90deg, #ff7b4a, #e8924a);
+    }
+
+    .demo-card:nth-child(3)::before {
+      background: linear-gradient(90deg, #a78bfa, #818cf8);
+    }
+
+    .demo-icon {
+      font-size: 40px;
+    }
+
+    .demo-card h2 {
+      font-size: 22px;
+      font-weight: 700;
+    }
+
+    .demo-card .desc {
+      color: #7b90a8;
+      font-size: 14px;
+      line-height: 1.7;
+      flex: 1;
+    }
+
+    .demo-card .tag-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+    }
+
+    .tag-tech {
+      background: rgba(0, 200, 170, 0.12);
+      color: #00c8aa;
+    }
+
+    .tag-feat {
+      background: rgba(77, 163, 224, 0.12);
+      color: #4da3e0;
+    }
+
+    .tag-warn {
+      background: rgba(255, 123, 74, 0.12);
+      color: #ff7b4a;
+    }
+
+    .design-notes {
+      width: min(100%, 800px);
+      padding: 0 24px 60px;
+    }
+
+    .design-notes h2 {
+      font-size: 24px;
+      margin-bottom: 20px;
+      color: #e2ebf4;
+    }
+
+    .note-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .note-card {
+      padding: 20px;
+      border-radius: 16px;
+      background: rgba(16, 26, 44, 0.5);
+      border: 1px solid rgba(80, 160, 190, 0.08);
+    }
+
+    .note-card h3 {
+      font-size: 15px;
+      margin-bottom: 8px;
+      color: #c8dae8;
+    }
+
+    .note-card p {
+      font-size: 13px;
+      color: #7b90a8;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 800px) {
+      .demos-grid { grid-template-columns: repeat(2, 1fr); }
+      .note-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 520px) {
+      .demos-grid, .note-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <h1>智学平台 · UI 改进方案</h1>
+    <p>
+      针对当前项目"功能集中、无导航结构"的核心问题，
+      设计了侧边栏菜单布局，将 4380 行的单体 StudentView
+      拆分为 8 个独立功能页面，并升级了整体视觉风格
+    </p>
+  </div>
+
+  <div class="demos-grid">
+    <a href="landing.html" class="demo-card">
+      <div class="demo-icon">🚀</div>
+      <h2>首页 Landing</h2>
+      <p class="desc">
+        鼠标跟随动态光效背景 · "科技赋能教育，AI引领未来"艺术字标题 ·
+        八大功能模块展示 · AI技术亮点 · 五套主题适配
+      </p>
+      <div class="tag-row">
+        <span class="tag tag-tech">Mouse Glow</span>
+        <span class="tag tag-feat">Landing Page</span>
+        <span class="tag tag-warn">NEW</span>
+      </div>
+    </a>
+
+    <a href="login.html" class="demo-card">
+      <div class="demo-icon">🔐</div>
+      <h2>登录页</h2>
+      <p class="desc">
+        Vanta.js WAVES 动态波浪背景 · 左右分栏磨砂玻璃卡片 ·
+        品牌展示区 + 登录表单 · 交互动效
+      </p>
+      <div class="tag-row">
+        <span class="tag tag-tech">Vanta.js</span>
+        <span class="tag tag-tech">Three.js</span>
+        <span class="tag tag-feat">Glassmorphism</span>
+      </div>
+    </a>
+
+    <a href="dashboard.html" class="demo-card">
+      <div class="demo-icon">🏠</div>
+      <h2>仪表盘工作台</h2>
+      <p class="desc">
+        可折叠侧边栏导航 · 8 个独立功能页面 ·
+        统计卡片 · 时间线学习路径 · 课件中心 ·
+        练习测评 · 错题本 · 知识图谱 · 智能问答
+      </p>
+      <div class="tag-row">
+        <span class="tag tag-tech">Vue 3 CDN</span>
+        <span class="tag tag-feat">Sidebar Menu</span>
+        <span class="tag tag-warn">Tab Switching</span>
+      </div>
+    </a>
+  </div>
+
+  <div class="design-notes">
+    <h2>🎨 设计思路</h2>
+    <div class="note-grid">
+      <div class="note-card">
+        <h3>🔀 导航分离</h3>
+        <p>
+          将原本挤在一个页面的 15+ 功能面板按业务拆分为独立页面，
+          通过侧边栏菜单串联。用户不再需要"滚屏找功能"。
+        </p>
+      </div>
+      <div class="note-card">
+        <h3>✨ 科技感视觉</h3>
+        <p>
+          深色主题 + 青蓝/橙暖双强调色，磨砂玻璃面板，
+          渐变高光线条，脉冲动画提示。有未来感但不花哨。
+        </p>
+      </div>
+      <div class="note-card">
+        <h3>📱 响应式适配</h3>
+        <p>
+          侧边栏可在移动端自动折叠为图标模式，
+          统计网格和内容区域自适应列数变化。
+        </p>
+      </div>
+      <div class="note-card">
+        <h3>🎯 渐进迁移</h3>
+        <p>
+          侧边栏路由结构与现有 Vue Router 可直接对应。
+          每个"页面"对应一个独立 .vue 组件，
+          按功能模块逐步拆分，无需一次性重写。
+        </p>
+      </div>
+      <div class="note-card">
+        <h3>🌊 动态背景</h3>
+        <p>
+          登录页使用 Vanta.js WAVES 效果，深色波涛动态背景
+          配合磨砂玻璃卡片，比纯静态渐变更显精致和专业感。
+        </p>
+      </div>
+      <div class="note-card">
+        <h3>🧩 组件化改造</h3>
+        <p>
+          建议后续将可复用 UI 提取为独立组件（统计卡片、
+          时间线节点、课件卡片、错题卡等），减少重复代码。
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

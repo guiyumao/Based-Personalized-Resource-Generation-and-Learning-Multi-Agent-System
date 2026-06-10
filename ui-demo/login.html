@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="ocean">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智学平台 - 登录</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus/dist/index.css" />
+  <style>
+    /* ============================================================
+       THEME SYSTEM
+       ============================================================ */
+    :root,
+    [data-theme="ocean"] {
+      --bg-deep:    #080e1a;
+      --bg-surface: #0d1525;
+      --bg-card:    rgba(16, 26, 44, 0.78);
+      --bg-hover:   rgba(255, 255, 255, 0.04);
+      --border:     rgba(80, 160, 190, 0.14);
+      --border-focus: rgba(0, 200, 170, 0.28);
+      --text:       #e2ebf4;
+      --text-muted: #7b90a8;
+      --accent:     #00c8aa;
+      --accent2:    #ff7b4a;
+      --accent3:    #4da3e0;
+    }
+
+    [data-theme="warm"] {
+      --bg-deep: #1e1814; --bg-surface: #28201a;
+      --bg-card: rgba(42, 32, 24, 0.78); --bg-hover: rgba(255, 240, 220, 0.05);
+      --border: rgba(180, 140, 100, 0.15); --border-focus: rgba(200, 130, 60, 0.3);
+      --text: #f2e6d8; --text-muted: #a89480;
+      --accent: #e8924a; --accent2: #d4745c; --accent3: #c9a87c;
+    }
+
+    [data-theme="cosmic"] {
+      --bg-deep: #0d0a1a; --bg-surface: #161028;
+      --bg-card: rgba(22, 16, 42, 0.72); --bg-hover: rgba(255, 255, 255, 0.04);
+      --border: rgba(140, 120, 200, 0.14); --border-focus: rgba(160, 120, 240, 0.3);
+      --text: #e4def8; --text-muted: #8b7cb8;
+      --accent: #a78bfa; --accent2: #f472b6; --accent3: #818cf8;
+    }
+
+    [data-theme="minimal"] {
+      --bg-deep: #f0f2f5; --bg-surface: #ffffff;
+      --bg-card: rgba(255, 255, 255, 0.9); --bg-hover: rgba(0, 0, 0, 0.04);
+      --border: rgba(0, 0, 0, 0.08); --border-focus: rgba(32, 128, 240, 0.28);
+      --text: #1a1a2e; --text-muted: #6b7280;
+      --accent: #2563eb; --accent2: #f97316; --accent3: #0ea5e9;
+    }
+
+    [data-theme="forest"] {
+      --bg-deep: #0a1a10; --bg-surface: #0f2218;
+      --bg-card: rgba(18, 32, 22, 0.72); --bg-hover: rgba(255, 255, 255, 0.04);
+      --border: rgba(80, 160, 110, 0.14); --border-focus: rgba(72, 200, 132, 0.3);
+      --text: #ddf0e4; --text-muted: #7aaa8e;
+      --accent: #48c884; --accent2: #e8b84b; --accent3: #5eb8e0;
+    }
+
+    /* ============================================================
+       BASE
+       ============================================================ */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      overflow: hidden;
+      height: 100vh;
+      background: var(--bg-deep);
+      transition: background 0.5s ease;
+    }
+
+    /* ============================================================
+       MOUSE-GLOW BACKGROUND
+       ============================================================ */
+    #mouse-glow {
+      position: fixed; inset: 0;
+      pointer-events: none; z-index: 0;
+    }
+
+    #mouse-glow .glow-layer {
+      position: absolute; inset: 0;
+      transition: opacity 0.6s ease;
+    }
+
+    #mouse-glow .grid-layer {
+      position: absolute; inset: 0;
+      background-image:
+        linear-gradient(rgba(129, 160, 204, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(129, 160, 204, 0.05) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(0,0,0,0.5) 0%, transparent 55%);
+      -webkit-mask-image: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(0,0,0,0.5) 0%, transparent 55%);
+    }
+
+    .particle {
+      position: fixed; border-radius: 50%;
+      pointer-events: none; z-index: 0; opacity: 0.35;
+      animation: floatUp linear infinite;
+    }
+
+    @keyframes floatUp {
+      0%   { transform: translateY(0) translateX(0) scale(1); opacity: 0; }
+      10%  { opacity: 0.35; }
+      90%  { opacity: 0.35; }
+      100% { transform: translateY(-105vh) translateX(40px) scale(0.3); opacity: 0; }
+    }
+
+    /* ============================================================
+       THEME DOTS (top-right corner)
+       ============================================================ */
+    .theme-dots-corner {
+      position: fixed; top: 18px; right: 24px; z-index: 10;
+      display: flex; gap: 8px;
+    }
+
+    .theme-dot {
+      width: 16px; height: 16px; border-radius: 50%;
+      cursor: pointer; border: 2px solid transparent;
+      transition: all 0.25s ease;
+    }
+
+    .theme-dot:hover  { transform: scale(1.25); }
+    .theme-dot.active { border-color: var(--text); box-shadow: 0 0 10px currentColor; }
+
+    /* ============================================================
+       LOGIN LAYOUT
+       ============================================================ */
+    .login-scene {
+      position: relative; z-index: 1;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 24px;
+    }
+
+    .login-panel {
+      display: grid;
+      grid-template-columns: 1fr 0.9fr;
+      width: min(100%, 880px); min-height: 520px;
+      border-radius: 24px; overflow: hidden;
+      background: var(--bg-card);
+      backdrop-filter: blur(28px) saturate(140%);
+      -webkit-backdrop-filter: blur(28px) saturate(140%);
+      border: 1px solid var(--border);
+      box-shadow:
+        0 32px 90px rgba(0,0,0,0.45),
+        0 0 0 1px rgba(255,255,255,0.03) inset;
+      transition: box-shadow 0.4s ease, border-color 0.5s ease, background 0.5s ease;
+    }
+
+    .login-panel:hover {
+      box-shadow:
+        0 40px 100px rgba(0,0,0,0.5),
+        0 0 60px color-mix(in srgb, var(--accent) 8%, transparent),
+        0 0 0 1px rgba(255,255,255,0.04) inset;
+    }
+
+    /* ── 左侧品牌区 ── */
+    .brand-side {
+      position: relative;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 48px 36px;
+      background: linear-gradient(160deg,
+        color-mix(in srgb, var(--bg-surface) 85%, transparent) 0%,
+        color-mix(in srgb, var(--bg-deep) 90%, transparent) 50%,
+        color-mix(in srgb, var(--bg-deep) 95%, transparent) 100%
+      );
+      border-right: 1px solid var(--border);
+      text-align: center; overflow: hidden;
+      transition: background 0.5s ease;
+    }
+
+    .brand-side::before {
+      content: "";
+      position: absolute; top: -30%; left: -20%;
+      width: 140%; height: 160%;
+      background:
+        radial-gradient(circle at 40% 35%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 55%),
+        radial-gradient(circle at 70% 65%, color-mix(in srgb, var(--accent3) 10%, transparent), transparent 50%);
+      animation: brandGlow 8s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    @keyframes brandGlow {
+      0%,100% { opacity: 0.7; transform: scale(1) rotate(0deg); }
+      50%     { opacity: 1;   transform: scale(1.06) rotate(2deg); }
+    }
+
+    .brand-logo {
+      position: relative; z-index: 1;
+      width: 72px; height: 72px; margin-bottom: 24px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, var(--accent), var(--accent3));
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 12px 40px color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+
+    .brand-logo svg { width: 38px; height: 38px; }
+
+    .brand-name {
+      position: relative; z-index: 1;
+      font-size: 32px; font-weight: 800; letter-spacing: 0.04em;
+      background: linear-gradient(135deg, var(--text) 0%, var(--accent) 50%, var(--accent3) 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .brand-tagline {
+      position: relative; z-index: 1;
+      margin-top: 10px; font-size: 13px; letter-spacing: 0.14em;
+      color: var(--text-muted); font-weight: 400;
+    }
+
+    .brand-features {
+      position: relative; z-index: 1;
+      margin-top: 36px; display: flex; flex-direction: column; gap: 12px;
+    }
+
+    .feature-item {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; color: var(--text-muted); letter-spacing: 0.02em;
+    }
+
+    .feature-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent);
+      flex-shrink: 0;
+    }
+
+    /* ── 右侧表单区 ── */
+    .form-side {
+      display: flex; flex-direction: column;
+      justify-content: center; padding: 48px 40px;
+      position: relative;
+    }
+
+    .form-side h2 {
+      font-size: 26px; font-weight: 700;
+      color: var(--text); margin-bottom: 6px;
+      transition: color 0.5s ease;
+    }
+
+    .form-side .subtitle {
+      font-size: 13px; color: var(--text-muted);
+      margin-bottom: 32px; letter-spacing: 0.03em;
+    }
+
+    .custom-input-group { margin-bottom: 20px; }
+
+    .custom-input-group label {
+      display: block; font-size: 12px; letter-spacing: 0.08em;
+      color: var(--text-muted); margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+
+    .custom-input-group input {
+      width: 100%; padding: 12px 16px; border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--bg-hover);
+      color: var(--text); font-size: 15px; outline: none;
+      transition: all 0.25s ease;
+    }
+
+    .custom-input-group input:focus {
+      border-color: var(--border-focus);
+      background: color-mix(in srgb, var(--bg-hover) 80%, var(--bg-surface));
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent);
+    }
+
+    .custom-input-group input::placeholder {
+      color: color-mix(in srgb, var(--text-muted) 40%, transparent);
+    }
+
+    .login-btn {
+      width: 100%; padding: 13px; margin-top: 10px;
+      border: none; border-radius: 14px;
+      font-size: 16px; font-weight: 700; letter-spacing: 0.04em;
+      cursor: pointer; color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent3));
+      box-shadow: 0 8px 28px color-mix(in srgb, var(--accent) 30%, transparent);
+      transition: all 0.3s ease;
+      position: relative; overflow: hidden;
+    }
+
+    .login-btn::after {
+      content: "";
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15), transparent);
+      opacity: 0; transition: opacity 0.3s ease;
+    }
+
+    .login-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 36px color-mix(in srgb, var(--accent) 45%, transparent);
+    }
+
+    .login-btn:hover::after { opacity: 1; }
+
+    .login-btn:active {
+      transform: translateY(0) scale(0.98);
+    }
+
+    .form-extra {
+      display: flex; justify-content: space-between;
+      align-items: center; margin-top: 18px; font-size: 13px;
+    }
+
+    .form-extra a {
+      color: var(--text-muted); text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .form-extra a:hover { color: var(--accent); }
+
+    @media (max-width: 720px) {
+      .login-panel { grid-template-columns: 1fr; max-width: 420px; min-height: auto; }
+      .brand-side { padding: 32px 24px; border-right: none; border-bottom: 1px solid var(--border); }
+      .brand-logo { width: 52px; height: 52px; margin-bottom: 14px; }
+      .brand-name { font-size: 24px; }
+      .brand-features { display: none; }
+      .form-side { padding: 32px 28px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════ MOUSE-GLOW BACKGROUND ═══════════════ -->
+  <div id="mouse-glow">
+    <div class="glow-layer" id="glow-layer"></div>
+    <div class="grid-layer" id="grid-layer"></div>
+  </div>
+  <div id="particles-container"></div>
+
+  <!-- ═══════════════ THEME DOTS ═══════════════ -->
+  <div class="theme-dots-corner">
+    <span class="theme-dot active" data-theme="ocean"   title="深海科技" style="background:#00c8aa;color:#00c8aa" onclick="switchTheme('ocean', this)"></span>
+    <span class="theme-dot"          data-theme="warm"    title="暖金学术" style="background:#e8924a;color:#e8924a" onclick="switchTheme('warm', this)"></span>
+    <span class="theme-dot"          data-theme="cosmic"  title="暗夜紫穹" style="background:#a78bfa;color:#a78bfa" onclick="switchTheme('cosmic', this)"></span>
+    <span class="theme-dot"          data-theme="minimal" title="极简晨光" style="background:#2563eb;color:#2563eb" onclick="switchTheme('minimal', this)"></span>
+    <span class="theme-dot"          data-theme="forest"  title="森翠绿洲" style="background:#48c884;color:#48c884" onclick="switchTheme('forest', this)"></span>
+  </div>
+
+  <!-- ═══════════════ LOGIN PANEL ═══════════════ -->
+  <div class="login-scene">
+    <div class="login-panel">
+      <div class="brand-side">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div class="brand-name">智学平台</div>
+        <div class="brand-tagline">AI-POWERED LEARNING</div>
+        <div class="brand-features">
+          <div class="feature-item"><span class="feature-dot"></span>个性化学习路径生成</div>
+          <div class="feature-item"><span class="feature-dot"></span>智能课件与习题推荐</div>
+          <div class="feature-item"><span class="feature-dot"></span>知识图谱可视化</div>
+          <div class="feature-item"><span class="feature-dot"></span>多智能体协同分析</div>
+        </div>
+      </div>
+
+      <div class="form-side">
+        <h2>欢迎回来</h2>
+        <p class="subtitle">登录您的账户以继续学习</p>
+
+        <div class="custom-input-group">
+          <label>用户名</label>
+          <input type="text" id="username" placeholder="请输入用户名" value="admin" />
+        </div>
+
+        <div class="custom-input-group">
+          <label>密码</label>
+          <input type="password" id="password" placeholder="请输入密码" value="admin123" />
+        </div>
+
+        <button class="login-btn" onclick="handleLogin()">登 录</button>
+
+        <div class="form-extra">
+          <a href="dashboard.html">游客浏览 →</a>
+          <a href="landing.html">← 返回首页</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ── Mouse-glow ──
+    const glowLayer = document.getElementById('glow-layer');
+    const gridLayer = document.getElementById('grid-layer');
+    let mx = 0.5, my = 0.5;
+    let curMx = 0.5, curMy = 0.5;
+
+    document.addEventListener('mousemove', e => {
+      mx = e.clientX / innerWidth;
+      my = e.clientY / innerHeight;
+    });
+
+    document.addEventListener('touchmove', e => {
+      mx = e.touches[0].clientX / innerWidth;
+      my = e.touches[0].clientY / innerHeight;
+    }, { passive: true });
+
+    function lerp(a,b,t) { return a+(b-a)*t; }
+
+    function updateGlow() {
+      curMx = lerp(curMx, mx, 0.06);
+      curMy = lerp(curMy, my, 0.06);
+      const x = (curMx*100).toFixed(1), y = (curMy*100).toFixed(1);
+
+      glowLayer.style.background = `
+        radial-gradient(420px circle at ${x}% ${y}%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, color-mix(in srgb, var(--accent3) 6%, transparent) 30%, transparent 70%),
+        radial-gradient(600px circle at ${x}% ${y}%, color-mix(in srgb, var(--accent2) 4%, transparent) 0%, transparent 50%)
+      `;
+
+      gridLayer.style.setProperty('--mx', `${x}%`);
+      gridLayer.style.setProperty('--my', `${y}%`);
+
+      requestAnimationFrame(updateGlow);
+    }
+    updateGlow();
+
+    // ── Floating particles ──
+    const pc = document.getElementById('particles-container');
+    function createParticle() {
+      const el = document.createElement('div');
+      el.className = 'particle';
+      const s = Math.random()*6+2;
+      const colors = ['var(--accent)', 'var(--accent3)', 'var(--accent2)'];
+      el.style.cssText = `
+        width:${s}px; height:${s}px; left:${Math.random()*100}vw; bottom:-20px;
+        background:${colors[Math.floor(Math.random()*colors.length)]};
+        box-shadow:0 0 ${s*3}px currentColor;
+        animation-duration:${Math.random()*14+10}s;
+        animation-delay:${Math.random()*6}s;
+      `;
+      pc.appendChild(el);
+      el.addEventListener('animationend', () => { el.remove(); createParticle(); });
+    }
+    for (let i=0; i<22; i++) setTimeout(() => createParticle(), Math.random()*3500);
+
+    // ── Theme switch ──
+    function switchTheme(key, dotEl) {
+      document.documentElement.setAttribute('data-theme', key);
+      document.querySelectorAll('.theme-dot').forEach(d => d.classList.remove('active'));
+      if (dotEl) dotEl.classList.add('active');
+    }
+
+    // ── Login ──
+    function handleLogin() {
+      const u = document.getElementById('username').value.trim();
+      const p = document.getElementById('password').value.trim();
+      if (!u || !p) { alert('请输入用户名和密码'); return; }
+      window.location.href = 'dashboard.html';
+    }
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Enter') handleLogin();
+    });
+  </script>
+</body>
+</html>

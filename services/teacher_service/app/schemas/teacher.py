@@ -34,6 +34,46 @@ class ReviewPayload(BaseModel):
     comment: str
 
 
+class TeachingScopeCreate(BaseModel):
+    """Teacher-defined learning scope and direction for a class or learner."""
+
+    class_id: int = Field(gt=0)
+    student_user_id: int | None = Field(default=None, gt=0)
+    knowledge_points: list[str] = Field(min_length=1)
+    learning_direction: str = Field(min_length=2, max_length=200)
+    courseware_title: str = Field(min_length=2, max_length=120)
+    courseware_content: str = Field(min_length=2)
+    teaching_goal: str = Field(default="", max_length=300)
+
+
+class TeachingScopeItem(TeachingScopeCreate):
+    """Saved teacher scope returned to the teacher workspace."""
+
+    id: int
+
+
+class KnowledgePointMistakeStat(BaseModel):
+    """Mistake aggregation for one knowledge point."""
+
+    knowledge_point: str
+    mistake_count: int
+    affected_students: int
+    suggested_direction: str
+
+
+class TeacherTeachingAnalytics(BaseModel):
+    """Class-level analytics for teaching decisions."""
+
+    class_id: int
+    student_count: int
+    answered_students: int
+    total_answers: int
+    correct_rate: int | None
+    total_mistakes: int
+    weak_knowledge_points: list[KnowledgePointMistakeStat]
+    teaching_suggestions: list[str]
+
+
 class StudentInsight(BaseModel):
     """Teacher-facing student insight summary."""
 

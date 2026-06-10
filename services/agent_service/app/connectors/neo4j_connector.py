@@ -32,38 +32,28 @@ class KnowledgeGraphRepository:
             self._driver.close()
 
     def _fallback_visualization_graph(self, knowledge_point: str) -> dict[str, list[dict[str, Any]]]:
-        """Return a deterministic fallback graph when Neo4j is unavailable."""
+        """Return an empty graph shell when Neo4j is unavailable."""
 
-        nodes = [
-            {"id": knowledge_point, "label": knowledge_point, "category": "current"},
-            {"id": "prerequisite-1", "label": "顺序结构", "category": "prerequisite"},
-            {"id": "prerequisite-2", "label": "条件判断", "category": "prerequisite"},
-            {"id": "recommended-1", "label": "列表推导式", "category": "recommended"},
-        ]
-        edges = [
-            {"source": knowledge_point, "target": "prerequisite-1", "label": "DEPENDS_ON"},
-            {"source": knowledge_point, "target": "prerequisite-2", "label": "DEPENDS_ON"},
-            {"source": knowledge_point, "target": "recommended-1", "label": "RECOMMENDS"},
-        ]
-        return {"nodes": nodes, "edges": edges}
+        return {
+            "nodes": [{"id": knowledge_point, "label": knowledge_point, "category": "current"}],
+            "edges": [],
+        }
 
     def _fallback_dependency_paths(self, knowledge_point: str) -> list[dict[str, Any]]:
-        """Return deterministic dependency paths when Neo4j is unavailable."""
+        """Return no dependency paths when Neo4j is unavailable."""
 
-        return [
-            {"path": [knowledge_point, "顺序结构"]},
-            {"path": [knowledge_point, "条件判断"]},
-        ]
+        _ = knowledge_point
+        return []
 
     def _fallback_related_resources(self) -> list[dict[str, Any]]:
-        """Return deterministic related resources when Neo4j is unavailable."""
+        """Return no related resources when Neo4j is unavailable."""
 
-        return [{"name": "示例资源", "type": "courseware", "uri": "/resources/demo"}]
+        return []
 
     def _fallback_recommendations(self) -> list[dict[str, Any]]:
-        """Return deterministic next-point recommendations when Neo4j is unavailable."""
+        """Return no next-point recommendations when Neo4j is unavailable."""
 
-        return [{"name": "列表推导式", "difficulty": 2, "importance": 5}]
+        return []
 
     def create_knowledge_point(
         self,

@@ -14,6 +14,7 @@ from services.evaluation_service.app.schemas.report import (
     BatchEvaluationResponse,
     MistakeItem,
     MistakeNotebook,
+    MistakeNotebookClearResult,
     MonthlyReportResponse,
     PracticeFeedback,
     PracticeSubmission,
@@ -182,6 +183,18 @@ async def get_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebook]:
     except Exception as exc:  # pragma: no cover - route translation
         raise _translate_service_error(exc) from exc
     return ApiResponse(data=result, message="Mistake notebook fetched successfully.")
+
+
+@router.delete("/mistakes/{user_id}", response_model=ApiResponse[MistakeNotebookClearResult])
+async def clear_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebookClearResult]:
+    """Clear the learner's visible mistake notebook entries."""
+
+    service = ReportService()
+    try:
+        result = await service.clear_mistake_notebook(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Mistake notebook cleared successfully.")
 
 
 @router.get("/mistakes/{user_id}/remedial", response_model=ApiResponse[RemedialExerciseSet])

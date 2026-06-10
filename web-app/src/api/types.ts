@@ -379,6 +379,30 @@ export type GraphVisualizationResponse = {
   edges: GraphEdge[]
 }
 
+export type KnowledgeBaseArticle = {
+  id: string
+  title: string
+  subject: string
+  level: string
+  summary: string
+  concepts: string[]
+  syntax: string[]
+  examples: string[]
+  mistakes: string[]
+  applications: string[]
+  checks: string[]
+}
+
+export type KnowledgeBaseListResponse = {
+  subjects: string[]
+  items: KnowledgeBaseArticle[]
+}
+
+export type KnowledgeBaseSearchResponse = {
+  query: string
+  items: KnowledgeBaseArticle[]
+}
+
 export type ApiEnvelope<T> = {
   code: number
   data: T
@@ -407,6 +431,38 @@ export type HomeworkAssignPayload = {
 export type HomeworkReviewPayload = {
   score: number
   comment: string
+}
+
+export type TeachingScopeCreatePayload = {
+  class_id: number
+  student_user_id?: number | null
+  knowledge_points: string[]
+  learning_direction: string
+  courseware_title: string
+  courseware_content: string
+  teaching_goal: string
+}
+
+export type TeachingScopeItem = TeachingScopeCreatePayload & {
+  id: number
+}
+
+export type KnowledgePointMistakeStat = {
+  knowledge_point: string
+  mistake_count: number
+  affected_students: number
+  suggested_direction: string
+}
+
+export type TeacherTeachingAnalytics = {
+  class_id: number
+  student_count: number
+  answered_students: number
+  total_answers: number
+  correct_rate: number | null
+  total_mistakes: number
+  weak_knowledge_points: KnowledgePointMistakeStat[]
+  teaching_suggestions: string[]
 }
 
 export type StudentInsight = {

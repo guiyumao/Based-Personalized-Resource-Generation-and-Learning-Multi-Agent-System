@@ -14,7 +14,7 @@ export function extractErrorMessage(error: unknown, fallback: string): string {
       return '请求超时，请确认后端服务已启动'
     }
     if (axiosError.message?.includes('Network Error')) {
-      return '无法连接到后端服务，请先启动 8001 用户服务'
+      return '无法连接到后端服务，请确认相关服务已启动'
     }
     return fallback
   }

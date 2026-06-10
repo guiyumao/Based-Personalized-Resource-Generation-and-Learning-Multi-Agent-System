@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Promotion } from '@element-plus/icons-vue'
 
 import {
@@ -29,6 +29,7 @@ type SubmittedRemedialState = {
 }
 
 const MISTAKE_NOTEBOOK_STORAGE_KEY = 'student-workspace-mistakes'
+const QA_MISTAKE_STORAGE_KEY = 'student-workspace-qa-mistakes'
 
 const questionTypeLabelMap: Record<string, string> = {
   choice: '选择题',
@@ -45,6 +46,7 @@ const remedialExerciseSet = ref<RemedialExerciseSet | null>(snapshot.value?.reme
 const loadingMistakes = ref(false)
 const loadingRemedial = ref(false)
 const loadingSubmit = ref(false)
+const loadingClearMistakes = ref(false)
 const focusedKnowledgePoint = ref('')
 const currentRemedialIndex = ref(0)
 const answerStartAt = ref<number | null>(remedialExerciseSet.value?.exercises.length ? Date.now() : null)
@@ -122,6 +124,45 @@ function persistSnapshot() {
   window.sessionStorage.setItem(MISTAKE_NOTEBOOK_STORAGE_KEY, JSON.stringify(snapshot.value))
 }
 
+function buildEmptyMistakeNotebook(targetUserId: number): MistakeNotebook {
+  return {
+    user_id: targetUserId,
+    mistake_count: 0,
+    items: [],
+  }
+}
+
+function clearStoredQaMistakes(targetUserId: number) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    const raw = window.localStorage.getItem(QA_MISTAKE_STORAGE_KEY)
+    if (!raw) {
+      return
+    }
+
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) {
+      return
+    }
+
+    const filtered = parsed.filter(
+      (item) => !item || typeof item !== 'object' || (item as { user_id?: number }).user_id !== targetUserId,
+    )
+
+    if (filtered.length > 0) {
+      window.localStorage.setItem(QA_MISTAKE_STORAGE_KEY, JSON.stringify(filtered))
+      return
+    }
+
+    window.localStorage.removeItem(QA_MISTAKE_STORAGE_KEY)
+  } catch {
+    // Ignore malformed local QA notebook cache and proceed.
+  }
+}
+
 function reloadSnapshot() {
   snapshot.value = readStoredSnapshot()
   mistakeNotebook.value = snapshot.value?.mistakeNotebook ?? null
@@ -140,24 +181,6 @@ function formatQuestionTypeLabel(value?: string) {
     return '未标注题型'
   }
   return questionTypeLabelMap[value] ?? value
-}
-
-function buildFallbackPracticeFeedback(payload: PracticeSubmissionPayload): PracticeFeedback {
-  const normalizedUserAnswer = payload.user_answer.trim().toLowerCase()
-  const normalizedCorrectAnswer = payload.correct_answer.trim().toLowerCase()
-  const isCorrect = normalizedCorrectAnswer === normalizedUserAnswer
-    || normalizedCorrectAnswer.includes(normalizedUserAnswer)
-    || normalizedUserAnswer.includes(normalizedCorrectAnswer)
-  const score = isCorrect ? 100 : payload.user_answer.trim() ? (payload.question_type === 'choice' ? 0 : 60) : 0
-  return {
-    user_id: payload.user_id,
-    exercise_id: payload.exercise_id,
-    is_correct: isCorrect,
-    score,
-    feedback: isCorrect ? '回答正确，当前知识点掌握较稳定。' : '这道题还有提升空间，请先阅读解析。',
-    suggested_action: isCorrect ? '保持节奏，继续下一题。' : '先看解析，再继续同类重练。',
-    analysis: payload.analysis,
-  }
 }
 
 function rememberRemedialSubmission(payload: PracticeSubmissionPayload, feedback: PracticeFeedback) {
@@ -215,34 +238,6 @@ function scheduleNextRemedialAutoAdvance() {
   }, 1200)
 }
 
-function buildLocalRemedialSet(notebook: MistakeNotebook, knowledgePoint?: string): RemedialExerciseSet {
-  const sourceItems = knowledgePoint
-    ? notebook.items.filter((item) => item.knowledge_point === knowledgePoint)
-    : notebook.items
-
-  const exercises = sourceItems.map((item, index) => ({
-    exercise_id: 9500 + index,
-    knowledge_point: item.knowledge_point,
-    question_type: item.question_type,
-    prompt: `变式题 ${index + 1}：围绕 ${item.knowledge_point} 重新完成一道题，重点避免上次错误。`,
-    options: item.question_type === 'choice'
-      ? ['A. 关注边界条件', 'B. 按步骤拆解逻辑', 'C. 检查循环或判断条件', 'D. 对照示例验证结果']
-      : [],
-    answer: item.correct_answer,
-    analysis: `本题用于针对性复练 ${item.knowledge_point}，帮助你修正同类错误。`,
-    source_exercise_id: item.exercise_id,
-  }))
-
-  return {
-    user_id: notebook.user_id,
-    generated_from_mistakes: sourceItems.length,
-    summary: knowledgePoint
-      ? `已根据 ${knowledgePoint} 的错题记录生成同类变式重练题。`
-      : '已根据本地错题记录生成变式重练题。',
-    exercises,
-  }
-}
-
 async function refreshMistakeNotebook() {
   if (!userId.value) {
     ElMessage.warning('当前缺少学生信息，请先回到工作台。')
@@ -263,6 +258,47 @@ async function refreshMistakeNotebook() {
     }
   } finally {
     loadingMistakes.value = false
+  }
+}
+
+async function clearMistakeNotebook() {
+  if (!userId.value) {
+    ElMessage.warning('当前缺少学生信息，请先回到工作台。')
+    return
+  }
+  if (!mistakeNotebook.value?.mistake_count && !remedialExerciseSet.value?.exercises.length) {
+    ElMessage.info('当前错题页已经是空的。')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      '清空后，这一页的错题列表和已生成的重练题会立即归零；历史答题记录和学习报告不会被删除。',
+      '清空错题本',
+      {
+        confirmButtonText: '确认清空',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  loadingClearMistakes.value = true
+  try {
+    await evaluationApi.delete(`/evaluation/mistakes/${userId.value}`)
+    mistakeNotebook.value = buildEmptyMistakeNotebook(userId.value)
+    remedialExerciseSet.value = null
+    focusedKnowledgePoint.value = ''
+    clearStoredQaMistakes(userId.value)
+    resetRemedialSession()
+    persistSnapshot()
+    ElMessage.success('错题本已清空。')
+  } catch {
+    ElMessage.error('清空错题本失败，请稍后重试。')
+  } finally {
+    loadingClearMistakes.value = false
   }
 }
 
@@ -291,18 +327,7 @@ async function generateRemedialExercises(knowledgePoint?: string) {
       ElMessage.info('当前还没有可生成的错题重练题。')
     }
   } catch {
-    if (!mistakeNotebook.value) {
-      ElMessage.warning('当前没有错题记录，暂时无法生成重练题。')
-      return
-    }
-    remedialExerciseSet.value = buildLocalRemedialSet(mistakeNotebook.value, knowledgePoint)
-    resetRemedialSession()
-    persistSnapshot()
-    if (remedialExerciseSet.value.exercises.length > 0) {
-      ElMessage.success('已根据本地错题记录生成变式重练题。')
-    } else {
-      ElMessage.info('当前知识点还没有可用错题，暂时无法生成重练题。')
-    }
+    ElMessage.error('重练题生成服务暂不可用，请稍后重试。')
   } finally {
     loadingRemedial.value = false
   }
@@ -341,17 +366,14 @@ async function submitRemedialAnswer() {
     ElMessage.success(data.data.is_correct ? '回答正确。' : '已返回标准答案与解析。')
     scheduleNextRemedialAutoAdvance()
   } catch {
-    const fallback = buildFallbackPracticeFeedback(payload)
-    rememberRemedialSubmission(payload, fallback)
-    ElMessage.success(fallback.is_correct ? '回答正确。' : '已返回标准答案与解析。')
-    scheduleNextRemedialAutoAdvance()
+    ElMessage.error('答案提交失败，暂不使用本地判分，请稍后重试。')
   } finally {
     loadingSubmit.value = false
   }
 }
 
 function goBack() {
-  void router.push({ name: 'student' })
+  void router.push({ name: 'student-dashboard' })
 }
 
 onUnmounted(() => {
@@ -363,9 +385,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="dashboard-shell student-workspace-shell mistake-page-shell">
-    <div class="aurora aurora-a" />
-    <div class="aurora aurora-b" />
+  <div class="mistake-page">
 
     <header class="hero-panel mistake-page-hero">
       <div class="hero-copy">
@@ -382,6 +402,15 @@ onUnmounted(() => {
           <el-button @click="goBack">返回工作台</el-button>
           <el-button v-if="snapshot" @click="reloadSnapshot">刷新当前快照</el-button>
           <el-button v-if="snapshot" type="primary" :loading="loadingMistakes" @click="refreshMistakeNotebook">刷新错题本</el-button>
+          <el-button
+            v-if="snapshot"
+            plain
+            type="danger"
+            :loading="loadingClearMistakes"
+            @click="clearMistakeNotebook"
+          >
+            清空错题本
+          </el-button>
           <el-button
             v-if="snapshot"
             type="danger"
@@ -591,3 +620,385 @@ onUnmounted(() => {
     </section>
   </div>
 </template>
+
+<style scoped>
+.mistake-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  color: var(--text);
+  --mistake-surface: var(--panel);
+  --mistake-surface-strong: var(--panel-strong);
+  --mistake-surface-soft: rgba(10, 18, 32, 0.62);
+  --mistake-ink: var(--text);
+  --mistake-muted: var(--muted);
+  --mistake-line: var(--line);
+  --mistake-accent: var(--accent);
+  --mistake-accent-dark: var(--accent-deep);
+  --mistake-glow: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.hero-panel,
+.workspace-panel {
+  color: var(--mistake-ink);
+  border: 1px solid var(--mistake-line);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.hero-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 386px;
+  gap: 32px;
+  padding: 32px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at 16% 0%, var(--mistake-glow), transparent 36%),
+    radial-gradient(circle at 84% 16%, color-mix(in srgb, var(--accent-deep) 16%, transparent), transparent 34%),
+    linear-gradient(145deg, rgba(20, 32, 52, 0.96), rgba(8, 14, 26, 0.92));
+}
+
+.hero-copy {
+  min-width: 0;
+}
+
+.eyebrow,
+.panel-kicker,
+.insight-label {
+  color: var(--mistake-accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.hero-copy h1 {
+  margin: 16px 0 12px;
+  color: var(--mistake-ink);
+  font-size: clamp(42px, 5vw, 58px);
+  line-height: 1;
+  background: linear-gradient(135deg, var(--text), var(--accent));
+  background-clip: text;
+  text-shadow: 0 0 34px var(--mistake-glow);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-copy p,
+.learning-line,
+.reference-card p,
+.panel-text,
+.signal-caption,
+.empty-state p {
+  color: var(--mistake-muted);
+  line-height: 1.75;
+}
+
+.hero-aside {
+  display: grid;
+  gap: 16px;
+}
+
+.signal-card {
+  padding: 24px;
+  border-radius: 20px;
+  color: var(--mistake-ink);
+  background:
+    linear-gradient(180deg, rgba(20, 32, 52, 0.9), rgba(10, 18, 32, 0.82)),
+    radial-gradient(circle at 100% 0%, var(--mistake-glow), transparent 48%);
+  border: 1px solid var(--mistake-line);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.signal-title,
+.signal-caption {
+  color: var(--mistake-muted);
+}
+
+.signal-metric {
+  margin: 16px 0 8px;
+  color: var(--mistake-ink);
+  font-size: 30px;
+  font-weight: 850;
+}
+
+.signal-metric.compact {
+  font-size: 24px;
+}
+
+.signal-metric.accent {
+  color: var(--mistake-accent);
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 20px;
+}
+
+.workspace-panel {
+  margin-top: 24px;
+  padding: 24px;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 0% 0%, var(--mistake-glow), transparent 32%),
+    var(--mistake-surface);
+}
+
+.workspace-panel.wide {
+  width: 100%;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.panel-heading.subtle {
+  margin-bottom: 12px;
+}
+
+.panel-heading h2,
+.panel-heading h3,
+.learning-section h3 {
+  margin: 6px 0 0;
+  color: var(--mistake-ink);
+}
+
+.panel-icon {
+  width: 32px;
+  height: 32px;
+  color: var(--mistake-accent);
+}
+
+.reader-layout {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 22px;
+}
+
+.reader-outline,
+.learning-section,
+.reference-card,
+.empty-state,
+.feedback-card,
+.report-evidence-card {
+  border: 1px solid var(--mistake-line);
+  background: var(--mistake-surface-soft);
+  color: var(--mistake-ink);
+}
+
+.reader-outline {
+  align-self: start;
+  position: sticky;
+  top: 0;
+  padding: 18px;
+  border-radius: 20px;
+}
+
+.outline-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.outline-item {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--mistake-ink);
+  text-align: left;
+  cursor: default;
+}
+
+.learning-content {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.learning-section {
+  padding: 20px;
+  border-radius: 20px;
+}
+
+.courseware-entry-card {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 42%),
+    var(--mistake-surface-soft);
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.agent-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--mistake-accent);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.reference-list {
+  display: grid;
+  gap: 14px;
+}
+
+.reference-card {
+  padding: 16px;
+  border-radius: 16px;
+}
+
+.reference-card strong {
+  color: var(--mistake-ink);
+}
+
+.report-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.report-evidence-grid.compact {
+  max-width: 420px;
+}
+
+.report-evidence-card {
+  padding: 14px 16px;
+  border-radius: 16px;
+}
+
+.report-evidence-card span {
+  display: block;
+  color: var(--mistake-muted);
+  font-size: 12px;
+}
+
+.report-evidence-card strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--mistake-ink);
+  font-size: 24px;
+}
+
+.remedial-practice-card {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 48%),
+    var(--mistake-surface-strong);
+}
+
+.option-list {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.option-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border: 1px solid var(--mistake-line);
+  border-radius: 14px;
+  background: var(--mistake-surface-soft);
+  color: var(--mistake-ink);
+}
+
+.feedback-card {
+  margin-top: 16px;
+  padding: 18px;
+  border-radius: 18px;
+}
+
+.feedback-card.correct {
+  border-color: color-mix(in srgb, var(--green) 38%, transparent);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+}
+
+.feedback-card.wrong {
+  border-color: color-mix(in srgb, var(--red) 34%, transparent);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+
+.insight-value {
+  margin: 8px 0 12px;
+  color: var(--mistake-ink);
+  font-size: 22px;
+  font-weight: 850;
+}
+
+.empty-state {
+  padding: 22px;
+  border-radius: 18px;
+  color: var(--mistake-muted);
+}
+
+.empty-state strong {
+  color: var(--mistake-ink);
+}
+
+:deep(.el-button) {
+  --el-button-bg-color: rgba(16, 26, 44, 0.78);
+  --el-button-border-color: var(--line);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  --el-button-hover-border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+  --el-button-text-color: var(--text);
+  --el-button-hover-text-color: var(--text);
+}
+
+:deep(.el-button--primary) {
+  --el-button-bg-color: var(--mistake-accent);
+  --el-button-border-color: var(--mistake-accent);
+  --el-button-hover-bg-color: var(--mistake-accent-dark);
+  --el-button-hover-border-color: var(--mistake-accent-dark);
+  --el-button-text-color: #ffffff;
+}
+
+:deep(.el-button--danger) {
+  --el-button-bg-color: color-mix(in srgb, var(--red) 72%, #111827);
+  --el-button-border-color: color-mix(in srgb, var(--red) 72%, #111827);
+  --el-button-hover-bg-color: var(--red);
+  --el-button-hover-border-color: var(--red);
+  --el-button-text-color: #ffffff;
+}
+
+:deep(.el-button.is-plain) {
+  background: rgba(16, 26, 44, 0.62);
+}
+
+:deep(.el-textarea__inner) {
+  background: rgba(8, 14, 26, 0.72);
+  color: var(--mistake-ink);
+  border-color: var(--mistake-line);
+  box-shadow: none;
+}
+
+:deep(.el-textarea__inner::placeholder) {
+  color: var(--mistake-muted);
+}
+
+@media (max-width: 960px) {
+  .hero-panel,
+  .reader-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .reader-outline {
+    position: static;
+  }
+}
+</style>

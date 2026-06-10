@@ -246,6 +246,14 @@ class MistakeNotebook(BaseModel):
     items: list[MistakeItem]
 
 
+class MistakeNotebookClearResult(BaseModel):
+    """Result returned after clearing the visible mistake notebook."""
+
+    user_id: int
+    cleared_count: int = Field(ge=0)
+    cleared_at: datetime
+
+
 class RemedialExerciseItem(BaseModel):
     """One remedial exercise synthesized from a real weak point."""
 

@@ -37,7 +37,7 @@ def ensure_default_admin(db: Session) -> None:
             UserProfile(
                 user_id=admin.id,
                 mastery_json={},
-                learning_style="VARK",
+                learning_style="",
                 cognitive_abilities={},
                 habits={},
             )
@@ -62,7 +62,7 @@ def ensure_default_admin(db: Session) -> None:
             UserProfile(
                 user_id=admin.id,
                 mastery_json={},
-                learning_style="VARK",
+                learning_style="",
                 cognitive_abilities={},
                 habits={},
             )

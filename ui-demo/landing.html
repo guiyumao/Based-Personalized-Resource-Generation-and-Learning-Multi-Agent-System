@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="ocean">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>智学平台 — AI 驱动的个性化学习系统</title>
+  <style>
+    /* ============================================================
+       THEME SYSTEM — 与 dashboard.html 保持一致
+       ============================================================ */
+    :root,
+    [data-theme="ocean"] {
+      --bg-deep:    #080e1a;
+      --bg-surface: #0d1525;
+      --bg-card:    rgba(16, 26, 44, 0.78);
+      --bg-hover:   rgba(255, 255, 255, 0.04);
+      --border:     rgba(80, 160, 190, 0.12);
+      --border-focus: rgba(0, 200, 170, 0.28);
+      --text:       #e2ebf4;
+      --text-muted: #7b90a8;
+      --accent:     #00c8aa;
+      --accent2:    #ff7b4a;
+      --accent3:    #4da3e0;
+      --green:      #2dd4a8;
+      --red:        #f87171;
+      --shadow:     0 24px 60px rgba(0, 0, 0, 0.35);
+      --shadow-sm:  0 8px 24px rgba(0, 0, 0, 0.2);
+      --radius:     16px;
+      --radius-lg:  22px;
+      --transition: 0.28s cubic-bezier(0.33, 1, 0.68, 1);
+    }
+
+    [data-theme="warm"] {
+      --bg-deep:    #1e1814; --bg-surface: #28201a;
+      --bg-card:    rgba(42, 32, 24, 0.78); --bg-hover: rgba(255, 240, 220, 0.05);
+      --border:     rgba(180, 140, 100, 0.15); --border-focus: rgba(200, 130, 60, 0.3);
+      --text:       #f2e6d8; --text-muted: #a89480;
+      --accent:     #e8924a; --accent2: #d4745c; --accent3: #c9a87c;
+      --green:      #6db88d; --red: #e07060;
+      --shadow:     0 24px 60px rgba(0, 0, 0, 0.35); --shadow-sm: 0 8px 24px rgba(0,0,0,0.2);
+    }
+
+    [data-theme="cosmic"] {
+      --bg-deep:    #0d0a1a; --bg-surface: #161028;
+      --bg-card:    rgba(22, 16, 42, 0.72); --bg-hover: rgba(255, 255, 255, 0.04);
+      --border:     rgba(140, 120, 200, 0.14); --border-focus: rgba(160, 120, 240, 0.3);
+      --text:       #e4def8; --text-muted: #8b7cb8;
+      --accent:     #a78bfa; --accent2: #f472b6; --accent3: #818cf8;
+      --green:      #6ee7b7; --red: #fca5a5;
+      --shadow:     0 24px 60px rgba(80, 40, 120, 0.25); --shadow-sm: 0 8px 24px rgba(80,40,120,0.15);
+    }
+
+    [data-theme="minimal"] {
+      --bg-deep:    #f0f2f5; --bg-surface: #ffffff;
+      --bg-card:    rgba(255, 255, 255, 0.9); --bg-hover: rgba(0, 0, 0, 0.04);
+      --border:     rgba(0, 0, 0, 0.08); --border-focus: rgba(32, 128, 240, 0.28);
+      --text:       #1a1a2e; --text-muted: #6b7280;
+      --accent:     #2563eb; --accent2: #f97316; --accent3: #0ea5e9;
+      --green:      #10b981; --red: #ef4444;
+      --shadow:     0 12px 40px rgba(0, 0, 0, 0.08); --shadow-sm: 0 4px 16px rgba(0,0,0,0.05);
+    }
+
+    [data-theme="forest"] {
+      --bg-deep:    #0a1a10; --bg-surface: #0f2218;
+      --bg-card:    rgba(18, 32, 22, 0.72); --bg-hover: rgba(255, 255, 255, 0.04);
+      --border:     rgba(80, 160, 110, 0.14); --border-focus: rgba(72, 200, 132, 0.3);
+      --text:       #ddf0e4; --text-muted: #7aaa8e;
+      --accent:     #48c884; --accent2: #e8b84b; --accent3: #5eb8e0;
+      --green:      #56d992; --red: #f0837a;
+      --shadow:     0 24px 60px rgba(0, 0, 0, 0.35); --shadow-sm: 0 8px 24px rgba(0,0,0,0.2);
+    }
+
+    /* ============================================================
+       BASE & RESET
+       ============================================================ */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-snap-type: y proximity;
+    }
+
+    body {
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg-deep);
+      color: var(--text);
+      overflow-x: hidden;
+      transition: background 0.5s ease, color 0.5s ease;
+    }
+
+    /* ============================================================
+       MOUSE-GLOW BACKGROUND — 鼠标跟随光效
+       ============================================================ */
+    #mouse-glow {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    #mouse-glow .glow-layer {
+      position: absolute;
+      inset: 0;
+      transition: opacity 0.6s ease;
+    }
+
+    #mouse-glow .grid-layer {
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(129, 160, 204, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(129, 160, 204, 0.05) 1px, transparent 1px);
+      background-size: 32px 32px;
+      mask-image: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(0,0,0,0.5) 0%, transparent 55%);
+      -webkit-mask-image: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(0,0,0,0.5) 0%, transparent 55%);
+    }
+
+    /* Floating particles */
+    .particle {
+      position: fixed;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.35;
+      animation: floatUp linear infinite;
+    }
+
+    @keyframes floatUp {
+      0%   { transform: translateY(0) translateX(0) scale(1); opacity: 0; }
+      10%  { opacity: 0.35; }
+      90%  { opacity: 0.35; }
+      100% { transform: translateY(-105vh) translateX(40px) scale(0.3); opacity: 0; }
+    }
+
+    /* ============================================================
+       NAV BAR
+       ============================================================ */
+    .nav-bar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 50;
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      backdrop-filter: blur(20px) saturate(140%);
+      -webkit-backdrop-filter: blur(20px) saturate(140%);
+      background: color-mix(in srgb, var(--bg-deep) 72%, transparent);
+      border-bottom: 1px solid var(--border);
+      transition: all var(--transition);
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text);
+      font-weight: 700;
+      font-size: 17px;
+      letter-spacing: 0.03em;
+    }
+
+    .nav-brand .brand-dot {
+      width: 28px; height: 28px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent), var(--accent3));
+      box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 550;
+      padding: 8px 16px;
+      border-radius: 999px;
+      transition: all var(--transition);
+      letter-spacing: 0.03em;
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+      background: var(--bg-hover);
+    }
+
+    .nav-cta {
+      padding: 9px 22px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent3));
+      color: #fff !important;
+      font-weight: 700 !important;
+      box-shadow: 0 4px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+      transition: all var(--transition) !important;
+    }
+
+    .nav-cta:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px color-mix(in srgb, var(--accent) 40%, transparent);
+      background: linear-gradient(135deg, var(--accent), var(--accent3)) !important;
+    }
+
+    .theme-dots { display: flex; gap: 6px; margin-left: 12px; }
+    .theme-dot {
+      width: 14px; height: 14px; border-radius: 50%;
+      cursor: pointer; border: 2px solid transparent;
+      transition: all var(--transition);
+    }
+    .theme-dot:hover  { transform: scale(1.2); }
+    .theme-dot.active { border-color: var(--text); box-shadow: 0 0 8px currentColor; }
+
+    /* ============================================================
+       HERO SECTION
+       ============================================================ */
+    .hero-section {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      scroll-snap-align: start;
+    }
+
+    .hero-eyebrow {
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .hero-eyebrow::before,
+    .hero-eyebrow::after {
+      content: "";
+      width: 36px; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent));
+    }
+
+    .hero-eyebrow::after {
+      background: linear-gradient(90deg, var(--accent), transparent);
+    }
+
+    .hero-title {
+      font-size: clamp(38px, 7vw, 80px);
+      font-weight: 850;
+      line-height: 1.18;
+      letter-spacing: 0.04em;
+      max-width: 10em;
+      /* 艺术字效果 */
+      background: linear-gradient(
+        160deg,
+        var(--text) 20%,
+        var(--accent) 45%,
+        var(--accent3) 65%,
+        var(--text) 85%
+      );
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: titleShimmer 6s ease-in-out infinite;
+      text-shadow: none;
+      filter: drop-shadow(0 0 32px color-mix(in srgb, var(--accent) 35%, transparent));
+      margin-bottom: 20px;
+    }
+
+    @keyframes titleShimmer {
+      0%, 100% { background-position: 0% center; }
+      50%      { background-position: 100% center; }
+    }
+
+    .hero-subtitle {
+      font-size: clamp(16px, 2.2vw, 20px);
+      color: var(--text-muted);
+      max-width: 36em;
+      line-height: 1.8;
+      margin-bottom: 36px;
+      letter-spacing: 0.03em;
+    }
+
+    .hero-buttons {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn-hero-primary {
+      padding: 14px 36px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent3));
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 8px 32px color-mix(in srgb, var(--accent) 35%, transparent);
+      transition: all var(--transition);
+    }
+
+    .btn-hero-primary:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 14px 42px color-mix(in srgb, var(--accent) 50%, transparent);
+    }
+
+    .btn-hero-secondary {
+      padding: 14px 36px;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      transition: all var(--transition);
+    }
+
+    .btn-hero-secondary:hover {
+      border-color: var(--border-focus);
+      background: var(--bg-hover);
+    }
+
+    /* Scroll indicator */
+    .scroll-hint {
+      position: absolute;
+      bottom: 28px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      animation: bounceDown 2s ease-in-out infinite;
+    }
+
+    .scroll-hint .line {
+      width: 1px; height: 36px;
+      background: linear-gradient(180deg, var(--accent), transparent);
+    }
+
+    @keyframes bounceDown {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(8px); }
+    }
+
+    /* ============================================================
+       SECTION COMMONS
+       ============================================================ */
+    .section {
+      position: relative;
+      z-index: 1;
+      padding: 80px 24px;
+      scroll-snap-align: start;
+    }
+
+    .section-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+
+    .section-title {
+      font-size: clamp(26px, 4vw, 42px);
+      font-weight: 750;
+      line-height: 1.2;
+      margin-bottom: 12px;
+    }
+
+    .section-desc {
+      color: var(--text-muted);
+      font-size: 15px;
+      line-height: 1.7;
+      max-width: 48em;
+      margin-bottom: 40px;
+    }
+
+    /* ============================================================
+       FEATURE CARDS — 功能模块
+       ============================================================ */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .feature-card {
+      padding: 28px;
+      border-radius: var(--radius-lg);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      transition: all var(--transition);
+      cursor: default;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-4px);
+      border-color: var(--border-focus);
+      box-shadow: var(--shadow);
+    }
+
+    .feature-card::after {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--accent), var(--accent3));
+      opacity: 0;
+      transition: opacity var(--transition);
+    }
+
+    .feature-card:hover::after { opacity: 1; }
+
+    .feature-icon {
+      width: 48px; height: 48px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      margin-bottom: 18px;
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+    }
+
+    .feature-card h3 {
+      font-size: 17px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .feature-card p {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.7;
+    }
+
+    /* image placeholder inside feature cards */
+    .img-placeholder {
+      margin-top: 16px;
+      height: 140px;
+      border-radius: 12px;
+      border: 1px dashed var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--bg-hover);
+      letter-spacing: 0.04em;
+    }
+
+    /* ============================================================
+       AI HIGHLIGHT SECTION — 智能亮点
+       ============================================================ */
+    .ai-highlight-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+    }
+
+    .ai-highlight-card {
+      padding: 32px;
+      border-radius: var(--radius-lg);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      transition: all var(--transition);
+    }
+
+    .ai-highlight-card:hover {
+      border-color: var(--border-focus);
+      box-shadow: var(--shadow);
+    }
+
+    .ai-highlight-card .ai-icon-lg {
+      font-size: 40px;
+      margin-bottom: 16px;
+    }
+
+    .ai-highlight-card h3 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .ai-highlight-card p {
+      color: var(--text-muted);
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .ai-tag-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+
+    .ai-tag {
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 650;
+      letter-spacing: 0.04em;
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      color: var(--accent);
+    }
+
+    /* ============================================================
+       STATS BAR
+       ============================================================ */
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+      margin-top: 50px;
+    }
+
+    .stat-item {
+      text-align: center;
+      padding: 32px 16px;
+      border-radius: var(--radius-lg);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+    }
+
+    .stat-item .stat-num {
+      font-size: 42px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent3));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-item .stat-label {
+      margin-top: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+
+    /* ============================================================
+       CTA SECTION
+       ============================================================ */
+    .cta-section {
+      text-align: center;
+      padding: 100px 24px;
+      scroll-snap-align: start;
+    }
+
+    .cta-section .cta-title {
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 750;
+      margin-bottom: 14px;
+    }
+
+    .cta-section .cta-desc {
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 32em;
+      margin: 0 auto 32px;
+      line-height: 1.7;
+    }
+
+    /* ============================================================
+       FOOTER
+       ============================================================ */
+    .footer {
+      position: relative;
+      z-index: 1;
+      border-top: 1px solid var(--border);
+      padding: 40px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+      transition: color var(--transition);
+    }
+
+    .footer a:hover { color: var(--accent); }
+
+    /* ============================================================
+       RESPONSIVE
+       ============================================================ */
+    @media (max-width: 900px) {
+      .feature-grid       { grid-template-columns: repeat(2, 1fr); }
+      .ai-highlight-grid  { grid-template-columns: 1fr; }
+      .stats-bar          { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 600px) {
+      .feature-grid       { grid-template-columns: 1fr; }
+      .stats-bar          { grid-template-columns: 1fr; }
+      .nav-links a:not(.nav-cta) { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════ MOUSE-GLOW BACKGROUND ═══════════════ -->
+  <div id="mouse-glow">
+    <div class="glow-layer" id="glow-layer"></div>
+    <div class="grid-layer" id="grid-layer"></div>
+  </div>
+  <!-- particles container -->
+  <div id="particles-container"></div>
+
+  <!-- ═══════════════ NAV ═══════════════ -->
+  <nav class="nav-bar">
+    <a href="#" class="nav-brand">
+      <div class="brand-dot"></div>
+      智学平台
+    </a>
+    <div class="nav-links">
+      <a href="#features">功能介绍</a>
+      <a href="#ai-tech">AI 技术</a>
+      <a href="#stats">平台数据</a>
+      <a href="login.html" class="nav-cta">进入工作台</a>
+      <div class="theme-dots">
+        <span class="theme-dot active" data-theme="ocean" title="深海科技" style="background:#00c8aa;color:#00c8aa" onclick="switchTheme('ocean', this)"></span>
+        <span class="theme-dot" data-theme="warm" title="暖金学术" style="background:#e8924a;color:#e8924a" onclick="switchTheme('warm', this)"></span>
+        <span class="theme-dot" data-theme="cosmic" title="暗夜紫穹" style="background:#a78bfa;color:#a78bfa" onclick="switchTheme('cosmic', this)"></span>
+        <span class="theme-dot" data-theme="minimal" title="极简晨光" style="background:#2563eb;color:#2563eb" onclick="switchTheme('minimal', this)"></span>
+        <span class="theme-dot" data-theme="forest" title="森翠绿洲" style="background:#48c884;color:#48c884" onclick="switchTheme('forest', this)"></span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ═══════════════ HERO ═══════════════ -->
+  <section class="hero-section">
+    <div class="hero-eyebrow">AI-POWERED LEARNING PLATFORM</div>
+    <h1 class="hero-title">科技赋能教育<br>AI 引领未来</h1>
+    <p class="hero-subtitle">
+      基于多智能体协同的个性化学习系统 —— 为每位学习者定制专属路径、
+      课件与练习，用 AI 重塑教育的每一个环节
+    </p>
+    <div class="hero-buttons">
+      <button class="btn-hero-primary" onclick="location.href='login.html'">免费体验</button>
+      <button class="btn-hero-secondary" onclick="document.getElementById('features').scrollIntoView()">了解更多 ↓</button>
+    </div>
+    <div class="scroll-hint">
+      <span>滚 动 探 索</span>
+      <div class="line"></div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ 学习模块 ═══════════════ -->
+  <section class="section" id="features">
+    <div class="section-inner">
+      <div class="section-label">核心功能</div>
+      <h2 class="section-title">八大智能学习模块</h2>
+      <p class="section-desc">
+        从学习路径规划到课后自测，从知识图谱到智能问答 —— AI 多智能体系统为每个学习环节提供精准支持
+      </p>
+
+      <div class="feature-grid">
+        <!-- 1. 学习路径 -->
+        <div class="feature-card">
+          <div class="feature-icon">🗺️</div>
+          <h3>个性化学习路径</h3>
+          <p>AI 根据掌握度与学习风格，自动生成分阶段学习路径。每阶段包含明确目标与任务清单，动态调整难度。</p>
+          <div class="img-placeholder">[ 动图：学习路径时间线展开动画 ]</div>
+        </div>
+
+        <!-- 2. 课件生成 -->
+        <div class="feature-card">
+          <div class="feature-icon">📚</div>
+          <h3>智能课件生成</h3>
+          <p>基于 RAG 检索增强生成，整合多源知识产出结构化课件。支持难度分级与学习风格适配，可生成多个变体版本。</p>
+          <div class="img-placeholder">[ 动图：课件从生成到展示的完整流程 ]</div>
+        </div>
+
+        <!-- 3. 课后自测 -->
+        <div class="feature-card">
+          <div class="feature-icon">✏️</div>
+          <h3>自适应练习测评</h3>
+          <p>根据课件内容自动生成分层习题，提交后即时反馈与解析。支持单选、填空、简答等多种题型。</p>
+          <div class="img-placeholder">[ 动图：答题 → 即时反馈 → 解析展示 ]</div>
+        </div>
+
+        <!-- 4. 错题本 -->
+        <div class="feature-card">
+          <div class="feature-icon">📝</div>
+          <h3>智能错题本</h3>
+          <p>自动收录错题，AI 分析错误根因。一键生成同类变式题巩固训练，直至彻底掌握薄弱知识点。</p>
+          <div class="img-placeholder">[ 动图：错题重练 → 变式题生成 → 正确通过 ]</div>
+        </div>
+
+        <!-- 5. 知识图谱 -->
+        <div class="feature-card">
+          <div class="feature-icon">🔗</div>
+          <h3>知识图谱可视化</h3>
+          <p>构建学科知识依赖网络，直观展示知识点间的先修关系。节点颜色反映掌握程度，一眼定位薄弱环节。</p>
+          <div class="img-placeholder">[ 图片：知识图谱网络交互视图 ]</div>
+        </div>
+
+        <!-- 6. 智能问答 -->
+        <div class="feature-card">
+          <div class="feature-icon">💬</div>
+          <h3>多智能体问答</h3>
+          <p>不同于通用 ChatBot，系统结合学习画像进行深度分析：识别知识差距、更新学习路线、给出针对性建议。</p>
+          <div class="img-placeholder">[ 动图：问答对话 → 结构化分析卡片展开 ]</div>
+        </div>
+
+        <!-- 7. 学习报告 -->
+        <div class="feature-card">
+          <div class="feature-icon">📈</div>
+          <h3>阶段学习报告</h3>
+          <p>自动汇总阶段学习数据，输出多维度诊断报告。包括正确率趋势、知识覆盖度、薄弱点热力图等。</p>
+          <div class="img-placeholder">[ 图片：学习报告仪表盘概览 ]</div>
+        </div>
+
+        <!-- 8. 多角色支持 -->
+        <div class="feature-card">
+          <div class="feature-icon">👥</div>
+          <h3>多角色协同</h3>
+          <p>学生自学 + 教师班级管理 + 管理员系统配置。教师可布置作业、查看学情、批改反馈，形成教学闭环。</p>
+          <div class="img-placeholder">[ 图片：教师端班级管理界面 ]</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ AI 技术亮点 ═══════════════ -->
+  <section class="section" id="ai-tech">
+    <div class="section-inner">
+      <div class="section-label">AI 技术</div>
+      <h2 class="section-title">多智能体驱动的智能学习引擎</h2>
+      <p class="section-desc">
+        系统采用多智能体协同架构，各 Agent 分工协作，覆盖资源生成、学习诊断、路径规划的完整链路
+      </p>
+
+      <div class="ai-highlight-grid">
+        <div class="ai-highlight-card">
+          <div class="ai-icon-lg">🧠</div>
+          <h3>多智能体协同架构</h3>
+          <p>
+            资源生成 Agent、学习诊断 Agent、路径规划 Agent 等多个专业智能体分工协作，
+            通过消息队列（RabbitMQ）异步通信，高效完成复杂学习任务。
+          </p>
+          <div class="ai-tag-row">
+            <span class="ai-tag">LangGraph</span>
+            <span class="ai-tag">Multi-Agent</span>
+            <span class="ai-tag">RabbitMQ</span>
+          </div>
+        </div>
+
+        <div class="ai-highlight-card">
+          <div class="ai-icon-lg">🔍</div>
+          <h3>RAG 检索增强生成</h3>
+          <p>
+            课件和习题生成前，先从向量知识库（ChromaDB）检索相关知识片段，
+            结合 Elasticsearch 全文检索，确保生成内容准确、有据可依。
+          </p>
+          <div class="ai-tag-row">
+            <span class="ai-tag">ChromaDB</span>
+            <span class="ai-tag">Elasticsearch</span>
+            <span class="ai-tag">Embedding</span>
+          </div>
+        </div>
+
+        <div class="ai-highlight-card">
+          <div class="ai-icon-lg">🕸️</div>
+          <h3>知识图谱推理</h3>
+          <p>
+            基于 Neo4j 图数据库构建学科知识图谱，支持先修依赖推理和知识缺口检测。
+            掌握度通过图传播算法更新，精准定位薄弱知识节点。
+          </p>
+          <div class="ai-tag-row">
+            <span class="ai-tag">Neo4j</span>
+            <span class="ai-tag">Graph Reasoning</span>
+            <span class="ai-tag">vis-network</span>
+          </div>
+        </div>
+
+        <div class="ai-highlight-card">
+          <div class="ai-icon-lg">🎯</div>
+          <h3>学习画像与自适应</h3>
+          <p>
+            持续追踪学习行为数据，构建多维度学习画像（掌握度、学习风格、认知能力）。
+            基于画像动态调整内容难度、呈现方式和推荐策略。
+          </p>
+          <div class="ai-tag-row">
+            <span class="ai-tag">Learner Profile</span>
+            <span class="ai-tag">Adaptive Learning</span>
+            <span class="ai-tag">VARK</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ 数据统计 ═══════════════ -->
+  <section class="section" id="stats">
+    <div class="section-inner">
+      <div class="section-label">平台能力</div>
+      <h2 class="section-title">用数字说话</h2>
+      <p class="section-desc">系统核心指标一览，展示 AI 驱动的学习平台能带来的实际价值</p>
+
+      <div class="stats-bar">
+        <div class="stat-item">
+          <div class="stat-num">6+</div>
+          <div class="stat-label">智能 Agent 协同工作</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">3</div>
+          <div class="stat-label">角色全覆盖（学生 / 教师 / 管理员）</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">8</div>
+          <div class="stat-label">核心学习功能模块</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-num">7</div>
+          <div class="stat-label">微服务架构支撑</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════ CTA ═══════════════ -->
+  <section class="cta-section">
+    <h2 class="cta-title">准备好开始智能学习了吗？</h2>
+    <p class="cta-desc">
+      立即体验 AI 驱动的个性化学习平台，让科技为您的学习之旅赋能
+    </p>
+    <button class="btn-hero-primary" onclick="location.href='login.html'">
+      免费体验 →
+    </button>
+  </section>
+
+  <!-- ═══════════════ FOOTER ═══════════════ -->
+  <footer class="footer">
+    <span>© 2024 智学平台 · AI-Powered Learning</span>
+    <span>
+      <a href="login.html">工作台</a> ·
+      <a href="#features">功能</a> ·
+      <a href="#ai-tech">技术</a>
+    </span>
+  </footer>
+
+  <!-- ═══════════════ SCRIPTS ═══════════════ -->
+  <script>
+    // ── Mouse-glow: 鼠标跟踪光效 ──
+    const glowLayer = document.getElementById('glow-layer');
+    const gridLayer = document.getElementById('grid-layer');
+    let mx = 0.5, my = 0.5;
+    let currentMx = 0.5, currentMy = 0.5;
+
+    document.addEventListener('mousemove', (e) => {
+      mx = e.clientX / window.innerWidth;
+      my = e.clientY / window.innerHeight;
+    });
+
+    // Touch support
+    document.addEventListener('touchmove', (e) => {
+      mx = e.touches[0].clientX / window.innerWidth;
+      my = e.touches[0].clientY / window.innerHeight;
+    }, { passive: true });
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    function updateGlow() {
+      currentMx = lerp(currentMx, mx, 0.06);
+      currentMy = lerp(currentMy, my, 0.06);
+
+      const xPct = (currentMx * 100).toFixed(1);
+      const yPct = (currentMy * 100).toFixed(1);
+
+      // Main glow follows cursor
+      glowLayer.style.background = `
+        radial-gradient(
+          420px circle at ${xPct}% ${yPct}%,
+          color-mix(in srgb, var(--accent) 12%, transparent) 0%,
+          color-mix(in srgb, var(--accent3) 6%, transparent) 30%,
+          transparent 70%
+        ),
+        radial-gradient(
+          600px circle at ${xPct}% ${yPct}%,
+          color-mix(in srgb, var(--accent2) 4%, transparent) 0%,
+          transparent 50%
+        )
+      `;
+
+      // CSS variables for grid mask position
+      gridLayer.style.setProperty('--mx', `${xPct}%`);
+      gridLayer.style.setProperty('--my', `${yPct}%`);
+
+      requestAnimationFrame(updateGlow);
+    }
+
+    updateGlow();
+
+    // ── Floating particles ──
+    const particlesContainer = document.getElementById('particles-container');
+    const PARTICLE_COUNT = 25;
+
+    function createParticle() {
+      const el = document.createElement('div');
+      el.className = 'particle';
+      const size = Math.random() * 6 + 2;
+      const colors = ['var(--accent)', 'var(--accent3)', 'var(--accent2)'];
+      el.style.cssText = `
+        width: ${size}px; height: ${size}px;
+        left: ${Math.random() * 100}vw;
+        bottom: -20px;
+        background: ${colors[Math.floor(Math.random() * colors.length)]};
+        box-shadow: 0 0 ${size * 3}px currentColor;
+        animation-duration: ${Math.random() * 14 + 10}s;
+        animation-delay: ${Math.random() * 6}s;
+      `;
+      particlesContainer.appendChild(el);
+
+      el.addEventListener('animationend', () => {
+        el.remove();
+        createParticle();
+      });
+    }
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      setTimeout(() => createParticle(), Math.random() * 4000);
+    }
+
+    // ── Theme switcher ──
+    function switchTheme(key, dotEl) {
+      document.documentElement.setAttribute('data-theme', key);
+      document.querySelectorAll('.theme-dot').forEach(d => d.classList.remove('active'));
+      if (dotEl) dotEl.classList.add('active');
+    }
+  </script>
+</body>
+</html>

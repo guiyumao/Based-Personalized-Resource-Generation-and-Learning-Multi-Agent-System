@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="ocean">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Courseware View 迁移示例 — 风格修复</title>
+  <style>
+    :root,[data-theme="ocean"]{--bg:#080e1a;--panel:rgba(16,26,44,.78);--panel-strong:rgba(20,32,52,.92);--line:rgba(80,160,190,.12);--text:#e2ebf4;--muted:#7b90a8;--accent:#00c8aa;--accent-deep:#0a8a78;--green:#2dd4a8;--red:#f87171;--shadow:0 24px 60px rgba(0,0,0,.35)}
+    [data-theme="warm"]{--bg:#1e1814;--panel:rgba(42,32,24,.78);--panel-strong:rgba(50,38,28,.92);--line:rgba(180,140,100,.15);--text:#f2e6d8;--muted:#a89480;--accent:#e8924a;--accent-deep:#c07030;--green:#6db88d;--red:#e07060}
+    [data-theme="cosmic"]{--bg:#0d0a1a;--panel:rgba(22,16,42,.72);--panel-strong:rgba(28,20,50,.92);--line:rgba(140,120,200,.14);--text:#e4def8;--muted:#8b7cb8;--accent:#a78bfa;--accent-deep:#7c5fd4;--green:#6ee7b7;--red:#fca5a5}
+    [data-theme="minimal"]{--bg:#f0f2f5;--panel:rgba(255,255,255,.9);--panel-strong:rgba(255,255,255,.98);--line:rgba(0,0,0,.08);--text:#1a1a2e;--muted:#6b7280;--accent:#2563eb;--accent-deep:#1d4ed8;--green:#10b981;--red:#ef4444}
+    [data-theme="forest"]{--bg:#0a1a10;--panel:rgba(18,32,22,.72);--panel-strong:rgba(22,38,26,.92);--line:rgba(80,160,110,.14);--text:#ddf0e4;--muted:#7aaa8e;--accent:#48c884;--accent-deep:#2d9a5e;--green:#56d992;--red:#f0837a}
+
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);padding:28px;min-height:100vh;transition:background .5s,color .5s}
+
+    .demo-header{margin-bottom:24px}
+    .badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:11px;font-weight:650;letter-spacing:.04em;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);margin-bottom:8px}
+
+    /* ═══ Courseware Layout (theme-compatible) ═══ */
+    .courseware-page{max-width:1100px}
+    .page-hero{padding:28px 32px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px}
+    .page-hero h1{font-size:24px;font-weight:750}
+    .page-hero .meta{font-size:13px;color:var(--muted);display:flex;gap:20px;flex-wrap:wrap}
+    .page-hero .meta span{display:flex;align-items:center;gap:6px}
+    .variant-selector{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+    .variant-btn{padding:8px 18px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--text);cursor:pointer;font-size:13px;font-weight:550;transition:all .2s;font-family:inherit}
+    .variant-btn:hover{border-color:var(--accent)}
+    .variant-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+    /* Reader layout */
+    .reader-layout{display:grid;grid-template-columns:240px 1fr;gap:20px;align-items:start}
+    .outline-sidebar{position:sticky;top:80px;padding:18px;border-radius:16px;background:var(--panel);border:1px solid var(--line)}
+    .outline-sidebar h3{font-size:14px;margin-bottom:12px;color:var(--muted);letter-spacing:.04em}
+    .outline-list{display:grid;gap:8px}
+    .outline-item{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:color-mix(in srgb,var(--accent) 4%,transparent);color:var(--text);cursor:pointer;font-size:13px;text-align:left;transition:all .2s;font-family:inherit;width:100%}
+    .outline-item:hover{background:color-mix(in srgb,var(--accent) 10%,transparent);border-color:var(--accent)}
+    .outline-item.active{background:color-mix(in srgb,var(--accent) 14%,transparent);border-color:var(--accent);color:var(--accent);font-weight:650}
+
+    .content-area{padding:28px;border-radius:18px;background:var(--panel);border:1px solid var(--line);min-height:400px}
+    .content-area h2{font-size:22px;margin-bottom:16px}
+    .content-area p{line-height:1.9;color:var(--muted);margin-bottom:14px}
+    .content-area code{background:color-mix(in srgb,var(--accent) 10%,transparent);padding:2px 8px;border-radius:6px;font-size:13px;color:var(--accent)}
+    .content-area pre{background:color-mix(in srgb,var(--muted) 15%,transparent);padding:16px;border-radius:12px;overflow:auto;font-size:13px;line-height:1.7;margin-bottom:14px}
+    .content-area ul,.content-area ol{padding-left:22px;color:var(--muted);line-height:1.9;margin-bottom:14px}
+    .content-area li+li{margin-top:6px}
+
+    /* Personalization card */
+    .personalization-card{padding:18px;border-radius:14px;background:color-mix(in srgb,var(--accent) 5%,transparent);border:1px solid var(--line);margin-bottom:20px}
+    .personalization-card h4{font-size:14px;margin-bottom:8px;color:var(--accent)}
+    .personalization-card .metrics{display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+
+    /* ═══ Side-by-side comparison ═══ */
+    .comparison{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:40px}
+    .comparison-col{border-radius:18px;overflow:hidden}
+    .comparison-col .col-header{padding:14px 20px;font-weight:700;font-size:15px;text-align:center}
+    .comparison-col .col-body{padding:20px;min-height:250px}
+    .comparison-col.bad{border:2px solid var(--red)}
+    .comparison-col.bad .col-header{background:color-mix(in srgb,var(--red) 15%,transparent);color:var(--red)}
+    .comparison-col.bad .col-body{background:color-mix(in srgb,var(--red) 4%,transparent)}
+    .comparison-col.good{border:2px solid var(--green)}
+    .comparison-col.good .col-header{background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green)}
+    .comparison-col.good .col-body{background:color-mix(in srgb,var(--green) 4%,transparent)}
+    .comparison-col ul{line-height:2;font-size:14px}
+    .comparison-col code{background:rgba(0,0,0,.1);padding:1px 6px;border-radius:4px;font-size:12px}
+
+    /* Theme dots */
+    .corner-themes{position:fixed;top:18px;right:24px;z-index:10;display:flex;gap:8px}
+    .t-dot{width:14px;height:14px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .2s}
+    .t-dot:hover{transform:scale(1.25)}
+    .t-dot.active{border-color:var(--text)}
+
+    @media(max-width:800px){.reader-layout{grid-template-columns:1fr}.outline-sidebar{position:static}}
+  </style>
+</head>
+<body>
+
+  <div class="corner-themes">
+    <span class="t-dot active" style="background:#00c8aa;color:#00c8aa" onclick="switchTheme('ocean')"></span>
+    <span class="t-dot" style="background:#e8924a;color:#e8924a" onclick="switchTheme('warm')"></span>
+    <span class="t-dot" style="background:#a78bfa;color:#a78bfa" onclick="switchTheme('cosmic')"></span>
+    <span class="t-dot" style="background:#2563eb;color:#2563eb" onclick="switchTheme('minimal')"></span>
+    <span class="t-dot" style="background:#48c884;color:#48c884" onclick="switchTheme('forest')"></span>
+  </div>
+
+  <!-- ═══ Header ═══ -->
+  <div class="demo-header">
+    <div class="badge">迁移示例</div>
+    <h2>📚 课件中心 — 风格修复版</h2>
+    <p style="color:var(--muted);margin-top:4px">
+      去掉了全屏壳（dashboard-shell/aurora），改用主题 CSS 变量。所有颜色跟随 5 套主题联动。
+    </p>
+  </div>
+
+  <!-- ═══ Courseware Page (correct pattern) ═══ -->
+  <div class="courseware-page">
+
+    <!-- Hero -->
+    <div class="page-hero">
+      <div>
+        <h1>不定积分 — 换元积分法</h1>
+        <div class="meta" style="margin-top:8px">
+          <span>📄 3 章节</span><span>🕐 45 分钟</span><span>📅 2024-06-03</span>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:12px;color:var(--muted)">个性化依据</div>
+        <div style="font-size:13px;color:var(--accent);margin-top:2px">掌握度 72% · 正确率 78% · VARK 视觉型</div>
+      </div>
+    </div>
+
+    <!-- Variants -->
+    <div class="variant-selector">
+      <button class="variant-btn active" onclick="switchVariant(this)">📘 标准版（推荐）</button>
+      <button class="variant-btn" onclick="switchVariant(this)">📙 案例加强版</button>
+      <button class="variant-btn" onclick="switchVariant(this)">📕 精简速览版</button>
+    </div>
+
+    <!-- Personalization -->
+    <div class="personalization-card">
+      <h4>🎯 个性化调整说明</h4>
+      <div class="metrics">
+        <span>掌握度：<strong style="color:var(--accent)">72%</strong></span>
+        <span>内容密度：<strong style="color:var(--accent)">中等偏详细</strong></span>
+        <span>侧重：<strong style="color:var(--accent)">视觉图示 + 例题驱动</strong></span>
+      </div>
+    </div>
+
+    <!-- Reader -->
+    <div class="reader-layout">
+      <!-- Outline -->
+      <aside class="outline-sidebar">
+        <h3>📑 目录大纲</h3>
+        <div class="outline-list">
+          <button class="outline-item active" onclick="switchSection(this)">1. 不定积分回顾</button>
+          <button class="outline-item" onclick="switchSection(this)">2. 第一类换元法</button>
+          <button class="outline-item" onclick="switchSection(this)">3. 第二类换元法</button>
+          <button class="outline-item" onclick="switchSection(this)">4. 两类换元对比</button>
+          <button class="outline-item" onclick="switchSection(this)">5. 综合例题</button>
+        </div>
+      </aside>
+
+      <!-- Content -->
+      <article class="content-area">
+        <h2>第一类换元法（凑微分法）</h2>
+        <p>
+          第一类换元法的核心思想是<strong>识别被积函数中是否出现了某个函数及其导数的乘积</strong>。
+          如果被积函数可以写成 <code>f(g(x)) · g'(x)</code> 的形式，设 <code>u = g(x)</code>，则：
+        </p>
+        <pre>∫ f(g(x)) · g'(x) dx = ∫ f(u) du</pre>
+        <p><strong>识别技巧：</strong></p>
+        <ol>
+          <li>观察被积函数中是否有某个表达式及其导数的乘积</li>
+          <li>如果 g'(x) 恰好出现（可能差一个常数因子），优先尝试凑微分</li>
+          <li>凑出 du = g'(x)dx 后，原积分化为 ∫ f(u) du</li>
+          <li>对 u 积分后，将 u = g(x) 代回</li>
+        </ol>
+        <p><strong>典型例题：</strong></p>
+        <pre>求 ∫ 2x · e^(x²) dx
+
+解：注意到 (x²)' = 2x，出现在被积函数中
+    令 u = x²，则 du = 2x dx
+    原式 = ∫ e^u du = e^u + C = e^(x²) + C</pre>
+        <p>
+          常数因子的处理：如果 <code>g'(x)</code> 差一个常数因子，可以通过乘除常数来调整。
+          例如：<code>∫ x · sin(x²) dx</code>，这里 <code>(x²)' = 2x</code>，
+          需要补一个 <code>1/2</code> 来凑微分。
+        </p>
+      </article>
+    </div>
+  </div>
+
+  <!-- ═══ Comparison ═══ -->
+  <div class="demo-header" style="margin-top:50px">
+    <div class="badge">修复对比</div>
+    <h2>❌ 修复前 vs ✅ 修复后</h2>
+    <p style="color:var(--muted)">切换右上角色点看 5 种主题下修复后的效果——修复前只有固定深蓝色</p>
+  </div>
+
+  <div class="comparison">
+    <div class="comparison-col bad">
+      <div class="col-header">❌ 修复前（当前 CoursewareView.vue）</div>
+      <div class="col-body">
+        <ul style="color:var(--muted)">
+          <li>自带 <code>dashboard-shell</code> 全屏壳</li>
+          <li>自带 <code>.aurora-a</code> / <code>.aurora-b</code> 极光装饰</li>
+          <li>CSS 硬编码深蓝色 <code>#08111f</code></li>
+          <li>面板色硬编码 <code>rgba(247,250,255,0.98)</code></li>
+          <li>文字色硬编码 <code>#14324f</code></li>
+          <li>不跟随主题 — 永远深蓝</li>
+          <li>在 AppLayout 内产生双滚动条</li>
+          <li>极光在布局内定位错乱</li>
+        </ul>
+      </div>
+    </div>
+    <div class="comparison-col good">
+      <div class="col-header">✅ 修复后（此页面）</div>
+      <div class="col-body">
+        <ul style="color:var(--muted)">
+          <li>去掉外层壳，直接用 <code>div.courseware-page</code></li>
+          <li>删除所有极光装饰元素</li>
+          <li>背景色 → <code>var(--bg)</code></li>
+          <li>面板色 → <code>var(--panel)</code></li>
+          <li>边框色 → <code>var(--line)</code></li>
+          <li>文字色 → <code>var(--text)</code> / <code>var(--muted)</code></li>
+          <li>强调色 → <code>var(--accent)</code></li>
+          <li>AppLayout 统一管理背景和滚动</li>
+          <li>5 套主题全部正常切换 ✅</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function switchVariant(btn) {
+      document.querySelectorAll('.variant-btn').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+    }
+    function switchSection(btn) {
+      document.querySelectorAll('.outline-item').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      // In real code: scroll to section or update content
+    }
+    function switchTheme(key) {
+      document.documentElement.setAttribute('data-theme', key)
+      document.querySelectorAll('.t-dot').forEach(d => d.classList.remove('active'))
+      document.querySelector(`.t-dot[style*="${key==='ocean'?'00c8aa':key==='warm'?'e8924a':key==='cosmic'?'a78bfa':key==='minimal'?'2563eb':'48c884'}"]`)?.classList.add('active')
+    }
+  </script>
+</body>
+</html>

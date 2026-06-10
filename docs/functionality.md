@@ -113,6 +113,7 @@
 | `GET` | `/evaluation/reports/comprehensive/{user_id}/detail` | `get_comprehensive_report_detail` | Generate a detailed comprehensive report for the student workspace. |
 | `GET` | `/evaluation/mistakes/{user_id}` | `get_mistake_statistics` | Return mistake statistics. |
 | `GET` | `/evaluation/mistakes/{user_id}/detail` | `get_mistake_notebook` | Return the learner mistake notebook. |
+| `DELETE` | `/evaluation/mistakes/{user_id}` | `clear_mistake_notebook` | Clear the learner's visible mistake notebook entries. |
 | `GET` | `/evaluation/mistakes/{user_id}/remedial` | `get_remedial_exercises` | Generate remedial exercises from the learner's mistake notebook. |
 | `GET` | `/evaluation/profiles/{user_id}/snapshot` | `get_profile_snapshot` | Return a learner profile dashboard snapshot derived from recent practice. |
 | `GET` | `/evaluation/reports/suggestions/{user_id}` | `get_learning_suggestions` | Return personalized suggestions distilled from persisted answer history. |

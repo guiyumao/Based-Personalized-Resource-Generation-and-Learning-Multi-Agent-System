@@ -15,6 +15,8 @@ from common.schemas.user import ProfileChatResponse
 from services.agent_service.app.services.llm_factory import LLMFactory
 
 
+FIRST_QUESTION = "为了更方便地了解您的需求，提供个性化服务，请您简单地描述一下您现在的情况——比如您的学习基础、目标、感兴趣的领域以及平时的学习习惯。"
+
 PROFILE_DIMENSION_KEYS = (
     "knowledgeBase",
     "cognitiveStyle",
@@ -86,10 +88,20 @@ class ProfileBuilderService:
             raise ValueError("User not found")
 
         profile = self._get_or_create_profile(user_id)
+
+        # First interaction: return the standard opening question
+        history = self._load_recent_history(user_id)
+        if not history and not message.strip():
+            return ProfileChatResponse(
+                reply=FIRST_QUESTION,
+                profile_updates={},
+                profile_completeness={k: "未获取" for k in PROFILE_DIMENSION_KEYS},
+                estimated_remaining_rounds=6,
+            )
+
         self._save_message(user_id, "user", message)
 
         existing_dimensions = self._get_profile_dimensions(profile)
-        history = self._load_recent_history(user_id)
         reply, updates = self._generate_reply_and_updates(message, history, existing_dimensions)
 
         if updates:
@@ -134,7 +146,7 @@ class ProfileBuilderService:
         profile = UserProfile(
             user_id=user_id,
             mastery_json={},
-            learning_style="VARK",
+            learning_style="",
             cognitive_abilities={},
             habits={},
         )

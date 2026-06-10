@@ -104,6 +104,64 @@ def test_subjective_submission_uses_llm_score_threshold(test_user) -> None:
     asyncio.run(run())
 
 
+def test_clear_mistake_notebook_hides_existing_entries_but_keeps_history(test_user) -> None:
+    """Clearing the notebook should hide old mistakes without deleting answer history."""
+
+    async def run() -> None:
+        service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
+        knowledge_point = f"loop-{test_user.id}"
+
+        await service.submit_answer(
+            AnswerRecordSubmission(
+                user_id=str(test_user.id),
+                exercise_id=f"clearable-{test_user.id}",
+                user_answer="if",
+                time_spent=10,
+                knowledge_point_ids=[knowledge_point],
+                exercise_type="fill",
+                difficulty="basic",
+                standard_answer="for",
+                exercise_content="填写循环关键字。",
+                explanation="for 用于确定次数的循环。",
+                chapter_id=f"chapter-{test_user.id}",
+                chapter_name="Python 基础",
+            )
+        )
+
+        notebook_before = await service.get_mistake_notebook(test_user.id)
+        clear_result = await service.clear_mistake_notebook(test_user.id)
+        notebook_after = await service.get_mistake_notebook(test_user.id)
+        traces_after, _, _ = await asyncio.to_thread(service._load_user_context, test_user.id)
+
+        assert notebook_before.mistake_count == 1
+        assert clear_result.cleared_count == 1
+        assert notebook_after.mistake_count == 0
+        assert sum(1 for item in traces_after if not item.is_correct) == 1
+
+        await service.submit_answer(
+            AnswerRecordSubmission(
+                user_id=str(test_user.id),
+                exercise_id=f"new-mistake-{test_user.id}",
+                user_answer="while",
+                time_spent=11,
+                knowledge_point_ids=[knowledge_point],
+                exercise_type="fill",
+                difficulty="basic",
+                standard_answer="for",
+                exercise_content="再次填写循环关键字。",
+                explanation="新错题应在清空后重新出现。",
+                chapter_id=f"chapter-{test_user.id}",
+                chapter_name="Python 基础",
+            )
+        )
+        notebook_after_new_mistake = await service.get_mistake_notebook(test_user.id)
+
+        assert notebook_after_new_mistake.mistake_count == 1
+        assert notebook_after_new_mistake.items[0].user_answer == "while"
+
+    asyncio.run(run())
+
+
 def test_three_consecutive_errors_mark_weak_point_and_emit_events(test_user) -> None:
     """Three consecutive errors on one knowledge point should mark it weak and trigger events."""
 

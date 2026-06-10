@@ -84,26 +84,35 @@ public class UserApplicationService {
 
     public LearnerProfileDashboardResponse getDashboard(Long userId) {
         getUserEntity(userId);
+        UserProfileEntity profile = profiles.get(userId);
+        if (profile == null) {
+            return emptyDashboard(userId);
+        }
+
+        Map<String, Integer> masteryJson = profile.getMasteryJson();
+        List<LearnerProfileDashboardResponse.HeatmapItem> heatmap = new ArrayList<>();
+        int masteryOverview = 0;
+        if (masteryJson != null && !masteryJson.isEmpty()) {
+            int totalMastery = 0;
+            for (Map.Entry<String, Integer> entry : masteryJson.entrySet()) {
+                Integer mastery = entry.getValue();
+                if (mastery == null) {
+                    continue;
+                }
+                totalMastery += mastery;
+                heatmap.add(new LearnerProfileDashboardResponse.HeatmapItem(entry.getKey(), mastery));
+            }
+            masteryOverview = heatmap.isEmpty() ? 0 : Math.round((float) totalMastery / heatmap.size());
+        }
+
         return new LearnerProfileDashboardResponse(
             userId,
-            "视觉型 + 练习驱动",
-            68,
-            210,
-            "最近主要在晚间学习，建议先看课件再做课后自测。",
-            List.of(
-                new LearnerProfileDashboardResponse.MetricItem("知识掌握", 68),
-                new LearnerProfileDashboardResponse.MetricItem("逻辑分析", 72),
-                new LearnerProfileDashboardResponse.MetricItem("作答稳定性", 64),
-                new LearnerProfileDashboardResponse.MetricItem("完成速度", 60),
-                new LearnerProfileDashboardResponse.MetricItem("复盘反思", 75)
-            ),
-            List.of(
-                new LearnerProfileDashboardResponse.HeatmapItem("Python 循环", 68),
-                new LearnerProfileDashboardResponse.HeatmapItem("条件判断", 63),
-                new LearnerProfileDashboardResponse.HeatmapItem("列表与字典", 74),
-                new LearnerProfileDashboardResponse.HeatmapItem("函数封装", 58),
-                new LearnerProfileDashboardResponse.HeatmapItem("综合应用", 52)
-            )
+            normalizeLearningStyle(profile.getLearningStyle()),
+            masteryOverview,
+            0,
+            "",
+            List.of(),
+            heatmap
         );
     }
 
@@ -121,7 +130,7 @@ public class UserApplicationService {
         UserProfileEntity profile = new UserProfileEntity();
         profile.setUserId(user.getId());
         profile.setMasteryJson(new ConcurrentHashMap<>());
-        profile.setLearningStyle("VARK");
+        profile.setLearningStyle("");
         profile.setCognitiveAbilities(new ConcurrentHashMap<>());
         profile.setHabits(new ConcurrentHashMap<>());
         profiles.put(user.getId(), profile);
@@ -172,5 +181,16 @@ public class UserApplicationService {
             throw new IllegalArgumentException("Missing Authorization header.");
         }
         return bearerToken.replace("Bearer ", "").trim();
+    }
+
+    private LearnerProfileDashboardResponse emptyDashboard(Long userId) {
+        return new LearnerProfileDashboardResponse(userId, "", 0, 0, "", List.of(), List.of());
+    }
+
+    private String normalizeLearningStyle(String learningStyle) {
+        if (learningStyle == null || learningStyle.isBlank() || learningStyle.equalsIgnoreCase("VARK")) {
+            return "";
+        }
+        return learningStyle;
     }
 }

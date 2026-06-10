@@ -37,13 +37,8 @@ class ChromaRetriever:
         """Fetch the most relevant snippets for a query."""
 
         if self.collection is None:
-            return [
-                {
-                    "id": "demo-1",
-                    "content": f"关于 {query} 的示例检索内容，可替换为真实 Chroma 检索结果。",
-                    "metadata": {"source": "fallback"},
-                }
-            ]
+            _ = query, top_k
+            return []
         results = self.collection.query(query_texts=[query], n_results=top_k)
         ids = results.get("ids", [[]])[0]
         documents = results.get("documents", [[]])[0]

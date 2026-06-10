@@ -21,6 +21,7 @@
 
 - `POST /evaluation/practice/submit`
 - `POST /evaluation/mistakes/qa`
+- `DELETE /evaluation/mistakes/{user_id}`
 - `GET /evaluation/reports/stage/{user_id}`
 - `GET /evaluation/reports/stage/{user_id}/detail`
 - `GET /evaluation/reports/comprehensive/{user_id}`

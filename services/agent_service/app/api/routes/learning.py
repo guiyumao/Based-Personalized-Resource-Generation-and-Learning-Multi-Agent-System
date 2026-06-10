@@ -1,6 +1,6 @@
-"""Routes for learning-path and structured exercise capabilities."""
+"""Routes for learning-path, knowledge-base, and exercise capabilities."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from common.db.session import get_db
@@ -12,6 +12,7 @@ from common.schemas.agent import (
     LearningPathResponse,
 )
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
+from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.learning_path import LearningPathService
 
 router = APIRouter()
@@ -45,6 +46,48 @@ def adjust_learning_path(payload: LearningPathAdjustRequest, db: Session = Depen
     if updated is None:
         raise HTTPException(status_code=404, detail="Learning path task not found")
     return LearningPathResponse(**updated)
+
+
+@router.get("/knowledge-base")
+def list_knowledge_base(subject: str | None = None) -> dict[str, object]:
+    """Return curated university knowledge articles for the student workspace."""
+
+    service = KnowledgeBaseService()
+    articles = service.list_articles(subject=subject)
+    return {
+        "subjects": service.list_subjects(),
+        "items": [service.article_to_dict(article) for article in articles],
+    }
+
+
+@router.get("/knowledge-base/search")
+def search_knowledge_base(
+    q: str = Query(default="", min_length=0),
+    top_k: int = Query(default=6, ge=1, le=20),
+) -> dict[str, object]:
+    """Search curated university knowledge articles."""
+
+    service = KnowledgeBaseService()
+    if not q.strip():
+        articles = service.list_articles()[:top_k]
+    else:
+        articles = service.search_by_keywords(q, top_k=top_k)
+    return {
+        "query": q,
+        "items": [service.article_to_dict(article) for article in articles],
+    }
+
+
+@router.get("/knowledge-base/{article_id}")
+def get_knowledge_article(article_id: str) -> dict[str, object]:
+    """Return one curated knowledge article by id."""
+
+    service = KnowledgeBaseService()
+    for article in service.list_articles():
+        payload = service.article_to_dict(article)
+        if payload["id"] == article_id:
+            return payload
+    raise HTTPException(status_code=404, detail="Knowledge article not found")
 
 
 @router.post("/exercises/generate", response_model=ExerciseGenerationResponse)

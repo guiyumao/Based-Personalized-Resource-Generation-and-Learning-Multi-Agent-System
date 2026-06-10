@@ -46,7 +46,7 @@ class UserProfile(Base):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     mastery_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    learning_style: Mapped[str] = mapped_column(String(20), default="VARK")
+    learning_style: Mapped[str] = mapped_column(String(20), default="")
     cognitive_abilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     habits: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(
@@ -182,3 +182,37 @@ class ProfileConversation(TimestampMixin, Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ChatSession(TimestampMixin, Base):
+    """Chat session for continuous Q&A conversations."""
+
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    subject: Mapped[str] = mapped_column(String(50), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_message_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    messages: Mapped[list["ChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+
+class ChatMessage(TimestampMixin, Base):
+    """Individual message within a chat session."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("chat_sessions.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  # user, assistant, system
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    model_used: Mapped[str] = mapped_column(String(50), default="")  # small_model, large_model
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    session: Mapped[ChatSession] = relationship(back_populates="messages")

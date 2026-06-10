@@ -34,7 +34,7 @@ class PersonalizationService:
 
         profile = self.db.get(UserProfile, user_id)
         mastery_json = profile.mastery_json if profile and isinstance(profile.mastery_json, dict) else {}
-        learning_style = profile.learning_style if profile and profile.learning_style else fallback_profile.get("learning_style", "visual")
+        learning_style = profile.learning_style if profile and profile.learning_style else fallback_profile.get("learning_style", "")
         cognitive_abilities = profile.cognitive_abilities if profile and isinstance(profile.cognitive_abilities, dict) else {}
         habits = profile.habits if profile and isinstance(profile.habits, dict) else {}
 
@@ -93,7 +93,7 @@ class PersonalizationService:
 
     def _estimate_mastery_from_records(self, records: list[dict[str, Any]]) -> int:
         if not records:
-            return 62
+            return 0
         scores: list[int] = []
         for item in records:
             base = 85 if item["is_correct"] else 40

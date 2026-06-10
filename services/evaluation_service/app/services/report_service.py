@@ -33,6 +33,7 @@ from services.evaluation_service.app.schemas.report import (
     LatestMistakeEvidence,
     MistakeItem,
     MistakeNotebook,
+    MistakeNotebookClearResult,
     MonthlyReportResponse,
     PracticeFeedback,
     PracticeSubmission,
@@ -590,8 +591,8 @@ class ReportService:
     async def get_mistake_notebook(self, user_id: int) -> MistakeNotebook:
         """Return the learner mistake notebook."""
 
-        traces, _, _ = await asyncio.to_thread(self._load_user_context, user_id)
-        wrong_traces = [item for item in traces if not item.is_correct]
+        traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        wrong_traces = self._filter_active_mistake_traces(traces, profile)
         items = [
             MistakeItem(
                 user_id=user_id,
@@ -606,6 +607,11 @@ class ReportService:
             for item in wrong_traces
         ]
         return MistakeNotebook(user_id=user_id, mistake_count=len(items), items=items)
+
+    async def clear_mistake_notebook(self, user_id: int) -> MistakeNotebookClearResult:
+        """Hide the learner's current mistake notebook entries from future notebook reads."""
+
+        return await asyncio.to_thread(self._clear_mistake_notebook, user_id)
 
     async def generate_remedial_exercises(self, user_id: int) -> RemedialExerciseSet:
         """Generate deterministic remedial exercises from real mistakes."""
@@ -651,13 +657,17 @@ class ReportService:
         answered_days = {item.created_at.date().isoformat() for item in traces}
         avg_time = round(total_time / len(traces), 2) if traces else 0.0
         weak_points = [key for key, value in mastery_json.items() if isinstance(value, dict) and value.get("weak")]
+        has_learning_activity = bool(traces or mastery_values)
+        learning_style = profile.learning_style if profile.learning_style and profile.learning_style.upper() != "VARK" else ""
         return {
             "user_id": user_id,
-            "learning_style": profile.learning_style or "VARK",
+            "learning_style": learning_style,
             "mastery_overview": mastery_overview,
             "weekly_focus_minutes": round((total_time / 60.0), 2),
             "habit_summary": (
                 f"累计答题 {len(traces)} 次，活跃学习 {len(answered_days)} 天，平均每题 {avg_time:.2f} 秒。"
+                if has_learning_activity
+                else ""
             ),
             "radar_metrics": [
                 {"dimension": "知识掌握", "score": round(mastery_overview)},
@@ -665,7 +675,7 @@ class ReportService:
                 {"dimension": "用时稳定", "score": max(0, round(100 - min(avg_time, 100)))},
                 {"dimension": "薄弱点控制", "score": max(0, 100 - (len(weak_points) * 15))},
                 {"dimension": "学习持续性", "score": min(100, len(answered_days) * 10)},
-            ],
+            ] if has_learning_activity else [],
             "heatmap": [
                 {
                     "knowledge_point": key,
@@ -683,6 +693,13 @@ class ReportService:
         weak_points = self._find_still_weak(traces, profile)
         avg_time = round(sum(item.time_spent for item in traces) / len(traces), 2) if traces else 0.0
         suggestions: list[str] = []
+        if not traces and not profile.mastery_json:
+            return AnalyticsSuggestion(
+                user_id=user_id,
+                suggestions=[],
+                focus_areas=[],
+                recommended_action="",
+            )
         if weak_points:
             suggestions.append(f"优先围绕 {weak_points[0]} 做定向复习和专项训练。")
         if avg_time > 180:
@@ -945,6 +962,29 @@ class ReportService:
             traces = self._get_user_traces(session, user_id)
             return traces, profile, user.username
 
+    def _clear_mistake_notebook(self, user_id: int) -> MistakeNotebookClearResult:
+        with self._session_factory() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                raise ValueError(f"User {user_id} not found.")
+
+            profile = self._get_or_create_profile(session, user_id)
+            traces = self._get_user_traces(session, user_id)
+            visible_mistakes = self._filter_active_mistake_traces(traces, profile)
+            cleared_at = datetime.now(UTC)
+
+            habits = dict(profile.habits or {})
+            habits["mistake_notebook_cleared_at"] = cleared_at.isoformat()
+            profile.habits = habits
+            session.add(profile)
+            session.commit()
+
+            return MistakeNotebookClearResult(
+                user_id=user_id,
+                cleared_count=len(visible_mistakes),
+                cleared_at=cleared_at,
+            )
+
     def _get_user_traces(self, session: Session, user_id: int) -> list[AnswerTrace]:
         query = (
             session.query(AnswerRecord, Exercise)
@@ -995,8 +1035,34 @@ class ReportService:
                     comment=str(metadata.get("comment") or ""),
                     created_at=self._ensure_utc_datetime(answer_record.created_at),
                 )
-            )
+        )
         return traces
+
+    def _filter_active_mistake_traces(
+        self,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> list[AnswerTrace]:
+        cleared_at = self._get_mistake_notebook_cleared_at(profile)
+        return [
+            item
+            for item in traces
+            if not item.is_correct and (cleared_at is None or item.created_at > cleared_at)
+        ]
+
+    def _get_mistake_notebook_cleared_at(self, profile: UserProfile) -> datetime | None:
+        habits = profile.habits if isinstance(profile.habits, dict) else {}
+        raw_value = habits.get("mistake_notebook_cleared_at")
+        if not raw_value:
+            return None
+        if isinstance(raw_value, datetime):
+            return self._ensure_utc_datetime(raw_value)
+        if isinstance(raw_value, str):
+            try:
+                return self._ensure_utc_datetime(datetime.fromisoformat(raw_value))
+            except ValueError:
+                return None
+        return None
 
     def _build_stage_statuses(
         self,
@@ -1243,7 +1309,7 @@ class ReportService:
         profile = UserProfile(
             user_id=user_id,
             mastery_json={},
-            learning_style="VARK",
+            learning_style="",
             cognitive_abilities={},
             habits={},
         )

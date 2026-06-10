@@ -1,18 +1,87 @@
 :root {
-  color-scheme: light;
-  --bg: #f5efe4;
-  --panel: rgba(255, 250, 242, 0.82);
-  --panel-strong: rgba(255, 248, 236, 0.95);
-  --line: rgba(92, 63, 33, 0.12);
-  --text: #2e2117;
-  --muted: #6b5848;
-  --accent: #b5542f;
-  --accent-deep: #7f341b;
-  --green: #2f7d59;
-  --red: #b33b3b;
-  --shadow: 0 24px 60px rgba(98, 63, 37, 0.14);
+  color-scheme: dark;
+  --bg: #080e1a;
+  --panel: rgba(16, 26, 44, 0.78);
+  --panel-strong: rgba(20, 32, 52, 0.92);
+  --line: rgba(80, 160, 190, 0.12);
+  --text: #e2ebf4;
+  --muted: #7b90a8;
+  --accent: #00c8aa;
+  --accent-deep: #0a8a78;
+  --green: #2dd4a8;
+  --red: #f87171;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
   font-family:
     "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+}
+
+/* ============================================================
+   5-THEME SYSTEM — data-theme attribute on <html>
+   Default (:root) = 深海科技 Ocean (dark blue + cyan accent)
+   ============================================================ */
+
+/* ── 暖金学术 Warm ── */
+[data-theme="warm"] {
+  --bg: #1e1814;
+  --panel: rgba(42, 32, 24, 0.78);
+  --panel-strong: rgba(50, 38, 28, 0.92);
+  --line: rgba(180, 140, 100, 0.15);
+  --text: #f2e6d8;
+  --muted: #a89480;
+  --accent: #e8924a;
+  --accent-deep: #c07030;
+  --green: #6db88d;
+  --red: #e07060;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
+}
+
+/* ── 暗夜紫穹 Cosmic ── */
+[data-theme="cosmic"] {
+  --bg: #0d0a1a;
+  --panel: rgba(22, 16, 42, 0.72);
+  --panel-strong: rgba(28, 20, 50, 0.92);
+  --line: rgba(140, 120, 200, 0.14);
+  --text: #e4def8;
+  --muted: #8b7cb8;
+  --accent: #a78bfa;
+  --accent-deep: #7c5fd4;
+  --green: #6ee7b7;
+  --red: #fca5a5;
+  --shadow: 0 24px 60px rgba(80, 40, 120, 0.25);
+  color-scheme: dark;
+}
+
+/* ── 极简晨光 Minimal ── */
+[data-theme="minimal"] {
+  --bg: #f0f2f5;
+  --panel: rgba(255, 255, 255, 0.9);
+  --panel-strong: rgba(255, 255, 255, 0.98);
+  --line: rgba(0, 0, 0, 0.08);
+  --text: #1a1a2e;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-deep: #1d4ed8;
+  --green: #10b981;
+  --red: #ef4444;
+  --shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+  color-scheme: light;
+}
+
+/* ── 森翠绿洲 Forest ── */
+[data-theme="forest"] {
+  --bg: #0a1a10;
+  --panel: rgba(18, 32, 22, 0.72);
+  --panel-strong: rgba(22, 38, 26, 0.92);
+  --line: rgba(80, 160, 110, 0.14);
+  --text: #ddf0e4;
+  --muted: #7aaa8e;
+  --accent: #48c884;
+  --accent-deep: #2d9a5e;
+  --green: #56d992;
+  --red: #f0837a;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
 }
 
 * {
@@ -22,10 +91,7 @@
 body {
   margin: 0;
   min-width: 320px;
-  background:
-    radial-gradient(circle at top left, rgba(255, 174, 109, 0.35), transparent 28%),
-    radial-gradient(circle at right 10%, rgba(120, 167, 123, 0.22), transparent 24%),
-    linear-gradient(180deg, #fff8ef 0%, #f2e7d6 52%, #eadcca 100%);
+  background: var(--bg);
   color: var(--text);
 }
 
@@ -52,6 +118,37 @@ select {
   display: grid;
   place-items: center;
   padding: 24px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(0, 200, 170, 0.16), transparent 28%),
+    radial-gradient(circle at 70% 68%, rgba(96, 165, 250, 0.14), transparent 30%),
+    linear-gradient(135deg, #070d18 0%, #0a1220 48%, #050914 100%);
+}
+
+.auth-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.045) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.72), transparent 72%);
+}
+
+.auth-shell::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  width: 460px;
+  height: 460px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(0, 200, 170, 0.2), transparent 68%);
+  filter: blur(24px);
+  transform: translate(240px, -110px);
 }
 
 .login-card {
@@ -66,12 +163,19 @@ select {
 
 .auth-card {
   width: min(100%, 500px);
-  padding: 32px;
-  border-radius: 28px;
-  background: rgba(255, 248, 236, 0.92);
-  border: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(18px);
+  padding: 36px;
+  border-radius: 30px;
+  color: #ecf6ff;
+  background:
+    linear-gradient(180deg, rgba(13, 25, 44, 0.94), rgba(8, 16, 30, 0.9)),
+    radial-gradient(circle at top left, rgba(0, 200, 170, 0.12), transparent 42%);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(22px);
+  position: relative;
+  z-index: 1;
 }
 
 .login-kicker {
@@ -91,6 +195,8 @@ select {
   margin: 14px 0 10px;
   font-size: 34px;
   line-height: 1.12;
+  color: #f8fbff;
+  letter-spacing: -0.03em;
 }
 
 .login-card p {
@@ -101,7 +207,7 @@ select {
 
 .auth-card p {
   margin: 0 0 22px;
-  color: var(--muted);
+  color: rgba(207, 221, 238, 0.78);
   line-height: 1.7;
 }
 
@@ -115,17 +221,65 @@ select {
   margin-top: 8px;
 }
 
+.auth-card .el-form-item__label {
+  color: rgba(229, 239, 250, 0.86);
+  font-weight: 650;
+}
+
+.auth-card .el-input__wrapper {
+  min-height: 44px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(241, 245, 249, 0.1) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+}
+
+.auth-card .el-input__wrapper:hover,
+.auth-card .el-input__wrapper.is-focus {
+  border-color: rgba(0, 200, 170, 0.58);
+  background: rgba(241, 245, 249, 0.14) !important;
+  box-shadow:
+    0 0 0 3px rgba(0, 200, 170, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.auth-card .el-input__inner {
+  color: #f8fbff;
+  caret-color: var(--accent);
+}
+
+.auth-card .el-input__inner::placeholder {
+  color: rgba(203, 213, 225, 0.48);
+}
+
+.auth-card .el-input__password {
+  color: rgba(226, 232, 240, 0.78);
+}
+
+.auth-button.el-button {
+  height: 46px;
+  border: none;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  box-shadow: 0 14px 30px rgba(0, 200, 170, 0.22);
+}
+
+.auth-button.el-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 18px 36px rgba(0, 200, 170, 0.3);
+}
+
 .auth-footer {
   margin-top: 18px;
   display: flex;
   gap: 8px;
   justify-content: center;
-  color: var(--muted);
+  color: rgba(203, 213, 225, 0.72);
 }
 
 .auth-footer a,
 .role-actions a {
-  color: var(--accent-deep);
+  color: var(--accent);
   text-decoration: none;
 }
 
@@ -159,6 +313,103 @@ select {
   line-height: 1.8;
 }
 
+.teacher-role-shell {
+  place-items: start center;
+  background:
+    radial-gradient(circle at 15% 8%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 32%),
+    radial-gradient(circle at 86% 18%, color-mix(in srgb, var(--accent-deep) 20%, transparent), transparent 34%),
+    var(--bg);
+}
+
+.teacher-console-card {
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--panel-strong) 96%, transparent), color-mix(in srgb, var(--panel) 94%, transparent)),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 12%, transparent), transparent 42%);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--line));
+  color: var(--text);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.teacher-console-card h1,
+.teacher-console-card h2,
+.teacher-console-card h3 {
+  color: var(--text);
+}
+
+.teacher-console-card .workspace-panel,
+.teacher-detail-drawer .workspace-panel {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-strong) 94%, transparent), color-mix(in srgb, var(--panel) 92%, transparent)),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 8%, transparent), transparent 38%);
+  border-color: color-mix(in srgb, var(--accent) 16%, var(--line));
+  box-shadow:
+    0 20px 54px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.teacher-console-card .learning-section,
+.teacher-detail-drawer .learning-section,
+.teacher-detail-drawer .exercise-card,
+.teacher-console-card .list-card {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-strong) 88%, transparent), color-mix(in srgb, var(--panel) 86%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 14%, var(--line));
+  color: var(--text);
+}
+
+.teacher-console-card .list-card:hover,
+.teacher-console-card .clickable-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  box-shadow: 0 18px 38px rgba(0, 200, 170, 0.12);
+}
+
+.teacher-console-card .empty-state,
+.teacher-detail-drawer .empty-state {
+  background: color-mix(in srgb, var(--panel-strong) 72%, var(--accent) 4%);
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--line));
+  color: var(--muted);
+}
+
+.teacher-console-card .result-box {
+  background: color-mix(in srgb, var(--panel-strong) 86%, #ffffff 3%);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--line));
+  color: var(--text);
+}
+
+.teacher-console-card .el-input__wrapper,
+.teacher-console-card .el-input-number .el-input__wrapper,
+.teacher-console-card .el-textarea__inner,
+.teacher-console-card .el-select__wrapper {
+  background: color-mix(in srgb, var(--panel-strong) 82%, #ffffff 5%) !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line)) !important;
+  box-shadow: none !important;
+}
+
+.teacher-console-card .el-input__inner,
+.teacher-console-card .el-textarea__inner {
+  color: var(--text) !important;
+}
+
+.teacher-console-card .el-form-item__label,
+.teacher-console-card .el-input__inner::placeholder,
+.teacher-console-card .el-textarea__inner::placeholder {
+  color: color-mix(in srgb, var(--muted) 88%, #ffffff 8%) !important;
+}
+
+.teacher-detail-drawer.el-drawer {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-strong) 96%, transparent), color-mix(in srgb, var(--panel) 94%, transparent)),
+    var(--bg);
+  color: var(--text);
+}
+
+.teacher-detail-drawer .el-drawer__header {
+  color: var(--text);
+  border-bottom: 1px solid var(--line);
+}
+
 .role-meta {
   display: flex;
   gap: 18px;
@@ -177,6 +428,261 @@ select {
 
 .teacher-grid {
   margin-top: 28px;
+}
+
+.form-two-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.teacher-analytics-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.teacher-overview-panel,
+.teacher-guide-panel {
+  margin-top: 26px;
+}
+
+.teacher-overview-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.teacher-capability-grid,
+.teacher-guide-grid {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.teacher-capability-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.teacher-capability-card,
+.teacher-guide-card {
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line));
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
+  color: var(--text);
+}
+
+.teacher-capability-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 18px;
+}
+
+.teacher-capability-card strong {
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.teacher-capability-card span {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.teacher-guide-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.teacher-guide-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 20px;
+}
+
+.teacher-guide-card > span {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: #05211f;
+  font-weight: 800;
+}
+
+.teacher-guide-card strong {
+  display: block;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.teacher-guide-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.teacher-empty-guide {
+  display: grid;
+  gap: 6px;
+}
+
+.teacher-empty-guide strong {
+  color: var(--text);
+}
+
+.teacher-empty-guide span {
+  color: var(--muted);
+}
+
+.teacher-kb-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.teacher-kb-subjects {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.teacher-kb-subjects button {
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent);
+  color: var(--muted);
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.teacher-kb-subjects button.active,
+.teacher-kb-subjects button:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  color: var(--accent);
+}
+
+.teacher-kb-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.teacher-kb-list {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  max-height: 620px;
+  overflow: auto;
+}
+
+.teacher-kb-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent);
+  color: var(--text);
+  padding: 14px 16px;
+  cursor: pointer;
+}
+
+.teacher-kb-card.active,
+.teacher-kb-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  box-shadow: 0 18px 38px rgba(0, 200, 170, 0.1);
+}
+
+.teacher-kb-card span,
+.teacher-kb-card small {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.teacher-kb-detail {
+  min-height: 260px;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--line));
+  background: color-mix(in srgb, var(--panel-strong) 76%, transparent);
+}
+
+.teacher-kb-detail-head {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.teacher-kb-detail-head h3 {
+  margin: 8px 0;
+}
+
+.teacher-kb-detail-head p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.teacher-kb-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.teacher-kb-section-grid section {
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--line));
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.teacher-kb-section-grid strong {
+  color: var(--accent);
+}
+
+.teacher-kb-section-grid ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.teacher-kb-section-grid p {
+  margin: 10px 0 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.teacher-audit-dialog.el-dialog {
+  border-radius: 24px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  background: linear-gradient(180deg, var(--panel-strong), var(--panel));
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.32);
+}
+
+.teacher-audit-dialog .el-dialog__header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 12%, var(--line));
+}
+
+.teacher-audit-dialog .el-dialog__title {
+  color: var(--text);
+  font-weight: 750;
+}
+
+.teacher-audit-tip {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--muted);
+  line-height: 1.7;
 }
 
 .list-stack {
@@ -1280,6 +1786,91 @@ select {
   font-variant-numeric: tabular-nums;
 }
 
+.courseware-progress-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.courseware-progress-step {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--muted) 6%, transparent);
+}
+
+.courseware-progress-step strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.courseware-progress-step p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.courseware-progress-step em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.courseware-progress-step.active {
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--line));
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+
+.courseware-progress-step.active .generation-hint-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.courseware-progress-step.done {
+  border-color: color-mix(in srgb, var(--green) 46%, var(--line));
+  background: color-mix(in srgb, var(--green) 9%, transparent);
+}
+
+.courseware-progress-step.done .generation-hint-dot {
+  background: var(--green);
+}
+
+.courseware-reading-progress {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  margin-bottom: 14px;
+}
+
+.courseware-reading-progress strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.courseware-reading-progress span {
+  color: var(--accent);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.courseware-reading-progress p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .generation-hint-title {
   color: var(--text);
   font-size: 13px;
@@ -1327,6 +1918,10 @@ select {
   .courseware-progress-percentage {
     min-width: 60px;
     font-size: 24px;
+  }
+
+  .courseware-progress-steps {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1448,6 +2043,12 @@ select {
   .sidebar-metric-grid,
   .journey-card,
   .report-grid,
+  .teacher-overview-grid,
+  .teacher-capability-grid,
+  .teacher-guide-grid,
+  .teacher-kb-toolbar,
+  .teacher-kb-layout,
+  .teacher-kb-section-grid,
   .courseware-entry-layout,
   .reader-layout,
   .report-evidence-grid {

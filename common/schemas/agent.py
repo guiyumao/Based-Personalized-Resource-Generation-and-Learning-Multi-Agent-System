@@ -258,3 +258,70 @@ class QAResponse(BaseModel):
     structured_analysis: QAAnalysisPayload
     context_snippets: list[str] = Field(default_factory=list)
     confidence: float | None = Field(default=None, ge=0, le=1)
+
+
+class ChatSessionCreate(BaseModel):
+    """Payload for creating a new chat session."""
+
+    user_id: int
+    title: str = Field(default="新对话", max_length=200)
+    subject: str = Field(default="", max_length=50)
+
+
+class ChatMessageInput(BaseModel):
+    """Payload for sending a chat message."""
+
+    session_id: int
+    user_id: int
+    content: str = Field(min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatMessageItem(BaseModel):
+    """Individual chat message in response."""
+
+    id: int
+    role: Literal["user", "assistant", "system"]
+    content: str
+    model_used: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class ChatSessionDetail(BaseModel):
+    """Detailed chat session with message history."""
+
+    id: int
+    user_id: int
+    title: str
+    subject: str
+    is_active: bool
+    created_at: str
+    last_message_at: str
+    message_count: int
+    messages: list[ChatMessageItem] = Field(default_factory=list)
+
+
+class ChatSessionSummary(BaseModel):
+    """Summary of a chat session for list view."""
+
+    id: int
+    user_id: int
+    title: str
+    subject: str
+    is_active: bool
+    created_at: str
+    last_message_at: str
+    message_count: int
+
+
+class ChatResponse(BaseModel):
+    """Response for a chat message."""
+
+    session_id: int
+    message_id: int
+    role: str
+    content: str
+    model_used: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
