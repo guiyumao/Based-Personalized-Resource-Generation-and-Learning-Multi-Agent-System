@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { agentApi, type KnowledgeBaseArticle, type KnowledgeBaseListResponse, type KnowledgeBaseSearchResponse } from '../../api'
+import {
+  agentApi,
+  resourceApi,
+  type ExternalResourceImportPayload,
+  type KnowledgeBaseArticle,
+  type KnowledgeBaseListResponse,
+  type KnowledgeBaseSearchResponse,
+} from '../../api'
 
 const loading = ref(false)
 const searchText = ref('')
@@ -10,6 +17,7 @@ const subjects = ref<string[]>([])
 const articles = ref<KnowledgeBaseArticle[]>([])
 const selectedArticle = ref<KnowledgeBaseArticle | null>(null)
 const error = ref('')
+const importingUrl = ref('')
 
 const filteredArticles = computed(() => articles.value)
 
@@ -84,6 +92,34 @@ function applyToGraph(article: KnowledgeBaseArticle) {
   )
   ElMessage.success('已设为当前知识点，可前往知识图谱查看依赖关系')
 }
+
+async function importResource(resource: KnowledgeBaseArticle['external_resources'][number]) {
+  const article = selectedArticle.value
+  if (!article) {
+    return
+  }
+  const payload: ExternalResourceImportPayload = {
+    title: resource.title,
+    provider: resource.provider,
+    url: resource.url,
+    kind: resource.kind,
+    license: resource.license,
+    notes: resource.notes,
+    knowledge_point: article.title,
+    owner_user_id: null,
+  }
+
+  importingUrl.value = resource.url
+  try {
+    await resourceApi.post('/resources/import-external', payload)
+    ElMessage.success('官方课件已导入到学习资源')
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    ElMessage.error(`导入失败：${detail}`)
+  } finally {
+    importingUrl.value = ''
+  }
+}
 </script>
 
 <template>
@@ -91,8 +127,8 @@ function applyToGraph(article: KnowledgeBaseArticle) {
     <header class="knowledge-base-hero">
       <div>
         <div class="panel-kicker">University Knowledge Base</div>
-        <h2>🎓 大学知识库</h2>
-        <p>覆盖数据结构、算法、数据库、操作系统、计算机网络、软件工程、线性代数与概率统计等大学核心课程。</p>
+        <h2>大学知识库</h2>
+        <p>这里负责知识点讲解与课程要点浏览，不再直接充当学习资源页。</p>
       </div>
       <button :disabled="loading" class="kb-refresh-button" @click="fetchKnowledgeBase(selectedSubject)">
         {{ loading ? '加载中...' : '刷新知识库' }}
@@ -103,7 +139,7 @@ function applyToGraph(article: KnowledgeBaseArticle) {
       <div class="kb-search">
         <input
           v-model="searchText"
-          placeholder="搜索课程、概念或关键字，例如：事务、递归、TCP、矩阵"
+          placeholder="搜索课程、概念或关键词，例如：事务、递归、TCP、矩阵"
           @keyup.enter="searchKnowledgeBase"
         />
         <button :disabled="loading" @click="searchKnowledgeBase">搜索</button>
@@ -156,6 +192,38 @@ function applyToGraph(article: KnowledgeBaseArticle) {
           <button @click="applyToGraph(selectedArticle)">设为图谱知识点</button>
         </div>
 
+        <section v-if="selectedArticle.external_resources.length" class="kb-resource-panel">
+          <div class="kb-resource-header">
+            <div>
+              <h3>官方课件与扩展资源</h3>
+              <p>这里列出知识库关联的外部课程讲义、下载包和官方资料，可一键导入到学习资源。</p>
+            </div>
+          </div>
+          <div class="kb-resource-list">
+            <article
+              v-for="resource in selectedArticle.external_resources"
+              :key="resource.url"
+              class="kb-resource-card"
+            >
+              <div class="kb-card-meta">
+                <span>{{ resource.provider }}</span>
+                <span>{{ resource.kind }}</span>
+              </div>
+              <h4>{{ resource.title }}</h4>
+              <p>{{ resource.notes }}</p>
+              <div class="kb-resource-actions">
+                <a :href="resource.url" target="_blank" rel="noreferrer">打开原站</a>
+                <button
+                  :disabled="importingUrl === resource.url"
+                  @click="importResource(resource)"
+                >
+                  {{ importingUrl === resource.url ? '导入中...' : '导入到学习资源' }}
+                </button>
+              </div>
+            </article>
+          </div>
+        </section>
+
         <div class="kb-section-grid">
           <section class="kb-section">
             <h3>核心概念</h3>
@@ -165,7 +233,7 @@ function applyToGraph(article: KnowledgeBaseArticle) {
           </section>
 
           <section class="kb-section">
-            <h3>形式化表达 / 关键语法</h3>
+            <h3>关键语法 / 形式化表达</h3>
             <pre v-for="item in selectedArticle.syntax" :key="item">{{ item }}</pre>
           </section>
 
@@ -230,7 +298,8 @@ function applyToGraph(article: KnowledgeBaseArticle) {
 
 .kb-refresh-button,
 .kb-search button,
-.kb-detail-head button {
+.kb-detail-head button,
+.kb-resource-actions button {
   border: none;
   border-radius: 12px;
   padding: 10px 18px;
@@ -307,7 +376,9 @@ function applyToGraph(article: KnowledgeBaseArticle) {
 
 .kb-card,
 .kb-detail,
-.kb-section {
+.kb-section,
+.kb-resource-panel,
+.kb-resource-card {
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: 18px;
@@ -331,7 +402,8 @@ function applyToGraph(article: KnowledgeBaseArticle) {
 
 .kb-card p,
 .kb-detail p,
-.kb-section li {
+.kb-section li,
+.kb-resource-card p {
   color: var(--muted);
   line-height: 1.75;
 }
@@ -365,6 +437,47 @@ function applyToGraph(article: KnowledgeBaseArticle) {
 
 .kb-detail-head h2 {
   margin: 10px 0;
+}
+
+.kb-resource-panel {
+  padding: 18px;
+  margin-bottom: 18px;
+}
+
+.kb-resource-header h3 {
+  margin: 0 0 8px;
+}
+
+.kb-resource-header p {
+  margin: 0 0 14px;
+}
+
+.kb-resource-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.kb-resource-card {
+  padding: 16px;
+}
+
+.kb-resource-card h4 {
+  margin: 10px 0 8px;
+}
+
+.kb-resource-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.kb-resource-actions a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
 }
 
 .kb-section-grid {
@@ -406,14 +519,17 @@ function applyToGraph(article: KnowledgeBaseArticle) {
 
 @media (max-width: 1100px) {
   .kb-layout,
-  .kb-section-grid {
+  .kb-section-grid,
+  .kb-resource-list {
     grid-template-columns: 1fr;
   }
 
   .knowledge-base-hero,
   .kb-detail-head,
-  .kb-search {
+  .kb-search,
+  .kb-resource-actions {
     flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

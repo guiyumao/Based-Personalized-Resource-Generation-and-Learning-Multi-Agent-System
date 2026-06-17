@@ -122,6 +122,18 @@ export type LearningPathResponse = {
   stages: LearningStageItem[]
 }
 
+export type AgentExecutionOutput<T = unknown> = {
+  status?: 'completed' | 'failed' | string
+  error?: string
+} & T
+
+export type CoordinationResponse = {
+  status: 'success' | 'partial' | 'failed'
+  selected_agents: string[]
+  route_reason: string
+  outputs: Record<string, AgentExecutionOutput<Record<string, unknown>>>
+}
+
 export type ExerciseGenerationPayload = {
   user_id: number
   knowledge_point: string
@@ -286,6 +298,12 @@ export type PracticeSubmissionPayload = {
   correct_answer: string
   analysis: string
   time_spent: number
+  difficulty?: 'basic' | 'intermediate' | 'advanced'
+  reference_answer?: string | null
+  max_score?: number | null
+  exercise_content?: string | null
+  chapter_id?: string | null
+  chapter_name?: string | null
 }
 
 export type QAMistakeSubmissionPayload = {

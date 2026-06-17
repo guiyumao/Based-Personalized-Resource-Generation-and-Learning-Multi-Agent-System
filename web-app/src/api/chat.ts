@@ -1,9 +1,4 @@
-/** Frontend API for continuous chat with large-small model collaboration. */
-
-import axios from 'axios'
-import type { AxiosResponse } from 'axios'
-
-const AGENT_SERVICE_URL = import.meta.env.VITE_AGENT_SERVICE_URL || 'http://localhost:8002'
+import { agentApi } from './http'
 
 export interface ChatSessionCreate {
   user_id: number
@@ -15,7 +10,7 @@ export interface ChatMessageInput {
   session_id: number
   user_id: number
   content: string
-  context?: Record<string, any>
+  context?: Record<string, unknown>
 }
 
 export interface ChatMessageItem {
@@ -23,7 +18,7 @@ export interface ChatMessageItem {
   role: 'user' | 'assistant' | 'system'
   content: string
   model_used: string
-  metadata: Record<string, any>
+  metadata: Record<string, unknown>
   created_at: string
 }
 
@@ -56,66 +51,36 @@ export interface ChatResponse {
   role: string
   content: string
   model_used: string
-  metadata: Record<string, any>
+  metadata: Record<string, unknown>
   created_at: string
 }
 
-/**
- * Create a new chat session
- */
 export async function createChatSession(data: ChatSessionCreate): Promise<ChatSessionDetail> {
-  const response: AxiosResponse<ChatSessionDetail> = await axios.post(
-    `${AGENT_SERVICE_URL}/chat/sessions/new`,
-    data
-  )
+  const response = await agentApi.post<ChatSessionDetail>('/chat/sessions/new', data)
   return response.data
 }
 
-/**
- * List all chat sessions for a user
- */
 export async function listChatSessions(userId: number, limit: number = 50): Promise<ChatSessionSummary[]> {
-  const response: AxiosResponse<ChatSessionSummary[]> = await axios.get(
-    `${AGENT_SERVICE_URL}/chat/sessions`,
-    {
-      params: { user_id: userId, limit }
-    }
-  )
+  const response = await agentApi.get<ChatSessionSummary[]>('/chat/sessions', {
+    params: { user_id: userId, limit },
+  })
   return response.data
 }
 
-/**
- * Get a chat session with message history
- */
 export async function getChatSession(sessionId: number, userId: number): Promise<ChatSessionDetail> {
-  const response: AxiosResponse<ChatSessionDetail> = await axios.get(
-    `${AGENT_SERVICE_URL}/chat/sessions/${sessionId}`,
-    {
-      params: { user_id: userId }
-    }
-  )
+  const response = await agentApi.get<ChatSessionDetail>(`/chat/sessions/${sessionId}`, {
+    params: { user_id: userId },
+  })
   return response.data
 }
 
-/**
- * Send a message in a chat session
- */
 export async function sendChatMessage(data: ChatMessageInput): Promise<ChatResponse> {
-  const response: AxiosResponse<ChatResponse> = await axios.post(
-    `${AGENT_SERVICE_URL}/chat/chat`,
-    data
-  )
+  const response = await agentApi.post<ChatResponse>('/chat/chat', data)
   return response.data
 }
 
-/**
- * Delete a chat session
- */
 export async function deleteChatSession(sessionId: number, userId: number): Promise<void> {
-  await axios.delete(
-    `${AGENT_SERVICE_URL}/chat/sessions/${sessionId}`,
-    {
-      params: { user_id: userId }
-    }
-  )
+  await agentApi.delete(`/chat/sessions/${sessionId}`, {
+    params: { user_id: userId },
+  })
 }

@@ -122,9 +122,13 @@ class QAService:
             session = self.db.query(ChatSession).filter(ChatSession.id == request.session_id).first()
             if session is None:
                 raise ValueError(f"QA session {request.session_id} not found")
+            if self._should_refresh_session_title(session.title):
+                session.title = self._build_session_title(request.question)
+                self.db.commit()
+                self.db.refresh(session)
             return session
 
-        title = request.session_title.strip() or request.question.strip()[:40] or "智能问答"
+        title = request.session_title.strip() or self._build_session_title(request.question) or "智能问答"
         subject = request.subject.strip()
         try:
             user_id = int(request.student_id)
@@ -142,6 +146,14 @@ class QAService:
         self.db.commit()
         self.db.refresh(session)
         return session
+
+    def _should_refresh_session_title(self, title: str) -> bool:
+        normalized = title.strip().lower()
+        return normalized in {"", "新对话", "智能问答", "new chat"}
+
+    def _build_session_title(self, question: str) -> str:
+        cleaned = re.sub(r"\s+", " ", question.strip())
+        return cleaned[:24]
 
     def _save_message(
         self,
@@ -823,4 +835,3 @@ class QAService:
             context_snippets, confidence = self._build_context_snippets(request, flags)
             fallback = self._build_fallback_response(request, flags, context_snippets, confidence, history)
             return QAResponse(**fallback).model_dump()
-

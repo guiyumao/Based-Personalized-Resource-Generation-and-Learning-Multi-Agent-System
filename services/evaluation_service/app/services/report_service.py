@@ -426,6 +426,11 @@ class ReportService:
     async def evaluate_practice(self, payload: PracticeSubmission) -> PracticeFeedback:
         """Compatibility wrapper for the student practice endpoint."""
 
+        normalized_type = normalize_exercise_type(payload.question_type)
+        reference_answer = payload.reference_answer or payload.correct_answer
+        max_score = payload.max_score or (100.0 if normalized_type in {"short_answer", "code"} else None)
+        exercise_content = payload.exercise_content or payload.analysis
+
         result = await self.submit_answer(
             AnswerRecordSubmission(
                 user_id=str(payload.user_id),
@@ -436,7 +441,9 @@ class ReportService:
                 exercise_type=payload.question_type,
                 difficulty=payload.difficulty,
                 standard_answer=payload.correct_answer,
-                exercise_content=payload.analysis,
+                reference_answer=reference_answer if normalized_type in {"short_answer", "code"} else None,
+                max_score=max_score,
+                exercise_content=exercise_content,
                 explanation=payload.analysis,
                 chapter_id=payload.chapter_id,
                 chapter_name=payload.chapter_name,

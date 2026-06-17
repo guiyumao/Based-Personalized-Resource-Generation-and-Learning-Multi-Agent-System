@@ -69,6 +69,7 @@ class Settings:
     neo4j_uri: str = os.getenv("NEO4J_URI", "bolt://localhost:7687")
     neo4j_username: str = os.getenv("NEO4J_USERNAME", "neo4j")
     neo4j_password: str = os.getenv("NEO4J_PASSWORD", "neo4jpassword")
+    neo4j_enabled: bool = _get_bool("NEO4J_ENABLED", bool(os.getenv("NEO4J_URI")))
 
     minio_endpoint: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
     minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")

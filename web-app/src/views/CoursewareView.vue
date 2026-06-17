@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Download } from '@element-plus/icons-vue'
 
 import {
   agentApi,
@@ -86,6 +87,7 @@ const generatedTimeLabel = computed(() => {
   }
   return new Date(snapshot.value.generatedAt).toLocaleString('zh-CN', { hour12: false })
 })
+const downloadFileName = computed(() => `${buildSafeFileName(coursewareTitle.value)}.md`)
 
 function createProgressStages(): ProgressStage[] {
   return [
@@ -169,6 +171,78 @@ function scrollToCoursewareSection(anchor: string) {
 
 function goBack() {
   void router.push({ name: 'student-dashboard' })
+}
+
+function downloadCurrentCourseware() {
+  if (!snapshot.value || !coursewareContent.value.trim()) {
+    ElMessage.warning('当前没有可下载的课件内容')
+    return
+  }
+
+  const blob = new Blob(['\ufeff', buildDownloadMarkdown()], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = downloadFileName.value
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+  ElMessage.success('课件已下载为 Markdown 文件')
+}
+
+function buildDownloadMarkdown() {
+  const currentSnapshot = snapshot.value
+  const variant = activeCoursewareVariant.value
+  const generatedAt = currentSnapshot?.generatedAt
+    ? new Date(currentSnapshot.generatedAt).toLocaleString('zh-CN', { hour12: false })
+    : '刚刚生成'
+  const topic = currentSnapshot?.topic || currentSnapshot?.resourceResult.knowledge_point || '当前学习主题'
+  const content = ensureMarkdownTitle(coursewareContent.value.trim(), coursewareTitle.value)
+  const references = currentSnapshot?.resourceResult.references ?? []
+  const metadata = [
+    '<!--',
+    `主题: ${topic}`,
+    `生成时间: ${generatedAt}`,
+    `课件版本: ${variant?.title ?? '默认版本'}`,
+    `文件名: ${downloadFileName.value}`,
+    '-->',
+    '',
+  ]
+
+  if (!references.length) {
+    return `${metadata.join('\n')}${content}\n`
+  }
+
+  const referenceLines = references
+    .map((reference, index) => {
+      const title = reference.id || `参考材料 ${index + 1}`
+      const source = String(reference.metadata?.source ?? 'RAG 检索')
+      const body = reference.content?.trim() || '暂无摘要'
+      return [`### ${title}`, '', `来源: ${source}`, '', body].join('\n')
+    })
+    .join('\n\n')
+
+  return `${metadata.join('\n')}${content}\n\n---\n\n## 参考材料\n\n${referenceLines}\n`
+}
+
+function ensureMarkdownTitle(content: string, title: string) {
+  if (/^#\s+/.test(content)) {
+    return content
+  }
+  return `# ${title}\n\n${content}`
+}
+
+function buildSafeFileName(rawTitle: string) {
+  const stem = rawTitle
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80)
+  const datePart = new Date().toISOString().slice(0, 10)
+  return `${stem || 'courseware'}-${datePart}`
 }
 
 async function generateFromLatestPath() {
@@ -333,7 +407,13 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
         <div class="action-row">
           <el-button @click="goBack">返回工作台</el-button>
           <el-button v-if="snapshot" type="primary" @click="reloadSnapshot">刷新当前课件</el-button>
+          <el-button v-if="snapshot" :icon="Download" @click="downloadCurrentCourseware">
+            下载课件
+          </el-button>
         </div>
+        <p v-if="snapshot" style="margin:10px 0 0;font-size:12px;color:var(--muted)">
+          将当前选中的课件版本导出为 {{ downloadFileName }}，包含正文和参考材料。
+        </p>
       </div>
 
       <div style="display:grid;gap:12px">

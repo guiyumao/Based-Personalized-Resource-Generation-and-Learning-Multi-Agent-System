@@ -1,8 +1,9 @@
 ﻿<script setup lang="ts">
-import { computed, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Promotion } from '@element-plus/icons-vue'
+import { useAuthStore } from '../stores/auth'
 
 import {
   evaluationApi,
@@ -18,6 +19,12 @@ type StoredMistakeSnapshot = {
   generatedAt: number
   mistakeNotebook: MistakeNotebook | null
   remedialExerciseSet: RemedialExerciseSet | null
+}
+
+type StoredPracticeSession = {
+  userId: number
+  savedAt: number
+  mistakeNotebook: MistakeNotebook | null
 }
 
 type SubmittedRemedialState = {
@@ -40,6 +47,8 @@ const questionTypeLabelMap: Record<string, string> = {
 }
 
 const router = useRouter()
+const authStore = useAuthStore()
+const currentUserId = computed(() => authStore.user?.userId ?? 0)
 const snapshot = ref<StoredMistakeSnapshot | null>(readStoredSnapshot())
 const mistakeNotebook = ref<MistakeNotebook | null>(snapshot.value?.mistakeNotebook ?? null)
 const remedialExerciseSet = ref<RemedialExerciseSet | null>(snapshot.value?.remedialExerciseSet ?? null)
@@ -53,8 +62,9 @@ const answerStartAt = ref<number | null>(remedialExerciseSet.value?.exercises.le
 const remedialDrafts = reactive<Record<number, string>>({})
 const remedialSubmissions = reactive<Record<number, SubmittedRemedialState>>({})
 let autoAdvanceTimer: ReturnType<typeof setTimeout> | null = null
+const subjectiveTypes = new Set(['short_answer', 'programming'])
 
-const userId = computed(() => snapshot.value?.userId ?? mistakeNotebook.value?.user_id ?? remedialExerciseSet.value?.user_id ?? 0)
+const userId = computed(() => snapshot.value?.userId ?? mistakeNotebook.value?.user_id ?? remedialExerciseSet.value?.user_id ?? currentUserId.value)
 const hasMistakes = computed(() => Boolean(mistakeNotebook.value?.mistake_count))
 const remedialCount = computed(() => remedialExerciseSet.value?.exercises.length ?? 0)
 const mistakePreviewItems = computed(() => mistakeNotebook.value?.items.slice(0, 8) ?? [])
@@ -97,14 +107,43 @@ function readStoredSnapshot(): StoredMistakeSnapshot | null {
 
   try {
     const raw = window.sessionStorage.getItem(MISTAKE_NOTEBOOK_STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && 'userId' in parsed) {
+        if (currentUserId.value && parsed.userId !== currentUserId.value) {
+          return readPracticeMistakeSnapshot()
+        }
+        return parsed as StoredMistakeSnapshot
+      }
+    }
+  } catch {
+    // Ignore malformed session cache and try the practice progress fallback below.
+  }
+
+  return readPracticeMistakeSnapshot()
+}
+
+function readPracticeMistakeSnapshot(): StoredMistakeSnapshot | null {
+  const targetUserId = currentUserId.value
+  if (typeof window === 'undefined' || !targetUserId) {
+    return null
+  }
+
+  try {
+    const raw = window.localStorage.getItem(`student-practice-session-${targetUserId}`)
     if (!raw) {
       return null
     }
-    const parsed = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || !('userId' in parsed)) {
+    const parsed = JSON.parse(raw) as StoredPracticeSession
+    if (parsed.userId !== targetUserId || !parsed.mistakeNotebook) {
       return null
     }
-    return parsed as StoredMistakeSnapshot
+    return {
+      userId: targetUserId,
+      generatedAt: parsed.savedAt ?? Date.now(),
+      mistakeNotebook: parsed.mistakeNotebook,
+      remedialExerciseSet: null,
+    }
   } catch {
     return null
   }
@@ -238,22 +277,28 @@ function scheduleNextRemedialAutoAdvance() {
   }, 1200)
 }
 
-async function refreshMistakeNotebook() {
+async function refreshMistakeNotebook(options: { silent?: boolean } = {}) {
   if (!userId.value) {
-    ElMessage.warning('当前缺少学生信息，请先回到工作台。')
+    if (!options.silent) {
+      ElMessage.warning('当前缺少学生信息，请先回到工作台。')
+    }
     return
   }
 
   loadingMistakes.value = true
   try {
     const { data } = await evaluationApi.get<ApiEnvelope<MistakeNotebook>>(`/evaluation/mistakes/${userId.value}/detail`)
-    mistakeNotebook.value = data.data
+    mistakeNotebook.value = (data as any).data ?? data
     persistSnapshot()
-    ElMessage.success('错题本已刷新。')
+    if (!options.silent) {
+      ElMessage.success('错题本已刷新。')
+    }
   } catch {
     if (mistakeNotebook.value) {
-      ElMessage.info('错题本服务暂不可用，当前先展示最近一次缓存内容。')
-    } else {
+      if (!options.silent) {
+        ElMessage.info('错题本服务暂不可用，当前先展示最近一次缓存内容。')
+      }
+    } else if (!options.silent) {
       ElMessage.warning('当前没有可展示的错题内容，请先回到工作台生成。')
     }
   } finally {
@@ -358,12 +403,20 @@ async function submitRemedialAnswer() {
     correct_answer: currentRemedialExercise.value.answer,
     analysis: currentRemedialExercise.value.analysis,
     time_spent: answerStartAt.value ? Math.max(1, Math.round((Date.now() - answerStartAt.value) / 1000)) : 0,
+    difficulty: 'intermediate',
+    reference_answer: subjectiveTypes.has(currentRemedialExercise.value.question_type)
+      ? currentRemedialExercise.value.answer
+      : null,
+    max_score: subjectiveTypes.has(currentRemedialExercise.value.question_type) ? 100 : null,
+    exercise_content: currentRemedialExercise.value.prompt,
   }
 
   try {
     const { data } = await evaluationApi.post<ApiEnvelope<PracticeFeedback>>('/evaluation/practice/submit', payload)
-    rememberRemedialSubmission(payload, data.data)
-    ElMessage.success(data.data.is_correct ? '回答正确。' : '已返回标准答案与解析。')
+    const feedback = (data as any).data ?? data
+    rememberRemedialSubmission(payload, feedback)
+    await refreshMistakeNotebook({ silent: true })
+    ElMessage.success(feedback.is_correct ? '回答正确，已同步练习记录。' : '已加入错题本，并返回标准答案与解析。')
     scheduleNextRemedialAutoAdvance()
   } catch {
     ElMessage.error('答案提交失败，暂不使用本地判分，请稍后重试。')
@@ -375,6 +428,10 @@ async function submitRemedialAnswer() {
 function goBack() {
   void router.push({ name: 'student-dashboard' })
 }
+
+onMounted(() => {
+  void refreshMistakeNotebook({ silent: true })
+})
 
 onUnmounted(() => {
   if (autoAdvanceTimer) {
@@ -401,7 +458,7 @@ onUnmounted(() => {
         <div class="action-row">
           <el-button @click="goBack">返回工作台</el-button>
           <el-button v-if="snapshot" @click="reloadSnapshot">刷新当前快照</el-button>
-          <el-button v-if="snapshot" type="primary" :loading="loadingMistakes" @click="refreshMistakeNotebook">刷新错题本</el-button>
+          <el-button v-if="snapshot" type="primary" :loading="loadingMistakes" @click="refreshMistakeNotebook()">刷新错题本</el-button>
           <el-button
             v-if="snapshot"
             plain

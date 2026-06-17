@@ -1,10 +1,30 @@
 """Unit tests for the student learning workspace backend helpers."""
 
+import asyncio
+
 from common.schemas.agent import ExerciseGenerationRequest
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
 from services.agent_service.app.services.learning_path import LearningPathService
 from services.evaluation_service.app.schemas.report import PracticeSubmission
 from services.evaluation_service.app.services.report_service import ReportService
+
+
+class FakeLLMClient:
+    """Deterministic LLM scoring stub for practice-submission tests."""
+
+    async def score_subjective(self, **_: object) -> dict[str, object]:
+        return {
+            "score": 70.0,
+            "comment": "要点基本覆盖",
+            "suggestion": "补充检查步骤",
+        }
+
+
+class FakePublisher:
+    """No-op publisher for tests that should not touch external queues."""
+
+    def publish(self, queue_name: str, message: dict[str, object]) -> None:
+        return None
 
 
 def test_generate_learning_path_contains_stages() -> None:
@@ -52,11 +72,11 @@ def test_generate_structured_exercises() -> None:
     assert "personalization" in response
 
 
-def test_practice_submission_returns_feedback(db_session, test_user) -> None:
+def test_practice_submission_returns_feedback(test_user) -> None:
     """Practice submissions should produce immediate evaluation feedback."""
 
-    service = ReportService(db_session)
-    feedback = service.evaluate_practice(
+    service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
+    feedback = asyncio.run(service.evaluate_practice(
         PracticeSubmission(
             user_id=test_user.id,
             exercise_id=100000 + test_user.id,
@@ -67,8 +87,33 @@ def test_practice_submission_returns_feedback(db_session, test_user) -> None:
             analysis="循环用于按照规则重复执行任务。",
             time_spent=12,
         )
-    )
+    ))
 
     assert feedback.is_correct is True
     assert feedback.score == 100
+    assert feedback.mastery_after_update is not None
+
+
+def test_subjective_practice_submission_provides_reference_answer(test_user) -> None:
+    """Short-answer practice submissions should satisfy the formal evaluation schema."""
+
+    service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
+    feedback = asyncio.run(
+        service.evaluate_practice(
+            PracticeSubmission(
+                user_id=test_user.id,
+                exercise_id=110000 + test_user.id,
+                knowledge_point="高级",
+                question_type="short_answer",
+                user_answer="先定位问题，再检查输入输出和边界条件。",
+                correct_answer="说明定位问题、复现实例、检查边界和验证修复。",
+                analysis="回答应覆盖定位、检查与验证步骤。",
+                exercise_content="请说明排查高级问题时最需要检查的两个步骤。",
+                time_spent=30,
+            )
+        )
+    )
+
+    assert feedback.is_correct is True
+    assert feedback.score == 70
     assert feedback.mastery_after_update is not None

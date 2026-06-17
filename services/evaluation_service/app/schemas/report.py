@@ -190,6 +190,9 @@ class PracticeSubmission(BaseModel):
     analysis: str
     time_spent: int = Field(ge=0, default=0)
     difficulty: DifficultyLevel = "intermediate"
+    reference_answer: str | None = None
+    max_score: float | None = Field(default=None, ge=0)
+    exercise_content: str | None = None
     chapter_id: str | None = None
     chapter_name: str | None = None
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from common.config import get_settings
@@ -19,6 +20,10 @@ class KnowledgeGraphRepository:
     def __init__(self) -> None:
         settings = get_settings()
         self.knowledge_base = KnowledgeBaseService()
+        self._driver = None
+        if not settings.neo4j_enabled:
+            logger.info("Neo4j disabled; using knowledge graph fallback.")
+            return
         try:
             from neo4j import GraphDatabase
 
@@ -26,8 +31,8 @@ class KnowledgeGraphRepository:
                 settings.neo4j_uri,
                 auth=(settings.neo4j_username, settings.neo4j_password),
             )
-        except ImportError:
-            self._driver = None
+        except Exception:
+            logger.warning("Neo4j driver unavailable; using knowledge graph fallback.")
 
     def close(self) -> None:
         """Close the underlying Neo4j driver."""
@@ -40,15 +45,25 @@ class KnowledgeGraphRepository:
         if article is None:
             matches = self.knowledge_base.search_by_keywords(knowledge_point, top_k=1)
             article = matches[0] if matches else None
+        if article is None:
+            blueprint = self._fallback_topic_blueprint(knowledge_point)
+            if blueprint is not None:
+                return blueprint["nodes"], blueprint["edges"]
 
         current_label = article.title if article is not None else knowledge_point
         nodes = [{"id": current_label, "label": current_label, "category": "current"}]
         edges: list[dict[str, Any]] = []
 
         if article is not None:
+            for prerequisite in self._fallback_prerequisites(article.title):
+                nodes.append({"id": prerequisite, "label": prerequisite, "category": "prerequisite"})
+                edges.append({"source": current_label, "target": prerequisite, "label": "DEPENDS_ON"})
+
             for concept in article.concepts[:3]:
                 concept_name = concept.split("：", 1)[0].strip("` ").strip()
                 if len(concept_name) < 2:
+                    continue
+                if any(node["id"] == concept_name for node in nodes):
                     continue
                 nodes.append({"id": concept_name, "label": concept_name, "category": "prerequisite"})
                 edges.append({"source": current_label, "target": concept_name, "label": "RELATED_CONCEPT"})
@@ -64,7 +79,48 @@ class KnowledgeGraphRepository:
         """Return a deterministic graph shell when Neo4j is unavailable."""
 
         nodes, edges = self._fallback_graph_seed(knowledge_point)
-        return {"nodes": list({node["id"]: node for node in nodes}.values()), "edges": edges}
+        return self._merge_with_topic_blueprint(
+            knowledge_point,
+            {"nodes": list({node["id"]: node for node in nodes}.values()), "edges": edges},
+        )
+
+    def _merge_with_topic_blueprint(
+        self,
+        knowledge_point: str,
+        graph: dict[str, list[dict[str, Any]]],
+        min_nodes: int = 8,
+        min_edges: int = 6,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Enrich sparse broad-topic graphs with curated course structure."""
+
+        blueprint = self._fallback_topic_blueprint(knowledge_point)
+        if blueprint is None:
+            return graph
+
+        if len(graph.get("nodes", [])) >= min_nodes and len(graph.get("edges", [])) >= min_edges:
+            return graph
+
+        nodes_by_id: dict[str, dict[str, Any]] = {}
+        for node in blueprint["nodes"] + graph.get("nodes", []):
+            node_id = node.get("id")
+            if node_id:
+                nodes_by_id[str(node_id)] = node
+
+        seen_edges: set[tuple[str, str, str]] = set()
+        merged_edges: list[dict[str, Any]] = []
+        for edge in blueprint["edges"] + graph.get("edges", []):
+            source = edge.get("source")
+            target = edge.get("target")
+            label = edge.get("label", "")
+            if not source or not target:
+                continue
+            signature = (str(source), str(target), str(label))
+            if signature in seen_edges:
+                continue
+            seen_edges.add(signature)
+            merged_edges.append(edge)
+
+        return {"nodes": list(nodes_by_id.values()), "edges": merged_edges}
 
     def _fallback_dependency_paths(self, knowledge_point: str) -> list[dict[str, Any]]:
         """Return deterministic dependency paths from curated knowledge content."""
@@ -74,15 +130,104 @@ class KnowledgeGraphRepository:
             matches = self.knowledge_base.search_by_keywords(knowledge_point, top_k=1)
             article = matches[0] if matches else None
         if article is None:
-            return []
+            blueprint = self._fallback_topic_blueprint(knowledge_point)
+            if blueprint is None:
+                return []
+            return blueprint["dependencies"]
 
         paths: list[dict[str, Any]] = []
+        for prerequisite in self._fallback_prerequisites(article.title):
+            paths.append({"path": [prerequisite, article.title]})
+
         for concept in article.concepts[:3]:
             concept_name = concept.split("：", 1)[0].strip("` ").strip()
             if len(concept_name) < 2:
                 continue
+            if any(item["path"][0] == concept_name for item in paths):
+                continue
             paths.append({"path": [concept_name, article.title]})
         return paths
+
+    def _fallback_topic_blueprint(self, knowledge_point: str) -> dict[str, list[dict[str, Any]]] | None:
+        """Return a richer course-level graph for broad topics."""
+
+        normalized = re.sub(r"\s+", "", knowledge_point.lower())
+        aliases = {
+            "高数",
+            "高等数学",
+            "大学数学",
+            "微积分",
+            "calculus",
+            "advancedmath",
+            "highermath",
+        }
+        if normalized not in aliases:
+            return None
+
+        current_id = knowledge_point.strip() or "高等数学"
+        nodes: list[dict[str, Any]] = [
+            {"id": current_id, "label": current_id, "category": "current"},
+        ]
+        edges: list[dict[str, Any]] = []
+
+        prerequisites = ["函数与图像", "三角函数", "数列与极限直觉", "解析几何"]
+        core_modules = ["极限与连续", "导数与微分", "微分中值定理", "不定积分", "定积分及应用", "无穷级数"]
+        advanced_modules = ["多元函数微分", "重积分", "微分方程", "线性代数衔接", "概率统计衔接"]
+        resource_nodes = ["微积分公式与例题", "典型错题复盘", "综合应用训练"]
+
+        for item in prerequisites:
+            nodes.append({"id": item, "label": item, "category": "prerequisite"})
+            edges.append({"source": current_id, "target": item, "label": "前置基础"})
+
+        previous = current_id
+        for item in core_modules:
+            nodes.append({"id": item, "label": item, "category": "recommended"})
+            edges.append({"source": previous, "target": item, "label": "核心顺序"})
+            previous = item
+
+        for item in advanced_modules:
+            nodes.append({"id": item, "label": item, "category": "recommended"})
+            edges.append({"source": "定积分及应用", "target": item, "label": "进阶拓展"})
+
+        for item in resource_nodes:
+            nodes.append({"id": item, "label": item, "category": "resource"})
+            edges.append({"source": current_id, "target": item, "label": "学习资源"})
+
+        dependencies = [
+            {"path": ["函数与图像", "极限与连续", "导数与微分"]},
+            {"path": ["三角函数", "极限与连续", "微分中值定理"]},
+            {"path": ["导数与微分", "不定积分", "定积分及应用"]},
+            {"path": ["定积分及应用", "多元函数微分", "重积分"]},
+            {"path": ["导数与微分", "微分方程"]},
+            {"path": ["无穷级数", "概率统计衔接"]},
+        ]
+        return {"nodes": nodes, "edges": edges, "dependencies": dependencies}
+
+    def _fallback_topic_resources(self, knowledge_point: str) -> list[dict[str, Any]]:
+        """Return resources for broad topic blueprints."""
+
+        blueprint = self._fallback_topic_blueprint(knowledge_point)
+        if blueprint is None:
+            return []
+
+        return [
+            {"name": "高等数学知识路线图", "type": "learning-path", "uri": "/student/learning-path"},
+            {"name": "极限、导数、积分重点公式表", "type": "notes", "uri": "/student/courseware"},
+            {"name": "高数典型错题与变式训练", "type": "exercise", "uri": "/student/mistakes"},
+            {"name": "微积分综合应用题训练", "type": "practice", "uri": "/student/exercise"},
+        ]
+
+    def _fallback_prerequisites(self, title: str) -> list[str]:
+        """Return curated prerequisite labels when Neo4j is unavailable."""
+
+        prerequisites_by_title = {
+            "Python 循环": ["顺序结构", "条件判断"],
+            "Python 条件判断": ["布尔表达式", "比较运算"],
+            "递归": ["函数调用", "条件判断"],
+            "二分查找": ["顺序结构", "条件判断", "循环"],
+            "动态规划": ["递归", "数组", "状态转移"],
+        }
+        return prerequisites_by_title.get(title, [])
 
     def _fallback_related_resources(self, knowledge_point: str) -> list[dict[str, Any]]:
         """Return related resources from generated resources and curated links."""
@@ -118,6 +263,8 @@ class KnowledgeGraphRepository:
                         "uri": item.get("url") or "",
                     }
                 )
+        else:
+            resources.extend(self._fallback_topic_resources(knowledge_point))
         return resources
 
     def _fallback_recommendations(self, knowledge_point: str) -> list[dict[str, Any]]:
@@ -190,15 +337,15 @@ class KnowledgeGraphRepository:
         RETURN resource.name AS name, resource.type AS type, resource.uri AS uri
         """
         if self._driver is None:
-            return self._fallback_related_resources()
+            return self._fallback_related_resources(knowledge_point)
         try:
             with self._driver.session() as session:
                 result = session.run(query, knowledge_point=knowledge_point)
                 resources = [record.data() for record in result]
-                return resources or self._fallback_related_resources()
+                return resources or self._fallback_related_resources(knowledge_point)
         except Exception:
             logger.exception("Knowledge graph resource query failed, using fallback resources.")
-            return self._fallback_related_resources()
+            return self._fallback_related_resources(knowledge_point)
 
     def recommend_next_points(self, knowledge_point: str) -> list[dict[str, Any]]:
         """Recommend next knowledge points via `RECOMMENDS` links."""
@@ -209,15 +356,15 @@ class KnowledgeGraphRepository:
         ORDER BY next.importance DESC, next.difficulty ASC
         """
         if self._driver is None:
-            return self._fallback_recommendations()
+            return self._fallback_recommendations(knowledge_point)
         try:
             with self._driver.session() as session:
                 result = session.run(query, knowledge_point=knowledge_point)
                 recommendations = [record.data() for record in result]
-                return recommendations or self._fallback_recommendations()
+                return recommendations or self._fallback_recommendations(knowledge_point)
         except Exception:
             logger.exception("Knowledge graph recommendation query failed, using fallback recommendations.")
-            return self._fallback_recommendations()
+            return self._fallback_recommendations(knowledge_point)
 
     def get_visualization_graph(self, knowledge_point: str, max_depth: int = 2) -> dict[str, list[dict[str, Any]]]:
         """Return node-edge graph data for frontend visualization."""
@@ -255,7 +402,10 @@ class KnowledgeGraphRepository:
                     edges.append({"source": knowledge_point, "target": next_name, "label": "RECOMMENDS"})
 
                 unique_nodes = list({node["id"]: node for node in nodes}.values())
-                return {"nodes": unique_nodes, "edges": edges}
+                return self._merge_with_topic_blueprint(
+                    knowledge_point,
+                    {"nodes": unique_nodes, "edges": edges},
+                )
         except Exception:
             logger.exception("Knowledge graph visualization query failed, using fallback graph.")
             return self._fallback_visualization_graph(knowledge_point)

@@ -26,7 +26,54 @@ let network: Network | null = null
 const categoryColors: Record<string, string> = {
   current: '#00c8aa', prerequisite: '#4da3e0', recommended: '#a78bfa', resource: '#7b90a8',
 }
+const categoryLabels: Record<string, string> = {
+  current: '当前主题',
+  prerequisite: '前置基础',
+  recommended: '后续模块',
+  resource: '关联资源',
+}
 const hasKnowledgePoint = computed(() => Boolean(knowledgePoint.value.trim()))
+const graphNodes = computed(() => graphVisualization.value?.nodes ?? [])
+const graphEdges = computed(() => graphVisualization.value?.edges ?? [])
+const categoryStats = computed(() => {
+  const stats: Record<string, number> = {}
+  for (const node of graphNodes.value as any[]) {
+    stats[node.category] = (stats[node.category] ?? 0) + 1
+  }
+  return stats
+})
+const groupedNodes = computed(() => {
+  const groups: Record<string, any[]> = {
+    prerequisite: [],
+    recommended: [],
+    resource: [],
+  }
+  for (const node of graphNodes.value as any[]) {
+    if (groups[node.category]) {
+      groups[node.category].push(node)
+    }
+  }
+  return groups
+})
+const coreSequence = computed(() => {
+  const edges = graphEdges.value as any[]
+  const nodesById = new Map((graphNodes.value as any[]).map((node: any) => [node.id, node]))
+  return edges
+    .filter((edge: any) => ['核心顺序', 'RECOMMENDS'].includes(edge.label))
+    .map((edge: any) => nodesById.get(edge.target))
+    .filter(Boolean)
+})
+const graphSummary = computed(() => {
+  if (!graphVisualization.value) {
+    return []
+  }
+  return [
+    { label: '节点', value: graphNodes.value.length, color: 'var(--accent)' },
+    { label: '关系', value: graphEdges.value.length, color: 'var(--accent)' },
+    { label: '前置基础', value: categoryStats.value.prerequisite ?? 0, color: '#4da3e0' },
+    { label: '后续模块', value: categoryStats.value.recommended ?? 0, color: '#a78bfa' },
+  ]
+})
 
 onMounted(() => {
   void loadExistingKnowledgePoint()
@@ -106,10 +153,43 @@ function renderGraph() {
   if (!canvasRef.value || !graphVisualization.value) return
   const nodes = graphVisualization.value.nodes ?? []
   const edges = graphVisualization.value.edges ?? []
-  const nodeDataset = new DataSet((nodes as any[]).map((n: any) => ({ id: n.id, label: n.label, color: { background: categoryColors[n.category] ?? '#7b90a8', border: 'transparent' }, font: { color: '#e2ebf4', size: 14 } })))
-  const edgeDataset = new (DataSet as any)((edges as any[]).map((e: any) => ({ from: e.source, to: e.target, arrows: 'to', color: { color: 'rgba(80,160,190,0.3)' } })))
+  const nodeDataset = new DataSet((nodes as any[]).map((n: any) => ({
+    id: n.id,
+    label: n.label,
+    shape: n.category === 'current' ? 'dot' : 'box',
+    size: n.category === 'current' ? 28 : 18,
+    margin: 10,
+    color: {
+      background: categoryColors[n.category] ?? '#7b90a8',
+      border: n.category === 'current' ? '#a7fff3' : 'rgba(226,235,244,0.25)',
+      highlight: { background: categoryColors[n.category] ?? '#7b90a8', border: '#ffffff' },
+    },
+    font: { color: '#e2ebf4', size: n.category === 'current' ? 16 : 13, face: 'Inter, sans-serif' },
+  })))
+  const edgeDataset = new (DataSet as any)((edges as any[]).map((e: any) => ({
+    from: e.source,
+    to: e.target,
+    label: e.label,
+    arrows: 'to',
+    color: { color: 'rgba(80,160,190,0.38)', highlight: '#00c8aa' },
+    font: { color: '#8fa6bb', size: 10, strokeWidth: 0 },
+    smooth: { type: 'dynamic' },
+  })))
   if (network) network.destroy()
-  network = new Network(canvasRef.value, { nodes: nodeDataset, edges: edgeDataset } as any, { physics: { solver: 'forceAtlas2Based', forceAtlas2Based: { gravitationalConstant: -40, centralGravity: 0.005 } }, interaction: { hover: true, tooltipDelay: 200 } } as any)
+  network = new Network(canvasRef.value, { nodes: nodeDataset, edges: edgeDataset } as any, {
+    layout: { improvedLayout: true },
+    physics: {
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: {
+        gravitationalConstant: -95,
+        centralGravity: 0.02,
+        springLength: 165,
+        springConstant: 0.06,
+      },
+      stabilization: { iterations: 220 },
+    },
+    interaction: { hover: true, tooltipDelay: 200, navigationButtons: true, keyboard: true },
+  } as any)
 }
 </script>
 
@@ -128,8 +208,51 @@ function renderGraph() {
       <button :disabled="loading" @click="queryGraph" style="padding:10px 20px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:#fff;cursor:pointer;font-weight:600;font-family:inherit">{{ loading ? '查询中...' : '查询图谱' }}</button>
     </div>
     <div v-if="graphError" style="padding:16px;border-radius:12px;background:color-mix(in srgb,var(--red) 8%,transparent);color:var(--red);margin-bottom:12px;font-size:14px">{{ graphError }}</div>
-    <div ref="canvasRef" style="width:100%;min-height:450px;border-radius:18px;background:var(--panel);border:1px solid var(--line)">
-      <div v-if="!graphVisualization && !loading" style="display:flex;align-items:center;justify-content:center;height:450px;color:var(--muted)">{{ hasKnowledgePoint ? '点击“查询图谱”查看知识依赖关系' : '先生成学习路径或课件，系统会自动带入知识点' }}</div>
+    <div v-if="graphVisualization" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:14px">
+      <div v-for="item in graphSummary" :key="item.label" style="padding:14px 16px;border-radius:12px;background:var(--panel);border:1px solid var(--line)">
+        <div style="font-size:12px;color:var(--muted)">{{ item.label }}</div>
+        <strong :style="{ fontSize:'24px', color:item.color }">{{ item.value }}</strong>
+      </div>
+    </div>
+    <div v-if="graphVisualization" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <span v-for="(label,key) in categoryLabels" :key="key" style="display:inline-flex;align-items:center;gap:7px;padding:6px 10px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:12px;color:var(--muted)">
+        <i :style="{ width:'9px', height:'9px', borderRadius:'999px', background:categoryColors[String(key)] }"></i>
+        {{ label }}
+      </span>
+    </div>
+    <div class="knowledge-graph-layout" :class="{ 'knowledge-graph-layout--ready': graphVisualization }">
+      <div ref="canvasRef" style="width:100%;min-height:560px;border-radius:16px;background:var(--panel);border:1px solid var(--line)">
+        <div v-if="!graphVisualization && !loading" style="display:flex;align-items:center;justify-content:center;height:450px;color:var(--muted)">{{ hasKnowledgePoint ? '点击“查询图谱”查看知识依赖关系' : '先生成学习路径或课件，系统会自动带入知识点' }}</div>
+      </div>
+      <div v-if="graphVisualization" style="padding:16px;border-radius:16px;background:var(--panel);border:1px solid var(--line);min-height:560px;display:flex;flex-direction:column;gap:18px">
+        <section>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">核心学习顺序</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div v-for="(node,index) in coreSequence" :key="node.id" style="display:flex;align-items:center;gap:9px;font-size:13px;color:var(--text)">
+              <span style="width:22px;height:22px;border-radius:999px;background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">{{ index + 1 }}</span>
+              <span>{{ node.label }}</span>
+            </div>
+          </div>
+        </section>
+        <section>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">前置基础</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <span v-for="node in groupedNodes.prerequisite" :key="node.id" style="padding:5px 9px;border-radius:999px;background:color-mix(in srgb,#4da3e0 12%,transparent);color:#8dccf5;font-size:12px">{{ node.label }}</span>
+          </div>
+        </section>
+        <section>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">进阶拓展</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            <span v-for="node in groupedNodes.recommended.slice(coreSequence.length)" :key="node.id" style="padding:5px 9px;border-radius:999px;background:color-mix(in srgb,#a78bfa 12%,transparent);color:#c9bbff;font-size:12px">{{ node.label }}</span>
+          </div>
+        </section>
+        <section v-if="groupedNodes.resource.length">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">图谱资源</div>
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <span v-for="node in groupedNodes.resource" :key="node.id" style="padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:12px;color:var(--text)">{{ node.label }}</span>
+          </div>
+        </section>
+      </div>
     </div>
     <div v-if="dependencyPaths.length" style="margin-top:16px;padding:16px 20px;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px">依赖路径</div>
@@ -146,3 +269,22 @@ function renderGraph() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.knowledge-graph-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.knowledge-graph-layout--ready {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+
+@media (max-width: 980px) {
+  .knowledge-graph-layout--ready {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>
