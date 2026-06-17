@@ -391,6 +391,14 @@ export type KnowledgeBaseArticle = {
   mistakes: string[]
   applications: string[]
   checks: string[]
+  external_resources: Array<{
+    title: string
+    provider: string
+    url: string
+    kind: string
+    license: string
+    notes: string
+  }>
 }
 
 export type KnowledgeBaseListResponse = {

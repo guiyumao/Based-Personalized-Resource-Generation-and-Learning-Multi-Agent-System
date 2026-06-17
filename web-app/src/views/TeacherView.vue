@@ -110,6 +110,10 @@ const reviewForm = reactive<HomeworkReviewPayload>({
 })
 const reviewSubmissionId = ref(0)
 const scopeKnowledgeText = ref('')
+const selectedScopeKnowledgePoints = ref<string[]>([])
+const selectedScopeDirectionTemplate = ref('')
+const selectedScopeGoalTemplate = ref('')
+const scopeTeacherNote = ref('')
 const scopeForm = reactive<TeachingScopeCreatePayload>({
   class_id: 0,
   student_user_id: null,
@@ -135,6 +139,20 @@ const loading = reactive({
 
 const assignResult = ref<Record<string, unknown> | null>(null)
 const reviewResult = ref<Record<string, unknown> | null>(null)
+
+const scopeDirectionOptions = [
+  '先补基础概念，再做针对性练习',
+  '围绕近期错题做变式巩固',
+  '先梳理解题步骤，再强化迁移应用',
+  '聚焦薄弱知识点，控制节奏逐步提升',
+]
+
+const scopeGoalOptions = [
+  '先完成本范围核心概念理解与基础作答',
+  '本周将该范围正确率提升到 80% 以上',
+  '先减少重复错题，再推进综合应用',
+  '完成讲解、练习、复盘三个环节闭环',
+]
 
 const teacherActionGuides = [
   {
@@ -183,6 +201,91 @@ const classProgressCards = computed(() => {
     },
   ]
 })
+
+const scopeStudentOptions = computed(() =>
+  insights.value.map((item) => ({
+    label: `${item.student_name} (#${item.user_id})`,
+    value: item.user_id,
+  })),
+)
+
+const scopeKnowledgeOptions = computed(() => {
+  const pool = new Set<string>()
+  selectedKnowledgeArticle.value?.concepts.forEach((item) => pool.add(item))
+  knowledgeArticles.value.forEach((article) => {
+    pool.add(article.title)
+    article.concepts.forEach((item) => pool.add(item))
+  })
+  insights.value.forEach((item) => {
+    if (item.recent_focus && !item.recent_focus.includes('暂无')) {
+      pool.add(item.recent_focus)
+    }
+  })
+  teachingAnalytics.value?.weak_knowledge_points.forEach((item) => pool.add(item.knowledge_point))
+  return Array.from(pool).filter(Boolean)
+})
+
+function normalizeScopeKnowledgePoints(raw: string): string[] {
+  return raw
+    .split(/[,，、\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function syncScopeKnowledgePoints(points: string[]) {
+  const uniquePoints = Array.from(new Set(points.map((item) => item.trim()).filter(Boolean)))
+  selectedScopeKnowledgePoints.value = uniquePoints
+  scopeKnowledgeText.value = uniquePoints.join('、')
+}
+
+function buildScopeCoursewareTitle() {
+  const knowledgeLabel = selectedScopeKnowledgePoints.value.slice(0, 3).join('、') || '学习范围'
+  const audienceLabel = scopeForm.student_user_id ? `学生 ${scopeForm.student_user_id}` : '全班'
+  return `${knowledgeLabel} ${audienceLabel} 学习课件`
+}
+
+function buildScopeCoursewareContent() {
+  const knowledgeLabel = selectedScopeKnowledgePoints.value.join('、') || '待定知识点'
+  const directionLabel = scopeForm.learning_direction || '按选定范围组织概念讲解与练习'
+  const goalLabel = scopeForm.teaching_goal || '帮助学生完成本轮学习任务'
+  const noteLabel = scopeTeacherNote.value.trim()
+  return [
+    `适用对象：${scopeForm.student_user_id ? `学生 ${scopeForm.student_user_id}` : '全班'}`,
+    `学习范围：${knowledgeLabel}`,
+    `学习方向：${directionLabel}`,
+    `教学目标：${goalLabel}`,
+    noteLabel ? `教师补充：${noteLabel}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function refreshScopeDraft(force = false) {
+  if (!selectedScopeKnowledgePoints.value.length) {
+    return
+  }
+  if (force || !scopeForm.courseware_title.trim()) {
+    scopeForm.courseware_title = buildScopeCoursewareTitle()
+  }
+  scopeForm.courseware_content = buildScopeCoursewareContent()
+}
+
+function handleScopeKnowledgeChange(values: string[]) {
+  syncScopeKnowledgePoints(values)
+  refreshScopeDraft()
+}
+
+function applyScopeDirectionTemplate(value: string) {
+  selectedScopeDirectionTemplate.value = value
+  scopeForm.learning_direction = value
+  refreshScopeDraft()
+}
+
+function applyScopeGoalTemplate(value: string) {
+  selectedScopeGoalTemplate.value = value
+  scopeForm.teaching_goal = value
+  refreshScopeDraft()
+}
 async function fetchClasses() {
   loading.classes = true
   try {
@@ -383,6 +486,9 @@ async function confirmKnowledgeAudit() {
     return
   }
   scopeKnowledgeText.value = knowledgeAuditDraft.knowledge_points
+  syncScopeKnowledgePoints(normalizeScopeKnowledgePoints(knowledgeAuditDraft.knowledge_points))
+  selectedScopeDirectionTemplate.value = ''
+  selectedScopeGoalTemplate.value = ''
   scopeForm.learning_direction = knowledgeAuditDraft.learning_direction
   scopeForm.teaching_goal = knowledgeAuditDraft.teaching_goal
   scopeForm.courseware_title = knowledgeAuditDraft.courseware_title
@@ -412,6 +518,9 @@ function openClassWorkspace(classId: number) {
   selectedClassId.value = classId
   homeworkForm.class_id = classId
   scopeForm.class_id = classId
+  if (!scopeForm.student_user_id) {
+    refreshScopeDraft(true)
+  }
   void fetchProgress(classId)
   void fetchInsights(classId)
   void fetchTeachingScopes(classId)
@@ -419,10 +528,9 @@ function openClassWorkspace(classId: number) {
 }
 
 async function createTeachingScope() {
-  const knowledgePoints = scopeKnowledgeText.value
-    .split(/[,，、\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
+  const knowledgePoints = selectedScopeKnowledgePoints.value.length
+    ? [...selectedScopeKnowledgePoints.value]
+    : normalizeScopeKnowledgePoints(scopeKnowledgeText.value)
   if (
     !scopeForm.class_id ||
     !knowledgePoints.length ||
@@ -741,36 +849,90 @@ onMounted(() => {
           </div>
         </section>
 
-        <section v-if="isTeacherPage('scopes')" class="workspace-panel wide">
+<section v-if="isTeacherPage('scopes')" class="workspace-panel wide">
           <div class="panel-heading">
             <div>
               <div class="panel-kicker">学习范围与方向</div>
               <h2>划定学生学习范围并投放课件</h2>
             </div>
           </div>
+          <div class="empty-state teacher-empty-guide" style="margin-bottom:16px">
+            <strong>以选择为主</strong>
+            <span>先选择班级、学生、知识点、学习方向和教学目标，系统会自动生成课件标题与摘要，减少老师手动填写。</span>
+          </div>
           <el-form :model="scopeForm" label-position="top">
             <div class="form-two-columns">
-              <el-form-item label="班级 ID">
-                <el-input-number v-model="scopeForm.class_id" :min="1" />
+              <el-form-item label="班级">
+                <el-select v-model="scopeForm.class_id" placeholder="请选择班级" style="width:100%">
+                  <el-option v-for="item in classes" :key="item.id" :label="`${item.name} (#${item.id})`" :value="item.id" />
+                </el-select>
               </el-form-item>
-              <el-form-item label="指定学生 ID（可选）">
-                <el-input-number v-model="scopeForm.student_user_id" :min="1" />
+              <el-form-item label="投放对象">
+                <el-select v-model="scopeForm.student_user_id" clearable placeholder="默认全班，也可指定学生" style="width:100%">
+                  <el-option label="全班" :value="null" />
+                  <el-option
+                    v-for="item in scopeStudentOptions"
+                    :key="item.value"
+                    :label="item.label"
+                    :value="item.value"
+                  />
+                </el-select>
               </el-form-item>
             </div>
-            <el-form-item label="学习知识点范围">
-              <el-input v-model="scopeKnowledgeText" placeholder="用逗号、顿号或换行分隔多个知识点" type="textarea" :rows="3" />
+            <el-form-item label="学习知识点">
+              <el-select
+                v-model="selectedScopeKnowledgePoints"
+                multiple
+                filterable
+                allow-create
+                default-first-option
+                placeholder="请选择或输入知识点"
+                style="width:100%"
+                @change="handleScopeKnowledgeChange"
+              >
+                <el-option v-for="item in scopeKnowledgeOptions" :key="item" :label="item" :value="item" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="知识点预览">
+              <el-input v-model="scopeKnowledgeText" readonly placeholder="所选知识点会自动汇总到这里" />
             </el-form-item>
             <el-form-item label="学习方向">
-              <el-input v-model="scopeForm.learning_direction" placeholder="例如：先补基础概念，再做错题变式与迁移应用" />
+              <el-select
+                v-model="selectedScopeDirectionTemplate"
+                clearable
+                placeholder="优先选择一个方向模板"
+                style="width:100%;margin-bottom:10px"
+                @change="applyScopeDirectionTemplate"
+              >
+                <el-option v-for="item in scopeDirectionOptions" :key="item" :label="item" :value="item" />
+              </el-select>
+              <el-input v-model="scopeForm.learning_direction" placeholder="可在模板基础上微调" @input="refreshScopeDraft()" />
             </el-form-item>
             <el-form-item label="教学目标">
-              <el-input v-model="scopeForm.teaching_goal" placeholder="例如：本周将该范围正确率提升到 80% 以上" />
+              <el-select
+                v-model="selectedScopeGoalTemplate"
+                clearable
+                placeholder="优先选择一个目标模板"
+                style="width:100%;margin-bottom:10px"
+                @change="applyScopeGoalTemplate"
+              >
+                <el-option v-for="item in scopeGoalOptions" :key="item" :label="item" :value="item" />
+              </el-select>
+              <el-input v-model="scopeForm.teaching_goal" placeholder="可在模板基础上微调" @input="refreshScopeDraft()" />
+            </el-form-item>
+            <el-form-item label="教师补充（可选）">
+              <el-input v-model="scopeTeacherNote" placeholder="例如：先讲定义，再讲典型错题" @input="refreshScopeDraft()" />
             </el-form-item>
             <el-form-item label="课件标题">
-              <el-input v-model="scopeForm.courseware_title" placeholder="请输入课件标题" />
+              <el-input v-model="scopeForm.courseware_title" placeholder="系统会自动生成，也可手动调整" />
             </el-form-item>
             <el-form-item label="课件内容">
-              <el-input v-model="scopeForm.courseware_content" type="textarea" :rows="5" placeholder="请输入要投放给学生的课件摘要、重点或学习材料" />
+              <el-input
+                v-model="scopeForm.courseware_content"
+                type="textarea"
+                :rows="5"
+                placeholder="系统会根据上面的选择自动生成摘要"
+              />
             </el-form-item>
           </el-form>
           <div class="action-row">

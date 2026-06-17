@@ -510,10 +510,9 @@ class ReportService:
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
         chapter_id = self._latest_chapter_id(traces)
-        if chapter_id is None:
+        chapter_traces = self._select_latest_stage_traces(traces, chapter_id)
+        if not chapter_traces:
             return self._empty_detail(user_id, "stage", "阶段报告")
-
-        chapter_traces = [item for item in traces if item.chapter_id == chapter_id]
         evidence = self._build_evidence(chapter_traces)
         statuses = self._build_stage_statuses(chapter_traces, profile)
         strengths = [f"本章节共完成 {len(chapter_traces)} 次答题，正确率 {evidence.accuracy}%"]
@@ -593,6 +592,26 @@ class ReportService:
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
         wrong_traces = self._filter_active_mistake_traces(traces, profile)
+        items = [
+            MistakeItem(
+                user_id=user_id,
+                exercise_id=item.exercise_id,
+                knowledge_point=item.knowledge_point_ids[0] if item.knowledge_point_ids else "unknown",
+                question_type=compatibility_question_type(item.question_type),
+                user_answer=item.user_answer,
+                correct_answer=item.correct_answer,
+                analysis=item.explanation,
+                suggested_action=item.suggestion or "回看解析后再做同类题。",
+            )
+            for item in wrong_traces
+        ]
+        return MistakeNotebook(user_id=user_id, mistake_count=len(items), items=items)
+
+    async def get_teacher_mistake_notebook(self, user_id: int) -> MistakeNotebook:
+        """Return all persisted mistakes for teacher review."""
+
+        traces, _, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        wrong_traces = [item for item in traces if not item.is_correct]
         items = [
             MistakeItem(
                 user_id=user_id,
@@ -1368,6 +1387,31 @@ class ReportService:
             if item.chapter_id:
                 return item.chapter_id
         return None
+
+    def _select_latest_stage_traces(
+        self,
+        traces: list[AnswerTrace],
+        chapter_id: str | None,
+    ) -> list[AnswerTrace]:
+        """Select a stage slice from real traces, even for legacy records without chapter metadata."""
+
+        if chapter_id is not None:
+            chapter_traces = [item for item in traces if item.chapter_id == chapter_id]
+            if chapter_traces:
+                return chapter_traces
+
+        if not traces:
+            return []
+
+        latest_knowledge_point = next(
+            (item.knowledge_point_ids[0] for item in reversed(traces) if item.knowledge_point_ids),
+            None,
+        )
+        if latest_knowledge_point is None:
+            return traces[-5:]
+
+        knowledge_traces = [item for item in traces if latest_knowledge_point in item.knowledge_point_ids]
+        return knowledge_traces or traces[-5:]
 
     def _calculate_accuracy(self, traces: list[AnswerTrace]) -> float:
         if not traces:

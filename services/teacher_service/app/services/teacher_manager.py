@@ -137,7 +137,7 @@ class TeacherManager:
             "comprehensive": (
                 f"{self._settings.evaluation_service_url}/evaluation/reports/comprehensive/{user_id}/detail"
             ),
-            "mistakes": f"{self._settings.evaluation_service_url}/evaluation/mistakes/{user_id}/detail",
+            "mistakes": f"{self._settings.evaluation_service_url}/evaluation/mistakes/{user_id}/teacher-detail",
         }
 
         try:

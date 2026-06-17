@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from services.agent_service.app.services.knowledge_resource_catalog import resources_for_article
 
 @dataclass(frozen=True)
 class KnowledgeArticle:
@@ -497,6 +498,17 @@ class KnowledgeBaseService:
             "mistakes": article.mistakes,
             "applications": article.applications,
             "checks": article.checks,
+            "external_resources": [
+                {
+                    "title": item.title,
+                    "provider": item.provider,
+                    "url": item.url,
+                    "kind": item.kind,
+                    "license": item.license,
+                    "notes": item.notes,
+                }
+                for item in resources_for_article(article.title)
+            ],
         }
 
     def search_by_keywords(self, question: str, top_k: int = 3) -> list[KnowledgeArticle]:

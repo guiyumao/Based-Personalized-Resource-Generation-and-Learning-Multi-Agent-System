@@ -259,3 +259,80 @@ def test_stage_and_monthly_reports_are_generated_from_real_history(test_user) ->
         assert llm.monthly_calls
 
     asyncio.run(run())
+
+
+def test_stage_report_detail_falls_back_to_latest_real_knowledge_point_without_chapter_metadata(test_user) -> None:
+    """Legacy answer records without chapter metadata should still produce fact-based stage detail."""
+
+    async def run() -> None:
+        service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
+
+        await service.evaluate_practice(
+            PracticeSubmission(
+                user_id=test_user.id,
+                exercise_id=200000 + test_user.id,
+                knowledge_point=f"tree-{test_user.id}",
+                question_type="choice",
+                user_answer="A",
+                correct_answer="B",
+                analysis="检查树结构遍历顺序。",
+                time_spent=20,
+                difficulty="basic",
+            )
+        )
+        await service.evaluate_practice(
+            PracticeSubmission(
+                user_id=test_user.id,
+                exercise_id=200100 + test_user.id,
+                knowledge_point=f"tree-{test_user.id}",
+                question_type="blank",
+                user_answer="root,left",
+                correct_answer="root,left,right",
+                analysis="需要补全先序遍历输出。",
+                time_spent=22,
+                difficulty="basic",
+            )
+        )
+
+        detail = await service.generate_stage_report_detail(test_user.id)
+
+        assert detail.report_type == "stage"
+        assert detail.evidence.total_answers == 2
+        assert detail.evidence.mistake_count == 2
+        assert detail.summary != "暂无真实答题记录，系统无法生成分析报告。"
+        assert any("tree-" in item for item in detail.next_actions)
+
+    asyncio.run(run())
+
+
+def test_teacher_mistake_notebook_ignores_student_side_clear_visibility(test_user) -> None:
+    """Teacher-side mistake detail should still reflect persisted mistakes after learner clears the notebook."""
+
+    async def run() -> None:
+        service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
+
+        await service.evaluate_practice(
+            PracticeSubmission(
+                user_id=test_user.id,
+                exercise_id=200200 + test_user.id,
+                knowledge_point=f"graph-{test_user.id}",
+                question_type="choice",
+                user_answer="A",
+                correct_answer="B",
+                analysis="需要重新检查边的方向。",
+                time_spent=19,
+                difficulty="basic",
+            )
+        )
+
+        learner_notebook = await service.get_mistake_notebook(test_user.id)
+        await service.clear_mistake_notebook(test_user.id)
+        learner_notebook_after_clear = await service.get_mistake_notebook(test_user.id)
+        teacher_notebook = await service.get_teacher_mistake_notebook(test_user.id)
+
+        assert learner_notebook.mistake_count == 1
+        assert learner_notebook_after_clear.mistake_count == 0
+        assert teacher_notebook.mistake_count == 1
+        assert teacher_notebook.items[0].knowledge_point == f"graph-{test_user.id}"
+
+    asyncio.run(run())

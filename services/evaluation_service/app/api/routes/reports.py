@@ -185,6 +185,18 @@ async def get_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebook]:
     return ApiResponse(data=result, message="Mistake notebook fetched successfully.")
 
 
+@router.get("/mistakes/{user_id}/teacher-detail", response_model=ApiResponse[MistakeNotebook])
+async def get_teacher_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebook]:
+    """Return all real mistakes for teacher-side detail views."""
+
+    service = ReportService()
+    try:
+        result = await service.get_teacher_mistake_notebook(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Teacher mistake notebook fetched successfully.")
+
+
 @router.delete("/mistakes/{user_id}", response_model=ApiResponse[MistakeNotebookClearResult])
 async def clear_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebookClearResult]:
     """Clear the learner's visible mistake notebook entries."""
