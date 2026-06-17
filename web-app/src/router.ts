@@ -66,7 +66,7 @@ const router = createRouter({
         {
           path: 'knowledge-base',
           name: 'student-knowledge-base',
-          component: () => import('./views/student/KnowledgeBaseView.vue'),
+          redirect: '/student/resources',
         },
         {
           path: 'exercise',

@@ -415,6 +415,35 @@ export type KnowledgeBaseArticle = {
   }>
 }
 
+export type ManagedResourceItem = {
+  id: number
+  title: string
+  type: 'courseware' | 'exercise' | 'notes' | 'exam'
+  format: string
+  status: 'draft' | 'ready' | 'archived'
+  knowledge_point: string
+  owner_user_id?: number | null
+  source_type: 'generated' | 'external_import'
+  provider?: string | null
+  source_kind?: string | null
+  external_url?: string | null
+  download_url?: string | null
+  notes?: string | null
+  file_name?: string | null
+  is_downloadable: boolean
+}
+
+export type ExternalResourceImportPayload = {
+  title: string
+  provider: string
+  url: string
+  kind: string
+  license: string
+  notes: string
+  knowledge_point: string
+  owner_user_id?: number | null
+}
+
 export type KnowledgeBaseListResponse = {
   subjects: string[]
   items: KnowledgeBaseArticle[]
