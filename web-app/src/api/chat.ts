@@ -1,4 +1,4 @@
-"""Frontend API for continuous chat with large-small model collaboration."""
+/** Frontend API for continuous chat with large-small model collaboration. */
 
 import axios from 'axios'
 import type { AxiosResponse } from 'axios'

@@ -213,6 +213,8 @@ export type QARequestPayload = {
   subject: string
   grade: string
   question: string
+  session_id?: number | null
+  session_title?: string
   student_answer?: string
   wrong_answer?: string
   current_knowledge_points: string[]
@@ -253,12 +255,24 @@ export type QAAnalysisPayload = {
   mistake_book_update: MistakeBookUpdate
 }
 
+export type QAConversationMessage = {
+  id?: number | null
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  model_used: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
 export type QAResponsePayload = {
   student_id: string
   subject: string
   grade: string
+  session_id?: number | null
+  session_title?: string
   student_response: string
   structured_analysis: QAAnalysisPayload
+  message_history: QAConversationMessage[]
   context_snippets: string[]
   confidence: number | null
 }

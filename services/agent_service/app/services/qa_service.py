@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from common.config import get_settings
+from common.models.learning import ChatMessage, ChatSession
 from common.schemas.agent import QARequest, QAResponse
 from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.llm_factory import LLMFactory
@@ -49,7 +52,8 @@ class QAService:
     )
     REVIEW_TOKENS = ("为什么错", "错在哪", "改错", "解析", "讲解这题", "订正", "复盘")
 
-    def __init__(self) -> None:
+    def __init__(self, db: Session | None = None) -> None:
+        self.db = db
         self.settings = get_settings()
         self.prompt_template = _load_prompt_template("qa.md")
         self.knowledge_base = KnowledgeBaseService()
@@ -59,15 +63,131 @@ class QAService:
     def analyze_question(self, request: QARequest) -> dict[str, Any]:
         """Return a student-readable answer with system-readable structured analysis."""
 
+        session = self._get_or_create_session(request) if self.db is not None else None
+        if session is not None:
+            self._save_message(
+                session_id=session.id,
+                role="user",
+                content=request.question.strip(),
+                metadata={
+                    "subject": request.subject,
+                    "grade": request.grade,
+                    "student_answer": request.student_answer,
+                    "wrong_answer": request.wrong_answer,
+                    "current_knowledge_points": request.current_knowledge_points,
+                },
+            )
+
+        history = self._get_message_history(session.id, limit=12) if session is not None else []
+
         flags = self._classify_question(request)
         context_snippets, confidence = self._build_context_snippets(request, flags)
-        llm_result = self._try_invoke_llm(request, flags, context_snippets, confidence)
+        llm_result = self._try_invoke_llm(request, flags, context_snippets, confidence, history)
         candidate = (
             llm_result
             if llm_result is not None
-            else self._build_fallback_response(request, flags, context_snippets, confidence)
+            else self._build_fallback_response(request, flags, context_snippets, confidence, history)
         )
-        return self._validate_response(candidate, request)
+
+        validated = self._validate_response(candidate, request, history)
+        if session is None or self.db is None:
+            return validated
+
+        assistant_message = self._save_message(
+            session_id=session.id,
+            role="assistant",
+            content=validated["student_response"],
+            model_used=str(validated.get("model_used") or ""),
+            metadata={
+                "structured_analysis": validated["structured_analysis"],
+                "context_snippets": validated["context_snippets"],
+                "confidence": validated["confidence"],
+            },
+        )
+        session.last_message_at = datetime.utcnow()
+        self.db.commit()
+
+        validated["session_id"] = session.id
+        validated["session_title"] = session.title
+        validated["message_history"] = self._get_message_history(session.id, limit=30)
+        if assistant_message is not None and validated["message_history"]:
+            validated["message_history"][-1]["id"] = assistant_message.id
+            validated["message_history"][-1]["created_at"] = assistant_message.created_at.isoformat()
+        return validated
+
+    def _get_or_create_session(self, request: QARequest) -> ChatSession:
+        assert self.db is not None
+
+        if request.session_id is not None:
+            session = self.db.query(ChatSession).filter(ChatSession.id == request.session_id).first()
+            if session is None:
+                raise ValueError(f"QA session {request.session_id} not found")
+            return session
+
+        title = request.session_title.strip() or request.question.strip()[:40] or "智能问答"
+        subject = request.subject.strip()
+        try:
+            user_id = int(request.student_id)
+        except ValueError:
+            user_id = 0
+
+        session = ChatSession(
+            user_id=user_id,
+            title=title,
+            subject=subject,
+            is_active=True,
+            last_message_at=datetime.utcnow(),
+        )
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
+    def _save_message(
+        self,
+        session_id: int,
+        role: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+        model_used: str = "",
+    ) -> ChatMessage | None:
+        if self.db is None:
+            return None
+
+        message = ChatMessage(
+            session_id=session_id,
+            role=role,
+            content=content,
+            model_used=model_used,
+            metadata_json=metadata or {},
+        )
+        self.db.add(message)
+        self.db.commit()
+        self.db.refresh(message)
+        return message
+
+    def _get_message_history(self, session_id: int, limit: int = 12) -> list[dict[str, Any]]:
+        if self.db is None:
+            return []
+
+        messages = (
+            self.db.query(ChatMessage)
+            .filter(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "model_used": msg.model_used,
+                "metadata": msg.metadata_json or {},
+                "created_at": msg.created_at.isoformat(),
+            }
+            for msg in messages
+        ]
 
     def _classify_question(self, request: QARequest) -> dict[str, Any]:
         question = request.question.strip()
@@ -107,7 +227,7 @@ class QAService:
             if len(cleaned) >= 2 and (cleaned in question or question in cleaned):
                 return True
 
-            fragments = [part.strip() for part in re.split(r"[\s,，、/·()（）\-]+", cleaned) if len(part.strip()) >= 2]
+            fragments = [part.strip() for part in re.split(r"[\s,，。·()（）\-]+", cleaned) if len(part.strip()) >= 2]
             if any(fragment in question for fragment in fragments):
                 return True
 
@@ -141,7 +261,7 @@ class QAService:
             web_snippets = self.web_search.search(request.question, max_results=5)
             snippets.extend(web_snippets)
             if web_snippets:
-                confidence = max(confidence, 0.9)
+                confidence = max(confidence, 0.8)
 
         deduped: list[str] = []
         seen: set[str] = set()
@@ -154,7 +274,12 @@ class QAService:
 
         return deduped[:6], confidence
 
-    def _build_grounding_text(self, article: Any, context_snippets: list[str]) -> str:
+    def _build_grounding_text(
+        self,
+        article: Any,
+        context_snippets: list[str],
+        history: list[dict[str, Any]],
+    ) -> str:
         sections: list[str] = []
         if article is not None:
             sections.append(
@@ -173,13 +298,23 @@ class QAService:
             )
         if context_snippets:
             sections.append("参考信息:\n" + "\n".join(f"- {item}" for item in context_snippets))
+        qa_history = self._format_history_for_prompt(history)
+        if qa_history:
+            sections.append("对话历史:\n" + qa_history)
         return "\n\n".join(sections)
+
+    def _format_history_for_prompt(self, history: list[dict[str, Any]], max_items: int = 6) -> str:
+        lines: list[str] = []
+        for item in history[-max_items:]:
+            role = "学生" if item["role"] == "user" else "助手"
+            lines.append(f"{role}: {item['content']}")
+        return "\n".join(lines)
 
     def _build_direct_answer(
         self,
         request: QARequest,
         grounding_text: str,
-        flags: dict[str, Any],
+        history: list[dict[str, Any]],
     ) -> str | None:
         """Generate a direct answer from the LLM without restricting question scope."""
 
@@ -190,27 +325,26 @@ class QAService:
             llm = self.llm_factory.build_chat_model(temperature=0.3)
             system_prompt = (
                 f"你是一个通用智能问答助手，同时也能承担学习辅导角色。今天的日期是 {date.today().isoformat()}。\n"
-                "你的任务是优先回答用户真正问的问题，而不是把问题强行限定为学习类。\n"
-                "如果提供了联网检索参考，请优先基于参考回答，不要声称自己不能联网、不能查资料、"
-                "或者只能回答学习问题。\n"
-                "如果问题属于学习类，请讲解清楚；如果属于通用生活、科技、时事、天气、工具使用等问题，"
-                "也请直接正常回答。\n"
+                "你的任务是优先回答用户真正提出的问题，而不是强行把问题限定为学习类。\n"
+                "如果提供了联网检索参考，请优先基于参考回答，不要声称自己不能联网、不能查资料。\n"
+                "如果问题属于学习类，请讲解清楚；如果属于通用生活、科技、时事、天气、工具使用等问题，也请直接正常回答。\n"
                 "如果参考信息不足以支持确定结论，要明确说明不确定点，并告诉用户还缺什么信息。\n"
+                "请自然承接上下文中的追问，不要把每一轮都当成全新问题。\n"
                 "不要输出 JSON。"
             )
             human_prompt = (
                 "学科: {subject}\n"
                 "年级: {grade}\n"
-                "问题: {question}\n"
+                "本轮问题: {question}\n"
                 "学生已有答案: {student_answer}\n"
                 "学生错误答案: {wrong_answer}\n"
                 "当前知识点: {current_knowledge_points}\n"
-                "参考信息: {grounding_text}\n"
-                "额外要求:\n"
-                "1. 先直接回答问题本身。\n"
-                "2. 学习类问题要有讲解、示例、易错点和下一步建议。\n"
-                "3. 非学习类问题不要套用学习分析腔调。\n"
-                "4. 涉及今天、实时、最新、价格、天气、新闻等信息时，优先依据参考信息回答。\n"
+                "参考信息:\n{grounding_text}\n"
+                "要求:\n"
+                "1. 先直接回答这轮问题。\n"
+                "2. 如果这是追问，要结合上文连续解释。\n"
+                "3. 学习类问题要有讲解、例子、易错点和下一步建议。\n"
+                "4. 非学习类问题不要套用学习分析腔调。\n"
             )
             prompt = ChatPromptTemplate.from_messages([("system", system_prompt), ("human", human_prompt)])
             chain = prompt | llm | StrOutputParser()
@@ -222,7 +356,7 @@ class QAService:
                     "student_answer": request.student_answer,
                     "wrong_answer": request.wrong_answer,
                     "current_knowledge_points": request.current_knowledge_points,
-                    "grounding_text": grounding_text[:1800] if grounding_text else "",
+                    "grounding_text": grounding_text[:2200] if grounding_text else self._format_history_for_prompt(history),
                 }
             )
             answer = result.strip()
@@ -236,17 +370,19 @@ class QAService:
         flags: dict[str, Any],
         context_snippets: list[str],
         confidence: float,
+        history: list[dict[str, Any]],
     ) -> dict[str, Any] | None:
         target = self._pick_target_knowledge(request, flags)
         article = self.knowledge_base.get_article(target if flags["has_learning_context"] else request.question)
-        grounding_text = self._build_grounding_text(article, context_snippets)
-        direct_answer = self._build_direct_answer(request, grounding_text, flags)
+        grounding_text = self._build_grounding_text(article, context_snippets, history)
+        direct_answer = self._build_direct_answer(request, grounding_text, history)
 
         if not flags["should_analyze"]:
             if not direct_answer:
                 return None
-            fallback = self._build_fallback_response(request, flags, context_snippets, confidence)
+            fallback = self._build_fallback_response(request, flags, context_snippets, confidence, history)
             fallback["student_response"] = direct_answer
+            fallback["model_used"] = "qa_direct"
             return fallback
 
         try:
@@ -271,13 +407,15 @@ class QAService:
                             "learning_route: {learning_route}\n"
                             "error_book: {error_book}\n"
                             "learning_history: {learning_history}\n"
+                            "conversation_history: {conversation_history}\n"
                             "grounding_text: {grounding_text}\n"
                             "输出要求:\n"
                             "1. 先输出 student_response: 后接自然语言回答。\n"
                             "2. 再输出 structured_analysis: 后接一个合法 JSON 对象。\n"
-                            "3. 如果这是通用问答，不要凭空编造知识漏洞；相关字段可以留空。\n"
-                            "4. 是否加入错题本要根据是否真的存在错误作答和学习复盘场景来判断。\n"
-                            "5. 不要输出多余说明。\n"
+                            "3. 如果这是追问，要结合 conversation_history 连续作答。\n"
+                            "4. 如果这是通用问答，不要凭空编造知识漏洞；相关字段可以留空。\n"
+                            "5. 是否加入错题本要根据是否真的存在错误作答和学习复盘场景来判断。\n"
+                            "6. 不要输出多余说明。\n"
                         ),
                     ),
                 ]
@@ -295,7 +433,8 @@ class QAService:
                     "learning_route": request.learning_route,
                     "error_book": request.error_book,
                     "learning_history": request.learning_history,
-                    "grounding_text": grounding_text[:2000],
+                    "conversation_history": self._format_history_for_prompt(history),
+                    "grounding_text": grounding_text[:2400],
                 }
             )
             parsed = self._parse_llm_output(raw)
@@ -308,16 +447,21 @@ class QAService:
                 "student_id": request.student_id,
                 "subject": request.subject,
                 "grade": request.grade,
+                "session_id": request.session_id,
+                "session_title": request.session_title,
                 "student_response": parsed["student_response"],
                 "structured_analysis": structured_analysis,
+                "message_history": history,
                 "context_snippets": context_snippets,
                 "confidence": confidence,
+                "model_used": "qa_analysis",
             }
         except Exception:
             if not direct_answer:
                 return None
-            fallback = self._build_fallback_response(request, flags, context_snippets, confidence)
+            fallback = self._build_fallback_response(request, flags, context_snippets, confidence, history)
             fallback["student_response"] = direct_answer
+            fallback["model_used"] = "qa_direct"
             return fallback
 
     def _parse_llm_output(self, raw: str) -> dict[str, Any]:
@@ -546,20 +690,31 @@ class QAService:
                 raise
             return json.loads(match.group(0))
 
-    def _compose_general_fallback_answer(self, question: str, context_snippets: list[str]) -> str:
+    def _compose_general_fallback_answer(
+        self,
+        question: str,
+        context_snippets: list[str],
+        history: list[dict[str, Any]],
+    ) -> str:
+        if history:
+            followup_hint = "\n\n如果你想继续追问，我会基于这段对话继续解释，不需要从头描述。"
+        else:
+            followup_hint = "\n\n如果你想继续追问，我可以接着上一轮继续回答。"
+
         if context_snippets:
             summary = "\n".join(f"{index + 1}. {item}" for index, item in enumerate(context_snippets[:4]))
             return (
                 f"我先直接回答你的问题：{question}\n\n"
-                "我已根据当前检索到的参考信息整理出以下要点：\n"
-                f"{summary}\n\n"
-                "如果你希望，我还可以继续把这些信息整理成更简洁的结论、对比表，或者继续追问某个细节。"
+                "我已经根据当前检索到的参考信息整理出以下要点：\n"
+                f"{summary}"
+                f"{followup_hint}"
             )
 
         return (
             f"我理解你的问题是：{question}\n\n"
             "当前我没有拿到足够可靠的外部参考信息来给出确定答案。"
             "如果你补充更具体的对象、时间、地点或范围，我可以继续帮你细化。"
+            f"{followup_hint}"
         )
 
     def _build_fallback_response(
@@ -568,11 +723,12 @@ class QAService:
         flags: dict[str, Any],
         context_snippets: list[str],
         confidence: float,
+        history: list[dict[str, Any]],
     ) -> dict[str, Any]:
         target_knowledge = self._pick_target_knowledge(request, flags)
 
         if flags["is_general_question"]:
-            student_response = self._compose_general_fallback_answer(request.question, context_snippets)
+            student_response = self._compose_general_fallback_answer(request.question, context_snippets, history)
             structured_analysis = {
                 "identified_knowledge_gaps": [],
                 "misconceptions": [],
@@ -642,13 +798,22 @@ class QAService:
             "student_id": request.student_id,
             "subject": request.subject,
             "grade": request.grade,
+            "session_id": request.session_id,
+            "session_title": request.session_title,
             "student_response": student_response,
+            "message_history": history,
             "context_snippets": context_snippets,
             "confidence": confidence,
             "structured_analysis": structured_analysis,
+            "model_used": "qa_fallback",
         }
 
-    def _validate_response(self, candidate: dict[str, Any], request: QARequest) -> dict[str, Any]:
+    def _validate_response(
+        self,
+        candidate: dict[str, Any],
+        request: QARequest,
+        history: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Guarantee the router always returns a schema-valid payload."""
 
         try:
@@ -656,5 +821,6 @@ class QAService:
         except Exception:
             flags = self._classify_question(request)
             context_snippets, confidence = self._build_context_snippets(request, flags)
-            fallback = self._build_fallback_response(request, flags, context_snippets, confidence)
+            fallback = self._build_fallback_response(request, flags, context_snippets, confidence, history)
             return QAResponse(**fallback).model_dump()
+

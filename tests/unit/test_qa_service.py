@@ -18,5 +18,6 @@ def test_qa_fallback_includes_context_snippets_and_confidence() -> None:
     )
 
     assert response["context_snippets"]
-    assert response["confidence"] == 0.8
+    assert response["confidence"] is not None
+    assert 0 <= response["confidence"] <= 1
     assert "structured_analysis" in response

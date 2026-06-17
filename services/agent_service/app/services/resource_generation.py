@@ -10,6 +10,7 @@ from typing import Any
 
 from common.config import get_settings
 from common.db.session import SessionLocal
+from common.models.learning import KnowledgePoint, Resource
 from common.schemas.agent import ResourceGenerationRequest
 from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.llm_factory import LLMFactory
@@ -481,6 +482,43 @@ class ResourceGenerationService:
         max_variants = max(1, self.settings.resource_courseware_variant_count)
         return variant_styles[:max_variants]
 
+    def _resolve_or_create_knowledge_point(self, db: Any, knowledge_point: str) -> KnowledgePoint:
+        existing = db.query(KnowledgePoint).filter(KnowledgePoint.name == knowledge_point).first()
+        if existing is not None:
+            return existing
+
+        article = self.knowledge_base.get_article(knowledge_point)
+        record = KnowledgePoint(
+            name=knowledge_point,
+            description=article.summary if article is not None else f"{knowledge_point} 自动生成知识点",
+            difficulty=2,
+            importance=2,
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record
+
+    def _persist_generated_resource(
+        self,
+        db: Any,
+        request: ResourceGenerationRequest,
+        generation_plan: dict[str, Any],
+        primary: dict[str, Any],
+    ) -> int:
+        knowledge_point = self._resolve_or_create_knowledge_point(db, generation_plan["knowledge_point"])
+        resource = Resource(
+            type=generation_plan["resource_type"],
+            content=primary["content"],
+            format="markdown",
+            knowledge_point_id=knowledge_point.id,
+            generated_for_user_id=request.user_id,
+        )
+        db.add(resource)
+        db.commit()
+        db.refresh(resource)
+        return resource.id
+
     def _build_variant_prompt(self, base_variables: dict[str, Any], style: str) -> dict[str, Any]:
         """Build one style-specific prompt payload."""
 
@@ -631,8 +669,11 @@ class ResourceGenerationService:
             )
 
         primary = next((item for item in variants if item["is_recommended"]), variants[0])
+        with SessionLocal() as db:
+            resource_id = self._persist_generated_resource(db, request, generation_plan, primary)
 
         return {
+            "id": resource_id,
             "user_id": request.user_id,
             "knowledge_point": generation_plan["knowledge_point"],
             "resource_type": generation_plan["resource_type"],

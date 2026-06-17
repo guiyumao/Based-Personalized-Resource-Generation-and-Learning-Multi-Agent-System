@@ -31,7 +31,12 @@ async function fetchResources() {
   loading.value = true; error.value = ''; resourceNotice.value = ''
   try {
     const { data } = await resourceApi.get('/resources')
-    resources.value = normalizeServiceResources((data as any).data ?? (Array.isArray(data) ? data : []))
+    const serviceResources = normalizeServiceResources((data as any).data ?? (Array.isArray(data) ? data : []))
+    const localResources = readLocalCoursewareResources()
+    resources.value = mergeResources(serviceResources, localResources)
+    if (localResources.length) {
+      resourceNotice.value = '已同时展示数据库中的学习资源和当前浏览器会话里的最新课件快照。'
+    }
   } catch (e: any) {
     const detail = e?.response?.data?.detail ?? e?.message ?? '未知错误'
     const localResources = readLocalCoursewareResources()
@@ -47,6 +52,19 @@ async function fetchResources() {
 
 function normalizeServiceResources(items: ResourceItem[]): ResourceItem[] {
   return items.map((item) => ({ ...item, source: 'service' }))
+}
+
+function mergeResources(serviceItems: ResourceItem[], localItems: ResourceItem[]) {
+  const merged = [...localItems, ...serviceItems]
+  const seen = new Set<string>()
+  return merged.filter((item) => {
+    const key = `${item.title}-${item.knowledge_point}-${item.source ?? 'service'}`
+    if (seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
 }
 
 function readLocalCoursewareResources(): ResourceItem[] {

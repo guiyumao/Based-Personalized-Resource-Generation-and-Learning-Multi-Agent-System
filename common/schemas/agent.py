@@ -200,6 +200,8 @@ class QARequest(BaseModel):
     subject: str = Field(description="Subject name, such as math or physics.")
     grade: str = Field(description="Grade level or learning stage.")
     question: str = Field(description="Student's full natural-language question.")
+    session_id: int | None = Field(default=None, description="Existing QA conversation session id.")
+    session_title: str = Field(default="", description="Optional title used when creating a new QA session.")
     student_answer: str = Field(default="", description="Student's own answer if available.")
     wrong_answer: str = Field(default="", description="Known wrong answer if available.")
     current_knowledge_points: list[str] = Field(default_factory=list)
@@ -248,14 +250,28 @@ class QAAnalysisPayload(BaseModel):
     mistake_book_update: MistakeBookUpdate
 
 
+class QAConversationMessage(BaseModel):
+    """One QA conversation turn returned for multi-round interaction."""
+
+    id: int | None = None
+    role: Literal["user", "assistant", "system"]
+    content: str
+    model_used: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+
+
 class QAResponse(BaseModel):
     """Student-facing answer plus system-facing learning analysis."""
 
     student_id: str
     subject: str
     grade: str
+    session_id: int | None = None
+    session_title: str = ""
     student_response: str
     structured_analysis: QAAnalysisPayload
+    message_history: list[QAConversationMessage] = Field(default_factory=list)
     context_snippets: list[str] = Field(default_factory=list)
     confidence: float | None = Field(default=None, ge=0, le=1)
 

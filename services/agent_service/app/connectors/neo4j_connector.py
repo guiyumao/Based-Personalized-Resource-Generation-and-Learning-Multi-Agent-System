@@ -6,6 +6,9 @@ import logging
 from typing import Any
 
 from common.config import get_settings
+from common.db.session import SessionLocal
+from common.models.learning import KnowledgePoint, Resource
+from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,7 @@ class KnowledgeGraphRepository:
 
     def __init__(self) -> None:
         settings = get_settings()
+        self.knowledge_base = KnowledgeBaseService()
         try:
             from neo4j import GraphDatabase
 
@@ -31,29 +35,101 @@ class KnowledgeGraphRepository:
         if self._driver is not None:
             self._driver.close()
 
-    def _fallback_visualization_graph(self, knowledge_point: str) -> dict[str, list[dict[str, Any]]]:
-        """Return an empty graph shell when Neo4j is unavailable."""
+    def _fallback_graph_seed(self, knowledge_point: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        article = self.knowledge_base.get_article(knowledge_point)
+        if article is None:
+            matches = self.knowledge_base.search_by_keywords(knowledge_point, top_k=1)
+            article = matches[0] if matches else None
 
-        return {
-            "nodes": [{"id": knowledge_point, "label": knowledge_point, "category": "current"}],
-            "edges": [],
-        }
+        current_label = article.title if article is not None else knowledge_point
+        nodes = [{"id": current_label, "label": current_label, "category": "current"}]
+        edges: list[dict[str, Any]] = []
+
+        if article is not None:
+            for concept in article.concepts[:3]:
+                concept_name = concept.split("：", 1)[0].strip("` ").strip()
+                if len(concept_name) < 2:
+                    continue
+                nodes.append({"id": concept_name, "label": concept_name, "category": "prerequisite"})
+                edges.append({"source": current_label, "target": concept_name, "label": "RELATED_CONCEPT"})
+
+            for check in article.checks[:2]:
+                check_name = check[:24]
+                nodes.append({"id": check_name, "label": check_name, "category": "recommended"})
+                edges.append({"source": current_label, "target": check_name, "label": "SELF_CHECK"})
+
+        return nodes, edges
+
+    def _fallback_visualization_graph(self, knowledge_point: str) -> dict[str, list[dict[str, Any]]]:
+        """Return a deterministic graph shell when Neo4j is unavailable."""
+
+        nodes, edges = self._fallback_graph_seed(knowledge_point)
+        return {"nodes": list({node["id"]: node for node in nodes}.values()), "edges": edges}
 
     def _fallback_dependency_paths(self, knowledge_point: str) -> list[dict[str, Any]]:
-        """Return no dependency paths when Neo4j is unavailable."""
+        """Return deterministic dependency paths from curated knowledge content."""
 
-        _ = knowledge_point
-        return []
+        article = self.knowledge_base.get_article(knowledge_point)
+        if article is None:
+            matches = self.knowledge_base.search_by_keywords(knowledge_point, top_k=1)
+            article = matches[0] if matches else None
+        if article is None:
+            return []
 
-    def _fallback_related_resources(self) -> list[dict[str, Any]]:
-        """Return no related resources when Neo4j is unavailable."""
+        paths: list[dict[str, Any]] = []
+        for concept in article.concepts[:3]:
+            concept_name = concept.split("：", 1)[0].strip("` ").strip()
+            if len(concept_name) < 2:
+                continue
+            paths.append({"path": [concept_name, article.title]})
+        return paths
 
-        return []
+    def _fallback_related_resources(self, knowledge_point: str) -> list[dict[str, Any]]:
+        """Return related resources from generated resources and curated links."""
 
-    def _fallback_recommendations(self) -> list[dict[str, Any]]:
-        """Return no next-point recommendations when Neo4j is unavailable."""
+        resources: list[dict[str, Any]] = []
+        with SessionLocal() as db:
+            rows = db.query(Resource, KnowledgePoint).outerjoin(
+                KnowledgePoint,
+                Resource.knowledge_point_id == KnowledgePoint.id,
+            ).filter(
+                (KnowledgePoint.name == knowledge_point) if knowledge_point else False
+            ).order_by(Resource.id.desc()).limit(5).all()
+            for resource, kp in rows:
+                title = (resource.content or "").strip().splitlines()
+                heading = title[0][2:].strip() if title and title[0].startswith("# ") else f"{kp.name if kp else knowledge_point}资源"
+                resources.append(
+                    {
+                        "name": heading,
+                        "type": resource.type,
+                        "uri": f"/resources/{resource.id}",
+                    }
+                )
 
-        return []
+        article = self.knowledge_base.get_article(knowledge_point)
+        if article is not None:
+            for item in self.knowledge_base.article_to_dict(article).get("external_resources", [])[:4]:
+                if not isinstance(item, dict):
+                    continue
+                resources.append(
+                    {
+                        "name": item.get("title") or "参考资源",
+                        "type": item.get("kind") or "resource",
+                        "uri": item.get("url") or "",
+                    }
+                )
+        return resources
+
+    def _fallback_recommendations(self, knowledge_point: str) -> list[dict[str, Any]]:
+        """Return next-point recommendations from checks/applications."""
+
+        article = self.knowledge_base.get_article(knowledge_point)
+        if article is None:
+            return []
+        return [
+            {"name": item[:30], "difficulty": 1, "importance": 1}
+            for item in (article.applications[:2] + article.checks[:2])
+        ]
 
     def create_knowledge_point(
         self,

@@ -75,12 +75,16 @@ async function queryGraph() {
   try {
     const payload = { knowledge_point: knowledgePoint.value, max_depth: 3 }
     const [depRes, visRes] = await Promise.all([
-      agentApi.post<{ paths: string[][] }>('/graph/dependencies', payload),
+      agentApi.post<{ paths?: string[][]; dependencies?: Array<{ path?: string[] }> }>('/graph/dependencies', payload),
       agentApi.post<GraphVisualizationResponse>('/graph/visualization', payload),
     ])
     graphVisualization.value = (visRes.data as any).data ?? visRes.data
     const depData = (depRes.data as any).data ?? depRes.data
-    dependencyPaths.value = depData?.paths ?? []
+    dependencyPaths.value = Array.isArray(depData?.paths)
+      ? depData.paths
+      : Array.isArray(depData?.dependencies)
+        ? depData.dependencies.map((item: any) => item?.path ?? []).filter((item: string[]) => item.length > 0)
+        : []
     ElMessage.success('知识图谱已返回')
     // Fetch related resources in parallel
     try {
