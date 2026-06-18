@@ -173,6 +173,21 @@ class LearningReport(TimestampMixin, Base):
     user: Mapped[User] = relationship(back_populates="reports")
 
 
+class TeachingScope(TimestampMixin, Base):
+    """Teacher-defined learning scope delivered to a class or one learner."""
+
+    __tablename__ = "teaching_scopes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    class_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    student_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    knowledge_points: Mapped[list[str]] = mapped_column(JSON, default=list)
+    learning_direction: Mapped[str] = mapped_column(String(200), nullable=False)
+    courseware_title: Mapped[str] = mapped_column(String(120), nullable=False)
+    courseware_content: Mapped[str] = mapped_column(Text, nullable=False)
+    teaching_goal: Mapped[str] = mapped_column(String(300), default="")
+
+
 class ProfileConversation(TimestampMixin, Base):
     """Conversation history captured while building a learner profile."""
 

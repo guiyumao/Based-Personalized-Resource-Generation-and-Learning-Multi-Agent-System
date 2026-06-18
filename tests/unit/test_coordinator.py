@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from common.schemas.agent import CoordinationRequest
 from services.agent_service.app.agents import coordinator as coordinator_module
 from services.agent_service.app.agents.coordinator import CoordinatorWorkflow
+from services.evaluation_service.app.schemas.report import AnalyticsSuggestion
 
 
 def test_coordinator_selects_resource_generation_agents(monkeypatch):

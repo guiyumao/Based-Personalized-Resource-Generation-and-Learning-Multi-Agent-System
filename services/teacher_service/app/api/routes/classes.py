@@ -16,6 +16,7 @@ Auth classification:
 from fastapi import APIRouter, Depends, HTTPException
 
 from common.dependencies import require_role
+from common.dependencies import get_current_user
 from common.models.learning import User
 from common.schemas.response import ApiResponse
 from services.teacher_service.app.schemas.teacher import (
@@ -122,6 +123,31 @@ def create_teaching_scope(
     return ApiResponse(
         data=manager.create_teaching_scope(payload),
         message="Teaching scope created successfully.",
+    )
+
+
+@router.get("/students/me/teaching-scopes", response_model=ApiResponse[list[TeachingScopeItem]])
+def list_my_teaching_scopes(
+    current_user: User = Depends(get_current_user),
+) -> ApiResponse[list[TeachingScopeItem]]:
+    """List teacher-defined scopes delivered to the current student."""
+
+    return ApiResponse(
+        data=manager.list_student_teaching_scopes(current_user.id),
+        message="Student teaching scopes fetched successfully.",
+    )
+
+
+@router.get("/students/{user_id}/teaching-scopes", response_model=ApiResponse[list[TeachingScopeItem]])
+def list_student_teaching_scopes(
+    user_id: int,
+    _user: User = Depends(require_role("teacher", "admin")),
+) -> ApiResponse[list[TeachingScopeItem]]:
+    """List teacher-defined scopes visible to one learner. (teacher, admin)"""
+
+    return ApiResponse(
+        data=manager.list_student_teaching_scopes(user_id),
+        message="Student teaching scopes fetched successfully.",
     )
 
 

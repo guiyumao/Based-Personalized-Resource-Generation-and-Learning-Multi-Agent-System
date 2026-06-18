@@ -148,6 +148,7 @@ class LearningPathResponse(BaseModel):
     overview: str
     estimated_days: int
     stages: list[LearningStageItem]
+    teacher_scope: dict[str, Any] | None = None
 
 
 class LearningPathAdjustRequest(BaseModel):

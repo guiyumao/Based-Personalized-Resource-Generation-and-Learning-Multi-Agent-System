@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from common.db.bootstrap import ensure_database_schema
 from common.logging.setup import configure_logging
 from services.teacher_service.app.api.routes import classes
 
@@ -24,6 +25,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(classes.router, prefix="/teacher", tags=["teacher"])
+
+
+@app.on_event("startup")
+def startup_bootstrap() -> None:
+    """Ensure local persistence tables exist when the teacher service runs alone."""
+
+    ensure_database_schema()
 
 
 @app.get("/health")

@@ -120,6 +120,7 @@ export type LearningPathResponse = {
   overview: string
   estimated_days: number
   stages: LearningStageItem[]
+  teacher_scope?: TeachingScopeItem | null
 }
 
 export type AgentExecutionOutput<T = unknown> = {

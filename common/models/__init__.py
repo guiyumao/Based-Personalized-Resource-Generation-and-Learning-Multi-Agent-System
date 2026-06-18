@@ -9,6 +9,7 @@ from common.models.learning import (
     LearningReport,
     LearningTask,
     Resource,
+    TeachingScope,
     User,
     UserProfile,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "LearningReport",
     "LearningTask",
     "Resource",
+    "TeachingScope",
     "User",
     "UserProfile",
 ]

@@ -15,6 +15,11 @@ $services = @(
         App = "services.agent_service.app.main:app"
     },
     @{
+        Name = "resource-service"
+        Port = 8003
+        App = "services.resource_service.app.main:app"
+    },
+    @{
         Name = "evaluation-service"
         Port = 8004
         App = "services.evaluation_service.app.main:app"
@@ -44,6 +49,27 @@ function Test-PortListening {
     $connection = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
     return $null -ne $connection
 }
+
+function Ensure-FrontendEnvFile {
+    $webRoot = Join-Path $root "web-app"
+    $envLocalPath = Join-Path $webRoot ".env.local"
+
+    if (Test-Path $envLocalPath) {
+        return
+    }
+
+    Write-Host "Creating web-app/.env.local with local service endpoints..."
+    @(
+        "VITE_USER_API_BASE_URL=http://127.0.0.1:8001"
+        "VITE_AGENT_API_BASE_URL=http://127.0.0.1:8002"
+        "VITE_RESOURCE_API_BASE_URL=http://127.0.0.1:8003"
+        "VITE_EVALUATION_API_BASE_URL=http://127.0.0.1:8004"
+        "VITE_TEACHER_API_BASE_URL=http://127.0.0.1:8005"
+        "VITE_SYSTEM_API_BASE_URL=http://127.0.0.1:8006"
+    ) | Set-Content -Path $envLocalPath -Encoding UTF8
+}
+
+Ensure-FrontendEnvFile
 
 foreach ($service in $services) {
     if (Test-PortListening -Port $service.Port) {
@@ -87,6 +113,7 @@ Write-Host "Startup requests sent. Verify with:"
 Write-Host "  http://127.0.0.1:5175"
 Write-Host "  http://127.0.0.1:8001/health"
 Write-Host "  http://127.0.0.1:8002/health"
+Write-Host "  http://127.0.0.1:8003/health"
 Write-Host "  http://127.0.0.1:8004/health"
 Write-Host "  http://127.0.0.1:8005/health"
 Write-Host "  http://127.0.0.1:8006/health"

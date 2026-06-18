@@ -3,7 +3,10 @@
 import asyncio
 from unittest.mock import patch
 
+from common.db.session import SessionLocal
+from common.models.learning import LearningPath, TeachingScope
 from services.teacher_service.app.services.teacher_manager import TeacherManager
+from services.teacher_service.app.schemas.teacher import TeachingScopeCreate
 
 
 def test_teacher_manager_returns_student_insights() -> None:
@@ -76,3 +79,63 @@ def test_teacher_manager_uses_teacher_mistake_detail_endpoint() -> None:
 
     assert isinstance(detail.mistake_notebook, list)
     assert any(url.endswith("/evaluation/mistakes/1/teacher-detail") for url in requested_urls)
+
+
+def test_teacher_scope_is_visible_to_target_student(test_user) -> None:
+    """Teacher-created scopes should be persisted and readable by students."""
+
+    manager = TeacherManager()
+    created = manager.create_teaching_scope(
+        TeachingScopeCreate(
+            class_id=1,
+            student_user_id=test_user.id,
+            knowledge_points=["Python loops"],
+            learning_direction="Practice loop boundaries",
+            courseware_title="Loop boundary courseware",
+            courseware_content="Focus on while-loop stop conditions.",
+            teaching_goal="Avoid infinite loops.",
+        )
+    )
+
+    scopes = manager.list_student_teaching_scopes(test_user.id)
+
+    assert created.id
+    assert any(item.id == created.id for item in scopes)
+    assert scopes[0].knowledge_points == ["Python loops"]
+
+    with SessionLocal() as db:
+        db.query(LearningPath).filter(LearningPath.user_id == test_user.id).delete()
+        db.query(TeachingScope).filter(TeachingScope.id == created.id).delete()
+        db.commit()
+
+
+def test_teacher_scope_publishes_active_student_path(test_user) -> None:
+    """Creating a teaching scope should directly update the student's active path."""
+
+    manager = TeacherManager()
+    created = manager.create_teaching_scope(
+        TeachingScopeCreate(
+            class_id=1,
+            student_user_id=test_user.id,
+            knowledge_points=["Functions"],
+            learning_direction="Follow the teacher scope before practicing.",
+            courseware_title="Function scope courseware",
+            courseware_content="Function concepts and examples.",
+            teaching_goal="Understand function definition and calls.",
+        )
+    )
+
+    with SessionLocal() as db:
+        path = (
+            db.query(LearningPath)
+            .filter(LearningPath.user_id == test_user.id, LearningPath.status == "active")
+            .order_by(LearningPath.id.desc())
+            .first()
+        )
+        assert path is not None
+        assert path.path_data_json["teacher_scope"]["id"] == created.id
+        assert path.path_data_json["stages"][0]["tasks"][0]["teacher_scope_id"] == created.id
+
+        db.query(LearningPath).filter(LearningPath.user_id == test_user.id).delete()
+        db.query(TeachingScope).filter(TeachingScope.id == created.id).delete()
+        db.commit()

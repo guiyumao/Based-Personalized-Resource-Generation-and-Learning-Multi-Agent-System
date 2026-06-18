@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from common.config import get_settings
 from common.db.session import SessionLocal
-from common.models.learning import AnswerRecord, Exercise, KnowledgePoint, User, UserProfile
+from common.models.learning import AnswerRecord, Exercise, KnowledgePoint, LearningPath, TeachingScope, User, UserProfile
 from services.teacher_service.app.schemas.teacher import (
     ClassCreate,
     ClassItem,
@@ -35,7 +35,6 @@ class TeacherManager:
     def __init__(self) -> None:
         self._settings = get_settings()
         self._classes: list[ClassItem] = []
-        self._teaching_scopes: list[TeachingScopeItem] = []
 
     def list_classes(self) -> list[ClassItem]:
         """Return all classes."""
@@ -70,17 +69,39 @@ class TeacherManager:
             return [self._build_student_insight(db, student) for student in students]
 
     def create_teaching_scope(self, payload: TeachingScopeCreate) -> TeachingScopeItem:
-        """Persist one teacher-defined learning scope in memory."""
+        """Persist one teacher-defined learning scope in the shared database."""
 
-        next_id = max((item.id for item in self._teaching_scopes), default=0) + 1
-        item = TeachingScopeItem(id=next_id, **self._to_dict(payload))
-        self._teaching_scopes.insert(0, item)
-        return item
+        with SessionLocal() as db:
+            record = TeachingScope(**self._to_dict(payload))
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            self._publish_scope_to_students(db, record)
+            return self._scope_to_item(record)
 
     def list_teaching_scopes(self, class_id: int) -> list[TeachingScopeItem]:
         """Return scopes defined for one class."""
 
-        return [item for item in self._teaching_scopes if item.class_id == class_id]
+        with SessionLocal() as db:
+            records = (
+                db.query(TeachingScope)
+                .filter(TeachingScope.class_id == class_id)
+                .order_by(TeachingScope.id.desc())
+                .all()
+            )
+            return [self._scope_to_item(record) for record in records]
+
+    def list_student_teaching_scopes(self, user_id: int) -> list[TeachingScopeItem]:
+        """Return scopes visible to one student, including class-wide scopes."""
+
+        with SessionLocal() as db:
+            records = (
+                db.query(TeachingScope)
+                .filter((TeachingScope.student_user_id.is_(None)) | (TeachingScope.student_user_id == user_id))
+                .order_by(TeachingScope.id.desc())
+                .all()
+            )
+            return [self._scope_to_item(record) for record in records]
 
     def get_teaching_analytics(self, class_id: int) -> TeacherTeachingAnalytics:
         """Aggregate real mistakes and answer statistics for teacher decisions."""
@@ -326,6 +347,125 @@ class TeacherManager:
         if hasattr(model, "dict"):
             return getattr(model, "dict")()
         raise TypeError(f"Unsupported model type: {type(model)!r}")
+
+    def _scope_to_item(self, record: TeachingScope) -> TeachingScopeItem:
+        """Serialize a persisted teaching scope."""
+
+        return TeachingScopeItem(
+            id=record.id,
+            class_id=record.class_id,
+            student_user_id=record.student_user_id,
+            knowledge_points=list(record.knowledge_points or []),
+            learning_direction=record.learning_direction,
+            courseware_title=record.courseware_title,
+            courseware_content=record.courseware_content,
+            teaching_goal=record.teaching_goal or "",
+        )
+
+    def _publish_scope_to_students(self, db: Session, scope: TeachingScope) -> None:
+        """Turn a teacher scope into active student learning paths."""
+
+        if scope.student_user_id is not None:
+            students = [db.get(User, scope.student_user_id)]
+        else:
+            students = self._list_students(db)
+
+        for student in [item for item in students if item is not None and item.role == "student"]:
+            payload = self._build_scope_learning_path(scope, student.id)
+            existing_records = (
+                db.query(LearningPath)
+                .filter(LearningPath.user_id == student.id, LearningPath.status == "active")
+                .all()
+            )
+            for item in existing_records:
+                item.status = "archived"
+            db.add(LearningPath(user_id=student.id, path_data_json=payload, status="active"))
+        db.commit()
+
+    def _build_scope_learning_path(self, scope: TeachingScope, user_id: int) -> dict[str, object]:
+        knowledge_points = list(scope.knowledge_points or [])
+        primary_point = knowledge_points[0] if knowledge_points else scope.courseware_title
+        scope_payload = self._to_dict(self._scope_to_item(scope))
+        return {
+            "user_id": user_id,
+            "subject": scope.courseware_title,
+            "knowledge_point": primary_point,
+            "overview": (
+                f"教师已划定学习范围：{' / '.join(knowledge_points) or primary_point}。"
+                f"{scope.learning_direction}"
+            ),
+            "estimated_days": 3,
+            "teacher_scope": scope_payload,
+            "stages": [
+                {
+                    "stage_id": f"teacher-scope-{scope.id}-stage-1",
+                    "title": "教师范围学习启动",
+                    "description": scope.learning_direction,
+                    "tasks": [
+                        {
+                            "task_id": f"teacher-scope-{scope.id}-courseware",
+                            "title": f"学习教师发布课件：{scope.courseware_title}",
+                            "task_type": "courseware",
+                            "knowledge_point": primary_point,
+                            "objective": scope.teaching_goal or scope.learning_direction,
+                            "estimated_minutes": 30,
+                            "difficulty": "foundation",
+                            "completed": False,
+                            "status": "pending",
+                            "teacher_scope_id": scope.id,
+                            "teacher_courseware_content": scope.courseware_content,
+                        },
+                        {
+                            "task_id": f"teacher-scope-{scope.id}-graph",
+                            "title": "查看教师范围知识关联",
+                            "task_type": "graph",
+                            "knowledge_point": primary_point,
+                            "objective": f"确认范围内知识点：{' / '.join(knowledge_points) or primary_point}",
+                            "estimated_minutes": 10,
+                            "difficulty": "foundation",
+                            "completed": False,
+                            "status": "pending",
+                        },
+                    ],
+                },
+                {
+                    "stage_id": f"teacher-scope-{scope.id}-stage-2",
+                    "title": "配套练习与反馈",
+                    "description": "围绕教师划定范围完成练习，提交后进入错题与反馈闭环。",
+                    "tasks": [
+                        {
+                            "task_id": f"teacher-scope-{scope.id}-exercise",
+                            "title": "完成教师范围配套练习",
+                            "task_type": "exercise",
+                            "knowledge_point": primary_point,
+                            "objective": "用练习验证教师划定范围的掌握情况。",
+                            "estimated_minutes": 25,
+                            "difficulty": "intermediate",
+                            "completed": False,
+                            "status": "pending",
+                        },
+                    ],
+                },
+                {
+                    "stage_id": f"teacher-scope-{scope.id}-stage-3",
+                    "title": "复盘与提升",
+                    "description": "结合答题结果和教师目标进行复盘。",
+                    "tasks": [
+                        {
+                            "task_id": f"teacher-scope-{scope.id}-review",
+                            "title": "复盘教师范围学习结果",
+                            "task_type": "review",
+                            "knowledge_point": primary_point,
+                            "objective": scope.teaching_goal or "整理薄弱点并准备下一轮学习。",
+                            "estimated_minutes": 20,
+                            "difficulty": "advanced",
+                            "completed": False,
+                            "status": "pending",
+                        },
+                    ],
+                },
+            ],
+        }
 
     def _parse_report_response(
         self,

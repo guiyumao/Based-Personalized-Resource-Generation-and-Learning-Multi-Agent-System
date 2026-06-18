@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, TypedDict
 
 from sqlalchemy.orm import Session
@@ -12,16 +13,19 @@ from common.schemas.agent import (
     CoordinationRequest,
     ExerciseGenerationRequest,
     LearningPathRequest,
+    QARequest,
     ResourceGenerationRequest,
 )
 from services.agent_service.app.connectors.neo4j_connector import KnowledgeGraphRepository
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
 from services.agent_service.app.services.learning_path import LearningPathService
 from services.agent_service.app.services.personalization import PersonalizationService
+from services.agent_service.app.services.qa_service import QAService
 from services.agent_service.app.services.resource_generation import (
     ResourceGenerationError,
     ResourceGenerationService,
 )
+from services.evaluation_service.app.services.report_service import ReportService
 
 
 class CoordinatorState(TypedDict, total=False):
@@ -147,7 +151,8 @@ class CoordinatorWorkflow:
 
         selected = set(result.get("selected_agents", []))
         knowledge_point = self._resolve_knowledge_point(payload)
-        if not knowledge_point:
+        knowledge_required_agents = selected - {"qa_agent", "evaluation_feedback_agent"}
+        if knowledge_required_agents and not knowledge_point:
             return {
                 **result,
                 "status": "failed",
@@ -161,6 +166,9 @@ class CoordinatorWorkflow:
         plan_parts: list[str] = []
         resource_result: dict[str, Any] | None = None
         learner_profile = dict(context.get("learner_profile") or {})
+        teacher_scope = context.get("teacher_scope")
+        if isinstance(teacher_scope, dict):
+            learner_profile["teacher_scope"] = teacher_scope
 
         try:
             if "learner_profiling_agent" in selected:
@@ -218,6 +226,23 @@ class CoordinatorWorkflow:
                     resource_result=resource_result,
                 )
                 plan_parts.append("配套练习")
+
+            if "qa_agent" in selected:
+                outputs["qa_agent"] = self._run_qa_agent(
+                    payload=payload,
+                    knowledge_point=knowledge_point,
+                    learner_profile=learner_profile,
+                    context=context,
+                    session=session,
+                )
+                plan_parts.append("qa")
+
+            if "evaluation_feedback_agent" in selected:
+                outputs["evaluation_feedback_agent"] = self._run_evaluation_agent(
+                    payload=payload,
+                    context=context,
+                )
+                plan_parts.append("evaluation")
 
             failed = [name for name, output in outputs.items() if output.get("status") == "failed"]
             status = "partial" if failed else "success"
@@ -291,6 +316,95 @@ class CoordinatorWorkflow:
             "status": "completed",
             "exercise_set": ExerciseGenerationService().generate_exercises(request),
         }
+
+    def _run_qa_agent(
+        self,
+        *,
+        payload: CoordinationRequest,
+        knowledge_point: str,
+        learner_profile: dict[str, Any],
+        context: dict[str, Any],
+        session: Session,
+    ) -> dict[str, Any]:
+        current_points = context.get("current_knowledge_points")
+        if not isinstance(current_points, list):
+            current_points = [knowledge_point] if knowledge_point else []
+
+        session_id = context.get("qa_session_id", context.get("session_id"))
+        request = QARequest(
+            student_id=str(context.get("student_id") or payload.user_id),
+            subject=str(context.get("subject") or "Python 绋嬪簭璁捐"),
+            grade=str(context.get("grade") or context.get("learning_stage") or "university"),
+            question=str(context.get("question") or context.get("request_text") or payload.intent).strip(),
+            session_id=int(session_id) if session_id is not None else None,
+            session_title=str(context.get("session_title") or ""),
+            student_answer=str(context.get("student_answer") or ""),
+            wrong_answer=str(context.get("wrong_answer") or ""),
+            current_knowledge_points=[str(item) for item in current_points if str(item).strip()],
+            learning_route=dict(context.get("learning_route") or {}),
+            error_book=dict(context.get("error_book") or {}),
+            learning_history={
+                **dict(context.get("learning_history") or {}),
+                "learner_profile": learner_profile,
+            },
+        )
+        try:
+            return {"status": "completed", "qa": QAService(session).analyze_question(request)}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
+
+    def _run_evaluation_agent(
+        self,
+        *,
+        payload: CoordinationRequest,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        service = ReportService()
+        try:
+            evaluation: dict[str, Any] = {
+                "suggestions": self._to_plain_data(
+                    self._run_async(service.generate_learning_suggestions(payload.user_id))
+                ),
+                "profile_snapshot": self._to_plain_data(
+                    self._run_async(service.generate_profile_snapshot(payload.user_id))
+                ),
+                "mistake_statistics": self._to_plain_data(
+                    self._run_async(service.get_mistake_statistics(payload.user_id))
+                ),
+            }
+            if context.get("include_stage_report"):
+                evaluation["stage_report"] = self._to_plain_data(
+                    self._run_async(service.generate_stage_report_detail(payload.user_id))
+                )
+            if context.get("include_comprehensive_report"):
+                evaluation["comprehensive_report"] = self._to_plain_data(
+                    self._run_async(service.generate_comprehensive_report_detail(payload.user_id))
+                )
+            return {"status": "completed", "evaluation": evaluation}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
+
+    def _run_async(self, coroutine: Any) -> Any:
+        """Run an async evaluation-service method from the sync coordinator path."""
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coroutine)
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, coroutine).result()
+
+    def _to_plain_data(self, value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, dict):
+            return {key: self._to_plain_data(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._to_plain_data(item) for item in value]
+        return value
 
     def _resolve_knowledge_point(self, payload: CoordinationRequest) -> str:
         context = payload.payload or {}

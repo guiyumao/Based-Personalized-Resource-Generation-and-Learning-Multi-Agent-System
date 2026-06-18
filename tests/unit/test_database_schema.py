@@ -21,6 +21,7 @@ def test_metadata_contains_expected_tables() -> None:
         "exercises",
         "answer_records",
         "learning_reports",
+        "teaching_scopes",
     }
     assert expected_tables.issubset(Base.metadata.tables.keys())
 

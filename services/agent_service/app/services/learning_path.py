@@ -22,6 +22,7 @@ class LearningPathService:
         daily_minutes = request.daily_minutes
         estimated_days = 3 if daily_minutes >= 45 else 4
         style = str(request.learner_profile.get("learning_style", "visual"))
+        teacher_scope = self._extract_teacher_scope(request.learner_profile)
 
         payload = {
             "user_id": request.user_id,
@@ -100,6 +101,7 @@ class LearningPathService:
                 },
             ],
         }
+        payload = self._apply_teacher_scope_to_path(payload, teacher_scope)
         return self._persist_generated_path(request.user_id, payload) if self.db is not None else payload
 
     def get_latest_path(self, user_id: int) -> dict[str, object] | None:
@@ -195,3 +197,62 @@ class LearningPathService:
                 task.setdefault("completed", False)
                 task.setdefault("status", "completed" if task.get("completed") else "pending")
         return data
+
+    def _extract_teacher_scope(self, learner_profile: dict[str, object]) -> dict[str, object] | None:
+        raw_scope = learner_profile.get("teacher_scope")
+        if isinstance(raw_scope, dict):
+            return deepcopy(raw_scope)
+        if not learner_profile.get("teacher_scope_id"):
+            return None
+        return {
+            "id": learner_profile.get("teacher_scope_id"),
+            "knowledge_points": learner_profile.get("teacher_knowledge_points", []),
+            "learning_direction": learner_profile.get("teacher_learning_direction", ""),
+            "teaching_goal": learner_profile.get("teacher_teaching_goal", ""),
+            "courseware_title": learner_profile.get("teacher_courseware_title", ""),
+            "courseware_content": learner_profile.get("teacher_courseware_content", ""),
+        }
+
+    def _apply_teacher_scope_to_path(
+        self,
+        payload: dict[str, object],
+        teacher_scope: dict[str, object] | None,
+    ) -> dict[str, object]:
+        if not teacher_scope:
+            payload.setdefault("teacher_scope", None)
+            return payload
+
+        knowledge_points = teacher_scope.get("knowledge_points", [])
+        if not isinstance(knowledge_points, list) or not knowledge_points:
+            knowledge_points = [payload["knowledge_point"]]
+        knowledge_points_text = " / ".join(str(item) for item in knowledge_points[:5])
+        direction = str(teacher_scope.get("learning_direction") or "")
+        goal = str(teacher_scope.get("teaching_goal") or "")
+        courseware_title = str(teacher_scope.get("courseware_title") or "")
+
+        payload["teacher_scope"] = teacher_scope
+        payload["overview"] = (
+            f"教师已划定学习范围：{knowledge_points_text}。"
+            f"{direction or '请先完成教师发布的课件，再完成配套练习与复盘。'}"
+        )
+
+        stages = payload.get("stages", [])
+        if not isinstance(stages, list) or not stages:
+            return payload
+
+        first_stage = stages[0]
+        if isinstance(first_stage, dict):
+            first_stage["title"] = "教师范围学习启动"
+            first_stage["description"] = direction or first_stage.get("description", "")
+            tasks = first_stage.get("tasks", [])
+            if isinstance(tasks, list) and tasks:
+                first_task = tasks[0]
+                if isinstance(first_task, dict):
+                    first_task["title"] = f"学习教师发布课件：{courseware_title or payload['knowledge_point']}"
+                    first_task["objective"] = goal or first_task.get("objective", "")
+                    first_task["teacher_scope_id"] = teacher_scope.get("id")
+                    first_task["teacher_courseware_content"] = teacher_scope.get("courseware_content", "")
+                if len(tasks) > 1 and isinstance(tasks[1], dict):
+                    tasks[1]["objective"] = f"确认教师划定范围内的知识关联：{knowledge_points_text}"
+
+        return payload

@@ -4,6 +4,8 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import {
   agentApi,
+  teacherApi,
+  type ApiEnvelope,
   type CoordinationResponse,
   type ExerciseGenerationPayload,
   type ExerciseGenerationResponse,
@@ -11,6 +13,7 @@ import {
   type LearningPathResponse,
   type ResourcePayload,
   type ResourceResult,
+  type TeachingScopeItem,
 } from '../../api'
 
 const authStore = useAuthStore()
@@ -31,8 +34,14 @@ const learningPath = ref<LearningPathResponse | null>(null)
 const loading = ref(false)
 const pathError = ref('')
 const coordination = ref<CoordinationResponse | null>(null)
+const teachingScopes = ref<TeachingScopeItem[]>([])
+const scopeLoading = ref(false)
+const selectedTeachingScopeId = ref<number | null>(null)
 
 const selectedAgents = computed(() => coordination.value?.selected_agents ?? [])
+const selectedTeachingScope = computed(() =>
+  teachingScopes.value.find((scope) => scope.id === selectedTeachingScopeId.value) ?? null,
+)
 const completedStages = computed(() => learningPath.value?.stages.filter((stage) => stage.tasks.every((task) => task.completed)).length ?? 0)
 const totalStages = computed(() => learningPath.value?.stages.length ?? 0)
 const progressPct = computed(() => totalStages.value > 0 ? Math.round((completedStages.value / totalStages.value) * 100) : 0)
@@ -47,13 +56,91 @@ const agentOutputSummary = computed(() => {
   ].filter(Boolean).join(' · ')
 })
 
+async function fetchTeachingScopes() {
+  scopeLoading.value = true
+  try {
+    const { data } = await teacherApi.get<ApiEnvelope<TeachingScopeItem[]>>('/teacher/students/me/teaching-scopes')
+    teachingScopes.value = data.data
+  } catch {
+    teachingScopes.value = []
+  } finally {
+    scopeLoading.value = false
+  }
+}
+
+function applyTeachingScope(scope: TeachingScopeItem) {
+  selectedTeachingScopeId.value = scope.id
+  pathForm.knowledge_point = scope.knowledge_points[0] ?? ''
+  pathForm.subject = scope.courseware_title
+  pathForm.learner_profile = {
+    ...pathForm.learner_profile,
+    teacher_scope_id: scope.id,
+    teacher_knowledge_points: scope.knowledge_points,
+    teacher_learning_direction: scope.learning_direction,
+    teacher_teaching_goal: scope.teaching_goal,
+    teacher_courseware_title: scope.courseware_title,
+    teacher_courseware_content: scope.courseware_content,
+  }
+  ElMessage.success('已套用教师划定的学习范围')
+}
+
+function syncTeacherScopeFromPath(path: LearningPathResponse) {
+  if (!path.teacher_scope) {
+    return
+  }
+  const exists = teachingScopes.value.some((scope) => scope.id === path.teacher_scope!.id)
+  if (!exists) {
+    teachingScopes.value.unshift(path.teacher_scope)
+  }
+  applyTeachingScope(path.teacher_scope)
+  persistTeacherScopeCourseware(path.teacher_scope, path)
+}
+
+function persistTeacherScopeCourseware(scope: TeachingScopeItem, path: LearningPathResponse) {
+  if (!scope.courseware_content.trim()) {
+    return
+  }
+  const content = scope.courseware_content.trim().startsWith('#')
+    ? scope.courseware_content
+    : `# ${scope.courseware_title}\n\n${scope.courseware_content}`
+  const resourceResult: ResourceResult = {
+    user_id: user.userId,
+    knowledge_point: path.knowledge_point,
+    resource_type: 'courseware',
+    resource_style: 'teacher',
+    references: [],
+    content,
+    variants: [
+      {
+        variant_id: `teacher-scope-${scope.id}`,
+        title: scope.courseware_title,
+        summary: scope.learning_direction,
+        resource_style: 'interactive',
+        content,
+        is_recommended: true,
+      },
+    ],
+  }
+  window.sessionStorage.setItem(COURSEWARE_STORAGE_KEY, JSON.stringify({
+    subject: path.subject,
+    topic: path.knowledge_point,
+    goal: path.overview,
+    selectedVariantId: `teacher-scope-${scope.id}`,
+    generatedAt: Date.now(),
+    resourceResult,
+    teacherScope: scope,
+  }))
+}
+
 onMounted(async () => {
+  await fetchTeachingScopes()
   try {
     const { data } = await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)
     if (data?.stages?.length) {
       learningPath.value = data
       pathForm.subject = data.subject
       pathForm.knowledge_point = data.knowledge_point
+      syncTeacherScopeFromPath(data)
     }
   } catch {
     // First visit may not have an active path yet.
@@ -83,7 +170,11 @@ async function generateLearningPath() {
     learningPath.value = coordinatedPath
     pathForm.subject = coordinatedPath.subject
     pathForm.knowledge_point = coordinatedPath.knowledge_point
-    persistCoordinatedCourseware()
+    const hasTeacherScope = Boolean(coordinatedPath.teacher_scope)
+    syncTeacherScopeFromPath(coordinatedPath)
+    if (!hasTeacherScope) {
+      persistCoordinatedCourseware()
+    }
     persistCoordinatedExercises()
     ElMessage.success(agentOutputSummary.value ? '学习路径、课件和练习已生成' : '学习路径已生成')
   } catch (error: any) {
@@ -96,6 +187,7 @@ async function generateLearningPath() {
 }
 
 async function requestCoordination() {
+  const teacherScope = selectedTeachingScope.value
   try {
     const { data } = await agentApi.post<CoordinationResponse>('/agents/coordinate', {
       user_id: user.userId,
@@ -109,6 +201,11 @@ async function requestCoordination() {
         resource_style: 'interactive',
         generation_mode: 'self_test',
         exercise_count: 5,
+        request_text: teacherScope
+          ? `${teacherScope.learning_direction}\n${teacherScope.teaching_goal}\n${teacherScope.courseware_content}`
+          : undefined,
+        courseware_content: teacherScope?.courseware_content ?? undefined,
+        teacher_scope: teacherScope ?? undefined,
       },
     })
     coordination.value = (data as any).data ?? data
@@ -307,6 +404,26 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
       </main>
 
       <aside class="path-side">
+        <section class="side-panel">
+          <h3>教师学习范围</h3>
+          <p v-if="scopeLoading">正在同步教师划定的学习范围...</p>
+          <div v-else-if="teachingScopes.length" class="scope-list">
+            <article
+              v-for="scope in teachingScopes"
+              :key="scope.id"
+              class="scope-card"
+              :class="{ active: selectedTeachingScopeId === scope.id }"
+            >
+              <strong>{{ scope.courseware_title }}</strong>
+              <span>{{ scope.knowledge_points.join(' / ') }}</span>
+              <p>{{ scope.learning_direction }}</p>
+              <p v-if="scope.teaching_goal">{{ scope.teaching_goal }}</p>
+              <button @click="applyTeachingScope(scope)">套用</button>
+            </article>
+          </div>
+          <p v-else>暂无教师投放的学习范围。</p>
+        </section>
+
         <section class="side-panel">
           <h3>路径统计</h3>
           <div class="progress-line">
@@ -575,6 +692,47 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   font-size: 11px;
   font-weight: 700;
+}
+
+.scope-list {
+  display: grid;
+  gap: 10px;
+}
+
+.scope-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.scope-card.active {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+.scope-card strong,
+.scope-card span {
+  display: block;
+}
+
+.scope-card span,
+.scope-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.scope-card button {
+  justify-self: start;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--text);
+  padding: 7px 12px;
+  font: inherit;
+  cursor: pointer;
 }
 
 .warning-text {
