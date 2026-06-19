@@ -1,0 +1,11 @@
+server:
+  port: 8001
+
+spring:
+  application:
+    name: user-service
+
+security:
+  jwt:
+    secret: ${JWT_SECRET:learning-system-secret-learning-system-secret}
+    expiration-seconds: ${JWT_EXPIRATION_SECONDS:86400}

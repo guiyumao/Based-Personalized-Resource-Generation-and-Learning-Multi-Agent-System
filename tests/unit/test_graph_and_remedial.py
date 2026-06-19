@@ -1,0 +1,152 @@
+"""Unit tests for graph visualization and remedial exercise generation."""
+
+import asyncio
+
+from services.agent_service.app.connectors.neo4j_connector import KnowledgeGraphRepository
+from services.evaluation_service.app.schemas.report import PracticeSubmission
+from services.evaluation_service.app.services.report_service import ReportService
+
+
+class FakeLLMClient:
+    """Deterministic async LLM stub for evaluation tests."""
+
+    async def score_subjective(self, **_: object) -> dict[str, object]:
+        return {
+            "score": 7.0,
+            "comment": "关键点基本完整",
+            "suggestion": "补充边界条件说明",
+        }
+
+
+class FakePublisher:
+    """No-op publisher for isolated unit tests."""
+
+    def publish(self, queue_name: str, message: dict[str, object]) -> None:
+        return None
+
+
+class _FailingSession:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def run(self, *args, **kwargs):
+        raise RuntimeError("neo4j unavailable")
+
+
+class _FailingDriver:
+    def session(self):
+        return _FailingSession()
+
+
+class _SparseRecord:
+    def __getitem__(self, key):
+        if key in {"deps", "nexts"}:
+            return []
+        return {"name": "高数"}
+
+
+class _SparseSession:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def run(self, *args, **kwargs):
+        return self
+
+    def single(self):
+        return _SparseRecord()
+
+
+class _SparseDriver:
+    def session(self):
+        return _SparseSession()
+
+
+def test_graph_visualization_fallback_contains_nodes_and_edges() -> None:
+    """Fallback graph visualization should provide nodes and edges."""
+
+    repository = KnowledgeGraphRepository()
+    result = repository.get_visualization_graph("Python 循环", 2)
+
+    assert result["nodes"]
+    assert result["edges"]
+
+
+def test_graph_dependencies_fallback_when_driver_errors() -> None:
+    """Dependency queries should still return fallback paths when Neo4j errors."""
+
+    repository = KnowledgeGraphRepository()
+    repository._driver = _FailingDriver()
+
+    result = repository.find_dependency_path("Python 循环", 2)
+
+    assert result
+    assert all("path" in item for item in result)
+    assert any("顺序结构" in item["path"] or "条件判断" in item["path"] for item in result)
+
+
+def test_broad_math_topic_fallback_returns_course_blueprint() -> None:
+    """Broad math queries should expand to a useful course-level graph."""
+
+    repository = KnowledgeGraphRepository()
+    repository._driver = None
+
+    graph = repository.get_visualization_graph("高数", 3)
+    dependencies = repository.find_dependency_path("高数", 3)
+    resources = repository.find_related_resources("高数")
+
+    labels = {node["label"] for node in graph["nodes"]}
+    assert len(graph["nodes"]) >= 12
+    assert len(graph["edges"]) >= 12
+    assert {"极限与连续", "导数与微分", "定积分及应用", "多元函数微分"}.issubset(labels)
+    assert dependencies
+    assert resources
+
+
+def test_sparse_broad_topic_neo4j_result_is_enriched() -> None:
+    """Broad topics should not render as a single isolated Neo4j node."""
+
+    repository = KnowledgeGraphRepository()
+    repository._driver = _SparseDriver()
+
+    graph = repository.get_visualization_graph("高数", 3)
+
+    labels = {node["label"] for node in graph["nodes"]}
+    assert len(graph["nodes"]) >= 12
+    assert len(graph["edges"]) >= 12
+    assert "极限与连续" in labels
+    assert "定积分及应用" in labels
+
+
+def test_remedial_exercises_generated_from_mistakes(db_session, test_user) -> None:
+    """Wrong answers should produce variant remedial exercises."""
+
+    async def run() -> None:
+        service = ReportService(
+            llm_client=FakeLLMClient(),
+            publisher=FakePublisher(),
+        )
+        await service.evaluate_practice(
+            PracticeSubmission(
+                user_id=test_user.id,
+                exercise_id=130000 + test_user.id,
+                knowledge_point="Python 循环",
+                question_type="choice",
+                user_answer="A",
+                correct_answer="B",
+                analysis="需要关注循环的核心用法。",
+                time_spent=10,
+            )
+        )
+
+        remedial = await service.generate_remedial_exercises(test_user.id)
+
+        assert remedial.generated_from_mistakes == 1
+        assert remedial.exercises[0].source_exercise_id == 130000 + test_user.id
+
+    asyncio.run(run())
