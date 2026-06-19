@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "security.jwt")
 public class JwtProperties {
 
-    private String secret = "learning-system-secret-learning-system-secret";
+    private String secret;
     private long expirationSeconds = 86400;
 
     public String getSecret() {

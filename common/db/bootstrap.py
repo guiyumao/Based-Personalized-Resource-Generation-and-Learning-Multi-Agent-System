@@ -10,6 +10,7 @@ from common.db.session import engine
 from common.models import learning  # noqa: F401
 from common.models.learning import User, UserProfile
 from common.security.auth import hash_password, verify_password
+from common.config import get_settings
 
 
 def ensure_database_schema() -> None:
@@ -22,13 +23,18 @@ def ensure_database_schema() -> None:
 def ensure_default_admin(db: Session) -> None:
     """Seed a local administrator account for manual testing."""
 
-    admin = db.query(User).filter(User.username == "admin").first()
+    settings = get_settings()
+    if not settings.default_admin_username or not settings.default_admin_password:
+        return
+
+    admin_email = settings.default_admin_email or f"{settings.default_admin_username}@example.com"
+    admin = db.query(User).filter(User.username == settings.default_admin_username).first()
     if admin is None:
         admin = User(
-            username="admin",
-            password_hash=hash_password("admin123"),
+            username=settings.default_admin_username,
+            password_hash=hash_password(settings.default_admin_password),
             role="admin",
-            email="admin@example.com",
+            email=admin_email,
         )
         db.add(admin)
         db.flush()
@@ -49,11 +55,11 @@ def ensure_default_admin(db: Session) -> None:
     if admin.role != "admin":
         admin.role = "admin"
         updated = True
-    if admin.email != "admin@example.com":
-        admin.email = "admin@example.com"
+    if admin.email != admin_email:
+        admin.email = admin_email
         updated = True
-    if not verify_password("admin123", admin.password_hash):
-        admin.password_hash = hash_password("admin123")
+    if not verify_password(settings.default_admin_password, admin.password_hash):
+        admin.password_hash = hash_password(settings.default_admin_password)
         updated = True
 
     profile = db.get(UserProfile, admin.id)

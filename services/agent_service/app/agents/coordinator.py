@@ -18,6 +18,7 @@ from common.schemas.agent import (
 )
 from services.agent_service.app.connectors.neo4j_connector import KnowledgeGraphRepository
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
+from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.learning_path import LearningPathService
 from services.agent_service.app.services.personalization import PersonalizationService
 from services.agent_service.app.services.qa_service import QAService
@@ -69,7 +70,13 @@ class CoordinatorWorkflow:
         """Select downstream agents based on request intent and context."""
 
         intent = state["intent"].lower()
+        payload = state.get("payload", {})
         selected_agents: list[str] = []
+
+        if payload.get("only_exercises"):
+            selected_agents.extend(["learner_profiling_agent", "exercise_generation_agent"])
+        if payload.get("force_agents"):
+            selected_agents.extend(str(agent) for agent in payload["force_agents"])
 
         if self._matches(intent, ["课件", "练习", "习题", "资源", "courseware", "exercise", "resource"]):
             selected_agents.extend(["learner_profiling_agent", "resource_generation_agent"])
@@ -80,7 +87,6 @@ class CoordinatorWorkflow:
         if self._matches(intent, ["答疑", "解释", "问题", "debug", "question", "qa"]):
             selected_agents.extend(["knowledge_graph_agent", "qa_agent"])
 
-        payload = state.get("payload", {})
         if payload.get("include_exercises"):
             selected_agents.append("exercise_generation_agent")
         if not selected_agents:
@@ -151,7 +157,7 @@ class CoordinatorWorkflow:
 
         selected = set(result.get("selected_agents", []))
         knowledge_point = self._resolve_knowledge_point(payload)
-        knowledge_required_agents = selected - {"qa_agent", "evaluation_feedback_agent"}
+        knowledge_required_agents = selected - {"qa_agent", "evaluation_feedback_agent", "knowledge_base_agent"}
         if knowledge_required_agents and not knowledge_point:
             return {
                 **result,
@@ -186,6 +192,9 @@ class CoordinatorWorkflow:
                     "weak_question_types": learner_profile.get("weak_question_types", []),
                     "recent_mistakes": snapshot.recent_mistakes,
                     "basis": self._build_profile_basis(snapshot),
+                    "agent_handoff": learner_profile.get("agent_handoff", {}),
+                    "profile_dimensions": learner_profile.get("profile_dimensions", {}),
+                    "preferred_resource_modes": learner_profile.get("preferred_resource_modes", []),
                     "learner_profile": learner_profile,
                 }
                 plan_parts.append("画像")
@@ -193,6 +202,10 @@ class CoordinatorWorkflow:
             if "knowledge_graph_agent" in selected:
                 outputs["knowledge_graph_agent"] = self._run_graph_agent(knowledge_point, context)
                 plan_parts.append("知识图谱")
+
+            if "knowledge_base_agent" in selected:
+                outputs["knowledge_base_agent"] = self._run_knowledge_base_agent(context)
+                plan_parts.append("knowledge-base")
 
             if "path_planning_agent" in selected:
                 path_request = LearningPathRequest(
@@ -205,6 +218,7 @@ class CoordinatorWorkflow:
                 outputs["path_planning_agent"] = {
                     "status": "completed",
                     "learning_path": LearningPathService(session).generate_path(path_request),
+                    "profile_handoff": self._agent_handoff(learner_profile, "path_planning_agent"),
                 }
                 plan_parts.append("学习路径")
 
@@ -266,10 +280,47 @@ class CoordinatorWorkflow:
             return {
                 "status": "completed",
                 "dependencies": repository.find_dependency_path(knowledge_point, max_depth),
+                "related_resources": (
+                    repository.find_related_resources(knowledge_point)
+                    if hasattr(repository, "find_related_resources")
+                    else []
+                ),
                 "visualization": repository.get_visualization_graph(knowledge_point, min(max_depth, 2)),
             }
         finally:
             repository.close()
+
+    def _run_knowledge_base_agent(self, context: dict[str, Any]) -> dict[str, Any]:
+        service = KnowledgeBaseService()
+        operation = str(context.get("operation") or "list")
+        subject = context.get("subject")
+        query = str(context.get("query") or "")
+        top_k = int(context.get("top_k") or 6)
+
+        if operation == "search":
+            articles = service.list_articles()[:top_k] if not query.strip() else service.search_by_keywords(query, top_k=top_k)
+            return {
+                "status": "completed",
+                "operation": operation,
+                "query": query,
+                "items": [service.article_to_dict(article) for article in articles],
+            }
+
+        if operation == "article":
+            article_id = str(context.get("article_id") or "")
+            for article in service.list_articles():
+                payload = service.article_to_dict(article)
+                if payload["id"] == article_id:
+                    return {"status": "completed", "operation": operation, "article": payload}
+            return {"status": "failed", "error": "Knowledge article not found"}
+
+        articles = service.list_articles(subject=str(subject)) if subject else service.list_articles()
+        return {
+            "status": "completed",
+            "operation": "list",
+            "subjects": service.list_subjects(),
+            "items": [service.article_to_dict(article) for article in articles],
+        }
 
     def _run_resource_agent(
         self,
@@ -291,7 +342,11 @@ class CoordinatorWorkflow:
             resource = ResourceGenerationService().generate_courseware_with_plan(request)
         except ResourceGenerationError as exc:
             return {"status": "failed", "error": str(exc)}, None
-        return {"status": "completed", "resource": resource}, resource
+        return {
+            "status": "completed",
+            "resource": resource,
+            "profile_handoff": self._agent_handoff(learner_profile, "resource_generation_agent"),
+        }, resource
 
     def _run_exercise_agent(
         self,
@@ -315,6 +370,7 @@ class CoordinatorWorkflow:
         return {
             "status": "completed",
             "exercise_set": ExerciseGenerationService().generate_exercises(request),
+            "profile_handoff": self._agent_handoff(learner_profile, "exercise_generation_agent"),
         }
 
     def _run_qa_agent(
@@ -349,7 +405,11 @@ class CoordinatorWorkflow:
             },
         )
         try:
-            return {"status": "completed", "qa": QAService(session).analyze_question(request)}
+            return {
+                "status": "completed",
+                "qa": QAService(session).analyze_question(request),
+                "profile_handoff": self._agent_handoff(learner_profile, "qa_agent"),
+            }
         except Exception as exc:
             return {"status": "failed", "error": str(exc)}
 
@@ -428,3 +488,11 @@ class CoordinatorWorkflow:
 
     def _matches(self, intent: str, tokens: list[str]) -> bool:
         return any(token.lower() in intent for token in tokens)
+
+    def _agent_handoff(self, learner_profile: dict[str, Any], agent_name: str) -> list[str]:
+        handoff = learner_profile.get("agent_handoff", {})
+        if isinstance(handoff, dict):
+            values = handoff.get(agent_name, [])
+            if isinstance(values, list):
+                return [str(item) for item in values if str(item).strip()]
+        return []

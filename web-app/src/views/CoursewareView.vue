@@ -392,8 +392,8 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
 </script>
 
 <template>
-  <div style="max-width:1100px">
-    <header style="padding:28px 32px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px">
+  <div class="courseware-page">
+    <header class="courseware-hero">
       <div>
         <div style="font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin-bottom:8px">独立课件页</div>
         <h1>{{ coursewareTitle }}</h1>
@@ -416,13 +416,13 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
         </p>
       </div>
 
-      <div style="display:grid;gap:12px">
-        <div style="padding:16px;border-radius:14px;background:var(--panel);border:1px solid var(--line);min-width:140px">
+      <div class="hero-stats">
+        <div class="hero-stat-card">
           <div style="font-size:12px;letter-spacing:.06em;color:var(--muted)">生成时间</div>
           <div style="font-size:22px;font-weight:700;margin-top:6px">{{ generatedTimeLabel }}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:4px">课件快照保存时间</div>
         </div>
-        <div style="padding:16px;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
+        <div class="hero-stat-card">
           <div style="font-size:12px;letter-spacing:.06em;color:var(--muted)">章节数量</div>
           <div style="font-size:28px;font-weight:700;color:var(--accent);margin-top:6px">{{ resourceSections.length }}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:4px">已拆分为独立章节</div>
@@ -464,16 +464,16 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
       </div>
     </section>
 
-    <section v-if="snapshot" style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line)">
-      <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:14px">
+    <section v-if="snapshot" class="courseware-reader-shell">
+      <div class="reader-head">
         <div>
           <div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)">正式课件</div>
           <h2 style="margin:6px 0 0;font-size:22px">专注阅读模式</h2>
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:240px 1fr;gap:20px;align-items:start">
-        <aside style="padding:18px;border-radius:14px;background:color-mix(in srgb,var(--accent) 6%,transparent);border:1px solid var(--line);position:sticky;top:80px">
+      <div class="reader-layout">
+        <aside class="reader-toc">
           <div class="courseware-reading-progress">
             <div style="display:flex;justify-content:space-between;gap:12px;align-items:center">
               <strong>阅读拆解进度</strong>
@@ -606,3 +606,240 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
     </section>
   </div>
 </template>
+
+<style scoped>
+.courseware-page {
+  max-width: 1100px;
+  color: var(--text);
+}
+
+.courseware-hero,
+.courseware-reader-shell {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+}
+
+.courseware-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 28px 32px;
+  margin-bottom: 20px;
+}
+
+.courseware-hero h1,
+.courseware-reader-shell h2,
+.learning-section h3 {
+  color: var(--text);
+}
+
+.courseware-hero p,
+.learning-line,
+.markdown-list,
+.reference-card p,
+.courseware-reading-progress p {
+  color: var(--muted);
+}
+
+.hero-stats {
+  display: grid;
+  gap: 12px;
+}
+
+.hero-stat-card {
+  min-width: 140px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-strong);
+}
+
+.courseware-reader-shell {
+  padding: 22px;
+}
+
+.reader-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.reader-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.reader-toc {
+  position: sticky;
+  top: 80px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+
+.courseware-reading-progress {
+  padding: 12px;
+  margin-bottom: 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.courseware-reading-progress strong,
+.courseware-reading-progress span {
+  color: var(--accent);
+}
+
+.outline-list {
+  display: grid;
+  gap: 10px;
+}
+
+.outline-item {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.outline-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  color: var(--accent);
+}
+
+.reader-content {
+  display: grid;
+  gap: 14px;
+}
+
+.learning-section {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-strong);
+}
+
+.learning-section h3 {
+  margin: 0 0 12px;
+}
+
+.learning-line {
+  line-height: 1.8;
+}
+
+.tag-row,
+.reference-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.agent-tag {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.report-evidence-card,
+.reference-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+.report-evidence-card {
+  padding: 14px;
+}
+
+.report-evidence-card span,
+.reference-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.report-evidence-card strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.reference-card {
+  flex: 1 1 220px;
+  padding: 14px;
+}
+
+.reference-card strong {
+  color: var(--text);
+}
+
+.clickable-card {
+  cursor: pointer;
+}
+
+.reference-card.active,
+.clickable-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-strong));
+}
+
+.markdown-list {
+  line-height: 1.8;
+  padding-left: 20px;
+}
+
+.code-block {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.code-block-label {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.code-block pre {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .reader-layout,
+  .report-evidence-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reader-toc {
+    position: static;
+  }
+}
+</style>

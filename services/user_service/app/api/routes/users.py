@@ -11,6 +11,7 @@ from common.schemas.user import (
     LearnerProfileDashboard,
     ProfileChatRequest,
     ProfileChatResponse,
+    PROFILE_DIMENSION_KEYS as PROFILE_SCHEMA_DIMENSION_KEYS,
     TokenResponse,
     UserCreate,
     UserLogin,
@@ -18,6 +19,7 @@ from common.schemas.user import (
     UserProfileUpdate,
     UserRegister,
     UserRead,
+    sanitize_profile_dimensions,
     to_user_profile_read,
     to_user_read,
 )
@@ -157,6 +159,20 @@ def update_profile(user_id: int, payload: UserProfileUpdate, db: Session = Depen
     return to_user_profile_read(profile)
 
 
+@router.delete("/{user_id}/profile/dimensions/{dimension_key}", response_model=UserProfileRead)
+def delete_profile_dimension(user_id: int, dimension_key: str, db: Session = Depends(get_db)) -> UserProfileRead:
+    """Delete one learner-profile dimension and refresh agent handoff context."""
+
+    service = ProfileBuilderService(db)
+    try:
+        profile = service.delete_profile_dimension(user_id, dimension_key)
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 400 if detail == "Invalid profile dimension" else 404
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return to_user_profile_read(profile)
+
+
 @router.get("/{user_id}/profile/status", response_model=dict[str, object])
 def get_profile_status(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
     """Check whether the learner profile is complete enough to skip setup."""
@@ -171,8 +187,7 @@ def get_profile_status(user_id: int, db: Session = Depends(get_db)) -> dict[str,
         }
 
     habits = profile.habits if isinstance(profile.habits, dict) else {}
-    raw_dimensions = habits.get("profile_dimensions")
-    dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
+    dimensions = sanitize_profile_dimensions(habits.get("profile_dimensions"))
     filled = sum(1 for key in PROFILE_DIMENSION_KEYS if dimensions.get(key))
     skipped = habits.get("profile_skipped", False)
 
@@ -180,8 +195,8 @@ def get_profile_status(user_id: int, db: Session = Depends(get_db)) -> dict[str,
         "completed": filled >= 3,
         "skipped": bool(skipped),
         "dimensions_filled": filled,
-        "total_dimensions": len(PROFILE_DIMENSION_KEYS),
-        "dimensions": {key: bool(dimensions.get(key)) for key in PROFILE_DIMENSION_KEYS},
+        "total_dimensions": len(PROFILE_SCHEMA_DIMENSION_KEYS),
+        "dimensions": {key: bool(dimensions.get(key)) for key in PROFILE_SCHEMA_DIMENSION_KEYS},
     }
 
 

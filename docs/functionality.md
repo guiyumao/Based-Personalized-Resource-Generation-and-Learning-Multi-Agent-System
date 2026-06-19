@@ -30,7 +30,7 @@
 本地默认账号：
 
 - 用户名：`admin`
-- 密码：`admin123`
+- 密码：由 `.env` 中的 `DEFAULT_ADMIN_PASSWORD` 配置
 
 接口清单：
 

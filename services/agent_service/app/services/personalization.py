@@ -37,6 +37,12 @@ class PersonalizationService:
         learning_style = profile.learning_style if profile and profile.learning_style else fallback_profile.get("learning_style", "")
         cognitive_abilities = profile.cognitive_abilities if profile and isinstance(profile.cognitive_abilities, dict) else {}
         habits = profile.habits if profile and isinstance(profile.habits, dict) else {}
+        profile_dimensions = habits.get("profile_dimensions") if isinstance(habits.get("profile_dimensions"), dict) else {}
+        collaboration_context = (
+            habits.get("agent_collaboration_context")
+            if isinstance(habits.get("agent_collaboration_context"), dict)
+            else {}
+        )
 
         records = self._load_records(user_id, knowledge_point)
         correct_count = sum(1 for item in records if item["is_correct"])
@@ -53,6 +59,15 @@ class PersonalizationService:
         learner_profile = {
             **fallback_profile,
             "learning_style": learning_style,
+            "profile_dimensions": profile_dimensions,
+            "agent_collaboration_context": collaboration_context,
+            "agent_handoff": collaboration_context.get("agent_handoff", {}) if isinstance(collaboration_context, dict) else {},
+            "preferred_resource_modes": collaboration_context.get("preferred_resource_modes", []) if isinstance(collaboration_context, dict) else [],
+            "known_background": collaboration_context.get("known_background", "") if isinstance(collaboration_context, dict) else "",
+            "interest_direction": collaboration_context.get("interest_direction", "") if isinstance(collaboration_context, dict) else "",
+            "goal_orientation": collaboration_context.get("goal_orientation", "") if isinstance(collaboration_context, dict) else "",
+            "weakness_hint": collaboration_context.get("weakness_hint", "") if isinstance(collaboration_context, dict) else "",
+            "learning_speed": collaboration_context.get("learning_speed", "") if isinstance(collaboration_context, dict) else "",
             "mastery": explicit_mastery,
             "cognitive_abilities": cognitive_abilities,
             "habits": habits,

@@ -6,6 +6,52 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+PROFILE_DIMENSION_KEYS = (
+    "knowledgeBase",
+    "cognitiveStyle",
+    "errorPreference",
+    "learningSpeed",
+    "interestDirection",
+    "goalOrientation",
+)
+
+
+def sanitize_profile_dimensions(raw_dimensions: Any) -> dict[str, str]:
+    """Filter empty or obviously invalid stored learner-profile dimensions."""
+
+    if not isinstance(raw_dimensions, dict):
+        return {}
+
+    cleaned: dict[str, str] = {}
+    for key, raw_value in raw_dimensions.items():
+        if key not in PROFILE_DIMENSION_KEYS:
+            continue
+        value = str(raw_value).strip()
+        if not value:
+            continue
+        if _looks_like_bulk_profile_dump(value):
+            continue
+        cleaned[str(key)] = value
+    return cleaned
+
+
+def _looks_like_bulk_profile_dump(value: str) -> bool:
+    """Detect malformed dimension values that are actually pasted multi-dimension payloads."""
+
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    if "我想一次补充画像多维度" in normalized:
+        return True
+
+    marker_count = sum(
+        marker in normalized
+        for marker in ("知识基础", "认知风格", "易错偏好", "学习节奏", "兴趣方向", "目标导向")
+    )
+    if marker_count >= 2:
+        return True
+
+    return normalized.count("\n") >= 2 and "：" in normalized
+
+
 class UserCreate(BaseModel):
     """Payload used to create a new user account."""
 
@@ -55,7 +101,7 @@ class UserProfileUpdate(BaseModel):
 class ProfileChatRequest(BaseModel):
     """Payload for conversational learner-profile building."""
 
-    message: str = Field(min_length=1, max_length=1000)
+    message: str = Field(default="", max_length=1000)
 
 
 class ProfileChatResponse(BaseModel):
@@ -128,13 +174,7 @@ def to_user_profile_read(profile: object) -> UserProfileRead:
     habits = getattr(profile, "habits")
     profile_dimensions: dict[str, str] = {}
     if isinstance(habits, dict):
-        raw_dimensions = habits.get("profile_dimensions")
-        if isinstance(raw_dimensions, dict):
-            profile_dimensions = {
-                str(key): str(value).strip()
-                for key, value in raw_dimensions.items()
-                if str(value).strip()
-            }
+        profile_dimensions = sanitize_profile_dimensions(habits.get("profile_dimensions"))
 
     return UserProfileRead(
         user_id=getattr(profile, "user_id"),

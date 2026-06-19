@@ -23,7 +23,7 @@
 本地默认管理员账号：
 
 - 用户名：`admin`
-- 密码：`admin123`
+- 密码：由 `.env` 中的 `DEFAULT_ADMIN_PASSWORD` 配置
 
 ### 学习资源与路径
 

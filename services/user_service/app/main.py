@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from common.cors import get_cors_allow_origins
 from common.db.bootstrap import ensure_database_schema, ensure_default_admin
 from common.db.session import SessionLocal
 from common.logging.setup import configure_logging
@@ -17,10 +18,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5175",
-        "http://localhost:5175",
-    ],
+    allow_origins=get_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

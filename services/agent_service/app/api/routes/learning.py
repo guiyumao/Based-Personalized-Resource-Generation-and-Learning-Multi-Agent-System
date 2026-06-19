@@ -5,14 +5,14 @@ from sqlalchemy.orm import Session
 
 from common.db.session import get_db
 from common.schemas.agent import (
+    CoordinationRequest,
     ExerciseGenerationRequest,
     ExerciseGenerationResponse,
     LearningPathAdjustRequest,
     LearningPathRequest,
     LearningPathResponse,
 )
-from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
-from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
+from services.agent_service.app.agents.coordinator import CoordinatorWorkflow
 from services.agent_service.app.services.learning_path import LearningPathService
 
 router = APIRouter()
@@ -20,10 +20,29 @@ router = APIRouter()
 
 @router.post("/paths/generate", response_model=LearningPathResponse)
 def generate_learning_path(payload: LearningPathRequest, db: Session = Depends(get_db)) -> LearningPathResponse:
-    """Generate a lightweight personalized learning path."""
+    """Generate a personalized learning path through the multi-agent workflow."""
 
-    service = LearningPathService(db)
-    return LearningPathResponse(**service.generate_path(payload))
+    result = CoordinatorWorkflow(db).run(
+        CoordinationRequest(
+            user_id=payload.user_id,
+            intent="learning path plan",
+            knowledge_point=payload.knowledge_point,
+            payload={
+                **payload.model_dump(),
+                "execute": True,
+                "force_agents": [
+                    "learner_profiling_agent",
+                    "knowledge_graph_agent",
+                    "path_planning_agent",
+                ],
+            },
+        )
+    )
+    output = result.get("outputs", {}).get("path_planning_agent", {})
+    learning_path = output.get("learning_path")
+    if not isinstance(learning_path, dict):
+        raise HTTPException(status_code=503, detail="Path planning agent did not return a learning path")
+    return LearningPathResponse(**learning_path)
 
 
 @router.get("/paths/{user_id}", response_model=LearningPathResponse)
@@ -50,13 +69,26 @@ def adjust_learning_path(payload: LearningPathAdjustRequest, db: Session = Depen
 
 @router.get("/knowledge-base")
 def list_knowledge_base(subject: str | None = None) -> dict[str, object]:
-    """Return curated university knowledge articles for the student workspace."""
+    """Return knowledge articles through the knowledge-base agent."""
 
-    service = KnowledgeBaseService()
-    articles = service.list_articles(subject=subject)
+    result = CoordinatorWorkflow().run(
+        CoordinationRequest(
+            user_id=0,
+            intent="knowledge base catalog",
+            payload={
+                "execute": True,
+                "force_agents": ["knowledge_base_agent"],
+                "operation": "list",
+                "subject": subject,
+            },
+        )
+    )
+    output = result.get("outputs", {}).get("knowledge_base_agent", {})
+    if output.get("status") == "failed":
+        raise HTTPException(status_code=503, detail=str(output.get("error") or "Knowledge-base agent failed"))
     return {
-        "subjects": service.list_subjects(),
-        "items": [service.article_to_dict(article) for article in articles],
+        "subjects": output.get("subjects", []),
+        "items": output.get("items", []),
     }
 
 
@@ -65,34 +97,71 @@ def search_knowledge_base(
     q: str = Query(default="", min_length=0),
     top_k: int = Query(default=6, ge=1, le=20),
 ) -> dict[str, object]:
-    """Search curated university knowledge articles."""
+    """Search knowledge articles through the knowledge-base agent."""
 
-    service = KnowledgeBaseService()
-    if not q.strip():
-        articles = service.list_articles()[:top_k]
-    else:
-        articles = service.search_by_keywords(q, top_k=top_k)
+    result = CoordinatorWorkflow().run(
+        CoordinationRequest(
+            user_id=0,
+            intent="knowledge base search",
+            payload={
+                "execute": True,
+                "force_agents": ["knowledge_base_agent"],
+                "operation": "search",
+                "query": q,
+                "top_k": top_k,
+            },
+        )
+    )
+    output = result.get("outputs", {}).get("knowledge_base_agent", {})
+    if output.get("status") == "failed":
+        raise HTTPException(status_code=503, detail=str(output.get("error") or "Knowledge-base agent failed"))
     return {
-        "query": q,
-        "items": [service.article_to_dict(article) for article in articles],
+        "query": output.get("query", q),
+        "items": output.get("items", []),
     }
 
 
 @router.get("/knowledge-base/{article_id}")
 def get_knowledge_article(article_id: str) -> dict[str, object]:
-    """Return one curated knowledge article by id."""
+    """Return one knowledge article through the knowledge-base agent."""
 
-    service = KnowledgeBaseService()
-    for article in service.list_articles():
-        payload = service.article_to_dict(article)
-        if payload["id"] == article_id:
-            return payload
+    result = CoordinatorWorkflow().run(
+        CoordinationRequest(
+            user_id=0,
+            intent="knowledge base article",
+            payload={
+                "execute": True,
+                "force_agents": ["knowledge_base_agent"],
+                "operation": "article",
+                "article_id": article_id,
+            },
+        )
+    )
+    output = result.get("outputs", {}).get("knowledge_base_agent", {})
+    if output.get("status") == "completed" and isinstance(output.get("article"), dict):
+        return output["article"]
     raise HTTPException(status_code=404, detail="Knowledge article not found")
 
 
 @router.post("/exercises/generate", response_model=ExerciseGenerationResponse)
 def generate_exercises(payload: ExerciseGenerationRequest) -> ExerciseGenerationResponse:
-    """Generate a structured exercise set for learner practice."""
+    """Generate a structured exercise set through the multi-agent workflow."""
 
-    service = ExerciseGenerationService()
-    return ExerciseGenerationResponse(**service.generate_exercises(payload))
+    result = CoordinatorWorkflow().run(
+        CoordinationRequest(
+            user_id=payload.user_id,
+            intent="exercise practice generation",
+            knowledge_point=payload.knowledge_point,
+            payload={
+                **payload.model_dump(),
+                "execute": True,
+                "only_exercises": True,
+                "force_agents": ["learner_profiling_agent", "exercise_generation_agent"],
+            },
+        )
+    )
+    output = result.get("outputs", {}).get("exercise_generation_agent", {})
+    exercise_set = output.get("exercise_set")
+    if not isinstance(exercise_set, dict):
+        raise HTTPException(status_code=503, detail="Exercise generation agent did not return exercises")
+    return ExerciseGenerationResponse(**exercise_set)

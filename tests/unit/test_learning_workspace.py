@@ -72,6 +72,51 @@ def test_generate_structured_exercises() -> None:
     assert "personalization" in response
 
 
+def test_exercise_generation_deduplicates_repeated_llm_questions(monkeypatch) -> None:
+    """Repeated generated questions should be replaced with distinct variants."""
+
+    service = ExerciseGenerationService()
+
+    def repeated_llm_result(request, snapshot):
+        return {
+            "summary": "重复题测试",
+            "exercises": [
+                {
+                    "exercise_id": index,
+                    "knowledge_point": request.knowledge_point,
+                    "question_type": "choice",
+                    "difficulty": "foundation",
+                    "prompt": "第 1 题：关于高级，下面哪一项理解最准确？",
+                    "options": [
+                        "A. 只看结果。",
+                        "B. 同时关注对象、条件、边界和步骤。",
+                        "C. 忽略过程。",
+                        "D. 所有场景一样。",
+                    ],
+                    "answer": "B",
+                    "analysis": "重复解析",
+                }
+                for index in range(1, 6)
+            ],
+        }
+
+    monkeypatch.setattr(service, "_try_generate_with_llm", repeated_llm_result)
+    response = service.generate_exercises(
+        ExerciseGenerationRequest(
+            user_id=1,
+            knowledge_point="高级",
+            resource_style="interactive",
+            learner_profile={},
+            exercise_count=5,
+            generation_mode="self_test",
+        )
+    )
+
+    prompts = [exercise["prompt"] for exercise in response["exercises"]]
+    assert len(prompts) == 5
+    assert len(set(prompts)) == 5
+
+
 def test_practice_submission_returns_feedback(test_user) -> None:
     """Practice submissions should produce immediate evaluation feedback."""
 

@@ -47,6 +47,22 @@ def _get_int(name: str, default: int) -> int:
         return default
 
 
+def _get_required(name: str) -> str:
+    """Read a required environment variable."""
+
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+def _get_csv(name: str, default: str = "") -> tuple[str, ...]:
+    """Read a comma-separated environment variable."""
+
+    value = os.getenv(name, default)
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     """Application settings loaded from environment variables."""
@@ -56,31 +72,36 @@ class Settings:
     debug: bool = _get_bool("DEBUG", True)
 
     database_url: str = os.getenv("DATABASE_URL", "sqlite+pysqlite:///./learning_system.db")
-    redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    rabbitmq_url: str = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-    elasticsearch_url: str = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
-    user_service_url: str = os.getenv("USER_SERVICE_URL", "http://127.0.0.1:8001")
-    agent_service_url: str = os.getenv("AGENT_SERVICE_URL", "http://127.0.0.1:8002")
-    resource_service_url: str = os.getenv("RESOURCE_SERVICE_URL", "http://127.0.0.1:8003")
-    evaluation_service_url: str = os.getenv("EVALUATION_SERVICE_URL", "http://127.0.0.1:8004")
-    teacher_service_url: str = os.getenv("TEACHER_SERVICE_URL", "http://127.0.0.1:8005")
-    system_service_url: str = os.getenv("SYSTEM_SERVICE_URL", "http://127.0.0.1:8006")
+    redis_url: str = os.getenv("REDIS_URL", "")
+    rabbitmq_url: str = os.getenv("RABBITMQ_URL", "")
+    elasticsearch_url: str = os.getenv("ELASTICSEARCH_URL", "")
+    user_service_url: str = os.getenv("USER_SERVICE_URL", "")
+    agent_service_url: str = os.getenv("AGENT_SERVICE_URL", "")
+    resource_service_url: str = os.getenv("RESOURCE_SERVICE_URL", "")
+    evaluation_service_url: str = os.getenv("EVALUATION_SERVICE_URL", "")
+    teacher_service_url: str = os.getenv("TEACHER_SERVICE_URL", "")
+    system_service_url: str = os.getenv("SYSTEM_SERVICE_URL", "")
+    cors_allow_origins: tuple[str, ...] = _get_csv("CORS_ALLOW_ORIGINS")
 
-    neo4j_uri: str = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-    neo4j_username: str = os.getenv("NEO4J_USERNAME", "neo4j")
-    neo4j_password: str = os.getenv("NEO4J_PASSWORD", "neo4jpassword")
+    neo4j_uri: str = os.getenv("NEO4J_URI", "")
+    neo4j_username: str = os.getenv("NEO4J_USERNAME", "")
+    neo4j_password: str = os.getenv("NEO4J_PASSWORD", "")
     neo4j_enabled: bool = _get_bool("NEO4J_ENABLED", bool(os.getenv("NEO4J_URI")))
 
-    minio_endpoint: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-    minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-    minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+    minio_endpoint: str = os.getenv("MINIO_ENDPOINT", "")
+    minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", "")
+    minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", "")
     minio_secure: bool = _get_bool("MINIO_SECURE", False)
     minio_bucket: str = os.getenv("MINIO_BUCKET", "learning-assets")
 
-    jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "change-me")
+    jwt_secret_key: str = _get_required("JWT_SECRET_KEY")
     jwt_algorithm: str = os.getenv("JWT_ALGORITHM", "HS256")
     jwt_expire_minutes: int = _get_int("JWT_EXPIRE_MINUTES", 120)
-    password_salt: str = os.getenv("PASSWORD_SALT", "learning-system-salt")
+    password_salt: str = os.getenv("PASSWORD_SALT", "")
+
+    default_admin_username: str = os.getenv("DEFAULT_ADMIN_USERNAME", "")
+    default_admin_password: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "")
+    default_admin_email: str = os.getenv("DEFAULT_ADMIN_EMAIL", "")
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")

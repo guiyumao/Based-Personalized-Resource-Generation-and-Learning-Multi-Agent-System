@@ -1,9 +1,9 @@
-"""Simple test to verify chat service setup."""
+import json
+import os
 
 import requests
-import json
 
-BASE_URL = "http://localhost:8002"
+BASE_URL = os.getenv("AGENT_SERVICE_URL", "http://localhost:8002")
 
 def test_chat_api():
     """Test chat API endpoints."""

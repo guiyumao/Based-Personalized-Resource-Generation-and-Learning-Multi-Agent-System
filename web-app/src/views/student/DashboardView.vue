@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import {
   agentApi,
@@ -9,6 +10,7 @@ import {
   type ApiEnvelope,
   type LearnerProfileDashboard,
   type ReportDetail,
+  type UserProfileRead,
 } from '../../api'
 
 type ServiceStatus = {
@@ -30,7 +32,14 @@ type DashboardCard = {
   icon: string
 }
 
+type ProfileDimensionItem = {
+  key: string
+  label: string
+  value: string
+}
+
 const authStore = useAuthStore()
+const router = useRouter()
 const user = authStore.user!
 
 const services = reactive<ServiceStatus[]>([
@@ -40,12 +49,44 @@ const services = reactive<ServiceStatus[]>([
 ])
 
 const dashboard = ref<LearnerProfileDashboard | null>(null)
+const learnerProfile = ref<UserProfileRead | null>(null)
 const dashError = ref('')
 const reportDetail = ref<ReportDetail | null>(null)
 const recentActivity = ref<ActivityItem[]>([])
 const suggestions = ref<string[]>([])
 const mistakeStats = ref<Record<string, unknown> | null>(null)
 const resources = ref<Record<string, unknown>[]>([])
+
+const profileDimensionLabels: Record<string, string> = {
+  knowledgeBase: '知识基础',
+  cognitiveStyle: '认知风格',
+  errorPreference: '易错偏好',
+  learningSpeed: '学习节奏',
+  interestDirection: '兴趣方向',
+  goalOrientation: '目标导向',
+}
+
+const profileDimensionKeys = Object.keys(profileDimensionLabels)
+
+const profileDimensionItems = computed<ProfileDimensionItem[]>(() =>
+  profileDimensionKeys.map((key) => ({
+    key,
+    label: profileDimensionLabels[key],
+    value: learnerProfile.value?.profile_dimensions?.[key]?.trim() || '',
+  })),
+)
+
+const filledProfileDimensions = computed(() =>
+  profileDimensionItems.value.filter((item) => Boolean(item.value)).length,
+)
+
+const profileCompletionPercent = computed(() =>
+  Math.round((filledProfileDimensions.value / profileDimensionKeys.length) * 100),
+)
+
+const profileActionLabel = computed(() =>
+  filledProfileDimensions.value > 0 ? '继续完善画像' : '去完善画像',
+)
 
 const masteryPct = computed(() => {
   const metrics = visibleRadarMetrics.value
@@ -133,6 +174,15 @@ async function fetchDashboard() {
   }
 }
 
+async function fetchLearnerProfile() {
+  try {
+    const { data } = await userApi.get<UserProfileRead>(`/users/${user.userId}/profile`)
+    learnerProfile.value = data
+  } catch {
+    learnerProfile.value = null
+  }
+}
+
 async function fetchRecentActivity() {
   try {
     const { data } = await evaluationApi.get<ApiEnvelope<ReportDetail>>(
@@ -203,12 +253,17 @@ async function fetchResources() {
 
 onMounted(() => {
   services.forEach((service) => void checkHealth(service))
+  void fetchLearnerProfile()
   void fetchDashboard()
   void fetchRecentActivity()
   void fetchSuggestions()
   void fetchMistakeStats()
   void fetchResources()
 })
+
+function goToProfileSetup() {
+  void router.push('/profile-setup')
+}
 </script>
 
 <template>
@@ -263,8 +318,71 @@ onMounted(() => {
       v-else
       style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-bottom:24px;color:var(--muted)"
     >
-      暂无学习画像数据，完成画像构建或练习后将自动展示概览。
+      暂无练习概览数据，完成练习后将自动展示掌握度与学习统计。
     </div>
+
+    <section
+      style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-bottom:24px"
+    >
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+        <div>
+          <h3 style="margin:0 0 6px;font-size:20px">🧠 学习画像</h3>
+          <p style="margin:0;color:var(--muted);font-size:13px">画像智能体从你的回答中沉淀出的个性化学习信息</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+          <span style="font-size:12px;color:var(--muted);white-space:nowrap">
+            {{ filledProfileDimensions }}/{{ profileDimensionKeys.length }} 维度
+          </span>
+          <div style="width:120px;height:6px;border-radius:999px;background:color-mix(in srgb,var(--muted) 16%,transparent);overflow:hidden">
+            <div
+              :style="{
+                width: `${profileCompletionPercent}%`,
+                height: '100%',
+                background: 'linear-gradient(90deg,var(--accent),var(--accent-deep))',
+              }"
+            ></div>
+          </div>
+          <button
+            type="button"
+            style="padding:8px 14px;border-radius:999px;border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line));background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap"
+            @click="goToProfileSetup"
+          >
+            {{ profileActionLabel }}
+          </button>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+        <article
+          v-for="item in profileDimensionItems"
+          :key="item.key"
+          style="min-height:92px;padding:14px;border-radius:12px;border:1px solid var(--line);cursor:pointer;transition:border-color .18s ease,transform .18s ease,background .18s ease"
+          :style="item.value
+            ? { background: 'color-mix(in srgb,var(--accent) 7%,transparent)' }
+            : { background: 'color-mix(in srgb,var(--text) 3%,transparent)' }"
+          @click="goToProfileSetup"
+        >
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+            <strong style="font-size:13px">{{ item.label }}</strong>
+            <span
+              style="font-size:11px;font-weight:700"
+              :style="{ color: item.value ? 'var(--accent)' : 'var(--muted)' }"
+            >
+              {{ item.value ? '已记录' : '待完善' }}
+            </span>
+          </div>
+          <p style="margin:0;color:var(--muted);font-size:13px;line-height:1.6">
+            {{ item.value || '画像构建页继续对话后会自动补充。' }}
+          </p>
+        </article>
+      </div>
+      <div
+        v-if="filledProfileDimensions === 0"
+        style="margin-top:14px;padding:12px 14px;border-radius:12px;border:1px dashed color-mix(in srgb,var(--accent) 24%,var(--line));background:color-mix(in srgb,var(--accent) 5%,transparent);color:var(--muted);font-size:13px;line-height:1.7"
+      >
+        当前还没有可用学习画像。点击上方按钮或任意维度卡片，就可以进入画像构建页继续完善。
+      </div>
+    </section>
 
     <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:20px">
       <div style="padding:22px;border-radius:18px;background:var(--panel);border:1px solid var(--line)">

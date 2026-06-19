@@ -78,6 +78,38 @@ const mistakeCount = computed(() => mistakeNotebook.value?.mistake_count ?? 0)
 const hasKnowledgePoint = computed(() => Boolean(exerciseForm.knowledge_point.trim()))
 const subjectiveTypes = new Set(['short_answer', 'programming'])
 
+function hasDistinctExercisePrompts(set: ExerciseGenerationResponse) {
+  const prompts = set.exercises.map((item) =>
+    item.prompt.replace(/第\s*\d+\s*题[:：]?/, '').replace(/\s+/g, '').trim(),
+  )
+  return new Set(prompts).size === prompts.length
+}
+
+function normalizeExercisePromptV2(prompt: string) {
+  const compact = prompt.replace(/\s+/g, '').trim()
+  const colonIndex = Math.max(compact.indexOf(':'), compact.indexOf('：'))
+  if (colonIndex > -1 && colonIndex <= 20 && /\d/.test(compact.slice(0, colonIndex))) {
+    return compact.slice(colonIndex + 1)
+  }
+  return compact
+}
+
+function hasDistinctExercisePromptsV2(set: ExerciseGenerationResponse) {
+  if (!set.exercises.length) {
+    return false
+  }
+  const prompts = set.exercises.map((item) => normalizeExercisePromptV2(item.prompt))
+  return new Set(prompts).size === prompts.length
+}
+
+function clearStoredExerciseSnapshots() {
+  if (typeof window === 'undefined') {
+    return
+  }
+  window.localStorage.removeItem(PRACTICE_SESSION_STORAGE_KEY)
+  window.sessionStorage.removeItem(EXERCISE_STORAGE_KEY)
+}
+
 onMounted(() => {
   if (!loadStoredPracticeSession()) {
     loadStoredExerciseSet()
@@ -97,6 +129,10 @@ function loadStoredPracticeSession() {
     }
     const stored = JSON.parse(raw) as StoredPracticeSession
     if (stored.userId !== user.userId || !stored.exerciseSet?.exercises?.length) {
+      return false
+    }
+    if (!hasDistinctExercisePromptsV2(stored.exerciseSet)) {
+      window.localStorage.removeItem(PRACTICE_SESSION_STORAGE_KEY)
       return false
     }
 
@@ -125,10 +161,12 @@ function loadStoredExerciseSet() {
       return
     }
     const stored = JSON.parse(raw) as StoredExerciseSnapshot
-    if (stored.exerciseSet?.exercises?.length) {
+    if (stored.exerciseSet?.exercises?.length && hasDistinctExercisePromptsV2(stored.exerciseSet)) {
       exerciseSet.value = stored.exerciseSet
       exerciseForm.knowledge_point = stored.exerciseSet.knowledge_point
       ElMessage.success('已载入协同智能体生成的练习题')
+    } else {
+      window.sessionStorage.removeItem(EXERCISE_STORAGE_KEY)
     }
   } catch {
     // Ignore malformed session snapshots.
@@ -176,9 +214,20 @@ async function generateExercises() {
   }
   if (!exerciseForm.knowledge_point.trim()) { ElMessage.warning('请先在学习路径生成知识点'); return }
   loading.value.exercises = true; genError.value = ''; exerciseSet.value = null
+  clearStoredExerciseSnapshots()
   try {
     exerciseForm.user_id = user.userId
     const { data } = await postContentWithTimeout<ExerciseGenerationResponse>('/exercises/generate', exerciseForm, 30000)
+    if (!data.exercises.length) {
+      genError.value = '未生成到练习题，请重新生成'
+      ElMessage.error(genError.value)
+      return
+    }
+    if (!hasDistinctExercisePromptsV2(data)) {
+      genError.value = '生成结果中仍有重复题目，请重新生成'
+      ElMessage.error(genError.value)
+      return
+    }
     exerciseSet.value = data
     resetSession()
     persistPracticeSession()

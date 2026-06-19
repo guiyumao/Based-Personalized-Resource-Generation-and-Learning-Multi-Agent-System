@@ -5,10 +5,12 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from datetime import datetime
+import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_PATH = PROJECT_ROOT / "docs" / "functionality.md"
+DEFAULT_FRONTEND_URL = os.getenv("FRONTEND_URL", "http://127.0.0.1:5175")
 
 
 @dataclass(frozen=True)
@@ -194,7 +196,7 @@ def generate_markdown() -> str:
         "- 教师端已从摘要卡片升级为正式工作台，支持查看班级、学生洞察，并可点开学生详情抽屉查看错题本与报告。",
         "- 管理员端已接入 `system-service` 基础能力。",
         "",
-        "默认访问地址：`http://127.0.0.1:5175`",
+        f"默认访问地址：`{DEFAULT_FRONTEND_URL}`",
         "",
         "## 3. 当前未完成但已预留的模块",
         "",

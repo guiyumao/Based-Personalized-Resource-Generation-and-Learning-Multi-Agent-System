@@ -48,6 +48,13 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
                     **fallback_profile,
                     "mastery": 72,
                     "weak_question_types": ["short_answer"],
+                    "profile_dimensions": {"cognitiveStyle": "视觉型"},
+                    "preferred_resource_modes": ["diagram"],
+                    "agent_handoff": {
+                        "path_planning_agent": ["use visual path"],
+                        "resource_generation_agent": ["use diagrams"],
+                        "exercise_generation_agent": ["practice graph mistakes"],
+                    },
                 },
                 mastery_score=72,
                 correct_rate=80,
@@ -132,7 +139,11 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
     ]
     assert len(published_messages) == 5
     assert result["outputs"]["learner_profiling_agent"]["learner_profile"]["mastery"] == 72
+    assert result["outputs"]["learner_profiling_agent"]["agent_handoff"]["resource_generation_agent"] == ["use diagrams"]
     assert result["outputs"]["knowledge_graph_agent"]["dependencies"][0]["name"] == "变量"
     assert result["outputs"]["path_planning_agent"]["learning_path"]["overview"] == "协同路径"
+    assert result["outputs"]["path_planning_agent"]["profile_handoff"] == ["use visual path"]
     assert result["outputs"]["resource_generation_agent"]["resource"]["content"] == "课件正文"
+    assert result["outputs"]["resource_generation_agent"]["profile_handoff"] == ["use diagrams"]
     assert result["outputs"]["exercise_generation_agent"]["exercise_set"]["summary"] == "课件正文"
+    assert result["outputs"]["exercise_generation_agent"]["profile_handoff"] == ["practice graph mistakes"]

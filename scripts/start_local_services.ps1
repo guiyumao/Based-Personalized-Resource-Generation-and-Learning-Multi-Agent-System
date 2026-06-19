@@ -3,40 +3,50 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+$hostAddress = if ($env:LOCAL_SERVICE_HOST) { $env:LOCAL_SERVICE_HOST } else { "127.0.0.1" }
+$frontendHost = if ($env:FRONTEND_HOST) { $env:FRONTEND_HOST } else { $hostAddress }
+$frontendPort = if ($env:FRONTEND_PORT) { [int]$env:FRONTEND_PORT } else { 5175 }
+
 $services = @(
     @{
         Name = "user-service"
-        Port = 8001
+        Port = if ($env:USER_SERVICE_PORT) { [int]$env:USER_SERVICE_PORT } else { 8001 }
         App = "services.user_service.app.main:app"
+        FrontendEnv = "VITE_USER_API_BASE_URL"
     },
     @{
         Name = "agent-service"
-        Port = 8002
+        Port = if ($env:AGENT_SERVICE_PORT) { [int]$env:AGENT_SERVICE_PORT } else { 8002 }
         App = "services.agent_service.app.main:app"
+        FrontendEnv = "VITE_AGENT_API_BASE_URL"
     },
     @{
         Name = "resource-service"
-        Port = 8003
+        Port = if ($env:RESOURCE_SERVICE_PORT) { [int]$env:RESOURCE_SERVICE_PORT } else { 8003 }
         App = "services.resource_service.app.main:app"
+        FrontendEnv = "VITE_RESOURCE_API_BASE_URL"
     },
     @{
         Name = "evaluation-service"
-        Port = 8004
+        Port = if ($env:EVALUATION_SERVICE_PORT) { [int]$env:EVALUATION_SERVICE_PORT } else { 8004 }
         App = "services.evaluation_service.app.main:app"
+        FrontendEnv = "VITE_EVALUATION_API_BASE_URL"
     },
     @{
         Name = "teacher-service"
-        Port = 8005
+        Port = if ($env:TEACHER_SERVICE_PORT) { [int]$env:TEACHER_SERVICE_PORT } else { 8005 }
         App = "services.teacher_service.app.main:app"
+        FrontendEnv = "VITE_TEACHER_API_BASE_URL"
     },
     @{
         Name = "system-service"
-        Port = 8006
+        Port = if ($env:SYSTEM_SERVICE_PORT) { [int]$env:SYSTEM_SERVICE_PORT } else { 8006 }
         App = "services.system_service.app.main:app"
+        FrontendEnv = "VITE_SYSTEM_API_BASE_URL"
     },
     @{
         Name = "agent-service-qa-compat"
-        Port = 8007
+        Port = if ($env:AGENT_SERVICE_QA_COMPAT_PORT) { [int]$env:AGENT_SERVICE_QA_COMPAT_PORT } else { 8007 }
         App = "services.agent_service.app.main:app"
     }
 )
@@ -59,14 +69,12 @@ function Ensure-FrontendEnvFile {
     }
 
     Write-Host "Creating web-app/.env.local with local service endpoints..."
-    @(
-        "VITE_USER_API_BASE_URL=http://127.0.0.1:8001"
-        "VITE_AGENT_API_BASE_URL=http://127.0.0.1:8002"
-        "VITE_RESOURCE_API_BASE_URL=http://127.0.0.1:8003"
-        "VITE_EVALUATION_API_BASE_URL=http://127.0.0.1:8004"
-        "VITE_TEACHER_API_BASE_URL=http://127.0.0.1:8005"
-        "VITE_SYSTEM_API_BASE_URL=http://127.0.0.1:8006"
-    ) | Set-Content -Path $envLocalPath -Encoding UTF8
+    $frontendEnvLines = foreach ($service in $services) {
+        if ($service.FrontendEnv) {
+            "$($service.FrontendEnv)=http://$($hostAddress):$($service.Port)"
+        }
+    }
+    $frontendEnvLines | Set-Content -Path $envLocalPath -Encoding UTF8
 }
 
 Ensure-FrontendEnvFile
@@ -85,7 +93,7 @@ foreach ($service in $services) {
         "uvicorn",
         $service.App,
         "--host",
-        "127.0.0.1",
+        $hostAddress,
         "--port",
         "$($service.Port)"
     ) -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
@@ -93,8 +101,8 @@ foreach ($service in $services) {
     Start-Sleep -Seconds 2
 }
 
-if (-not (Test-PortListening -Port 5175)) {
-    Write-Host "Starting web-app on http://127.0.0.1:5175 ..."
+if (-not (Test-PortListening -Port $frontendPort)) {
+    Write-Host "Starting web-app on http://$($frontendHost):$($frontendPort) ..."
     $webRoot = Join-Path $root "web-app"
     $webStdoutLog = Join-Path $root "web-app.stdout.log"
     $webStderrLog = Join-Path $root "web-app.stderr.log"
@@ -105,16 +113,12 @@ if (-not (Test-PortListening -Port 5175)) {
         -RedirectStandardError $webStderrLog
 }
 else {
-    Write-Host "web-app already listening on 5175, skip."
+    Write-Host "web-app already listening on $($frontendPort), skip."
 }
 
 Write-Host ""
 Write-Host "Startup requests sent. Verify with:"
-Write-Host "  http://127.0.0.1:5175"
-Write-Host "  http://127.0.0.1:8001/health"
-Write-Host "  http://127.0.0.1:8002/health"
-Write-Host "  http://127.0.0.1:8003/health"
-Write-Host "  http://127.0.0.1:8004/health"
-Write-Host "  http://127.0.0.1:8005/health"
-Write-Host "  http://127.0.0.1:8006/health"
-Write-Host "  http://127.0.0.1:8007/health"
+Write-Host "  http://$($frontendHost):$($frontendPort)"
+foreach ($service in $services) {
+    Write-Host "  http://$($hostAddress):$($service.Port)/health"
+}
