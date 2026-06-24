@@ -23,6 +23,7 @@ class LearningPathService:
         estimated_days = 3 if daily_minutes >= 45 else 4
         style = str(request.learner_profile.get("learning_style", "visual"))
         teacher_scope = self._extract_teacher_scope(request.learner_profile)
+        profile_summary = self._build_profile_summary(request.learner_profile)
 
         payload = {
             "user_id": request.user_id,
@@ -31,6 +32,7 @@ class LearningPathService:
             "overview": (
                 f"围绕 {request.knowledge_point} 设计的 {estimated_days} 天学习路径，"
                 f"优先采用 {style} 风格资源，先理解概念，再完成练习与复盘。"
+                f"{profile_summary}"
             ),
             "estimated_days": estimated_days,
             "stages": [
@@ -103,6 +105,20 @@ class LearningPathService:
         }
         payload = self._apply_teacher_scope_to_path(payload, teacher_scope)
         return self._persist_generated_path(request.user_id, payload) if self.db is not None else payload
+
+    def _build_profile_summary(self, learner_profile: dict[str, object]) -> str:
+        summaries = learner_profile.get("profile_analysis_summaries")
+        if not isinstance(summaries, dict):
+            return ""
+
+        summary_parts: list[str] = []
+        for key in ("knowledgeBase", "learningSpeed", "goalOrientation"):
+            summary = str(summaries.get(key) or "").strip()
+            if summary:
+                summary_parts.append(summary)
+        if not summary_parts:
+            return ""
+        return " 深度画像建议：" + "；".join(summary_parts[:3])
 
     def get_latest_path(self, user_id: int) -> dict[str, object] | None:
         """Return the latest active path for a learner if one exists."""

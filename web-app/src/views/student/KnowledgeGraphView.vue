@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { agentApi, type GraphVisualizationResponse, type LearningPathResponse } from '../../api'
 import { DataSet, Network } from 'vis-network/standalone'
 import { useAuthStore } from '../../stores/auth'
+import {
+  COURSEWARE_STORAGE_KEY,
+  readStudentWorkspaceContext,
+  sameWorkspaceTopic,
+} from '../../utils/studentWorkspace'
 
 const authStore = useAuthStore()
 const user = authStore.user!
-const COURSEWARE_STORAGE_KEY = 'student-workspace-courseware'
 
 type StoredCoursewareSnapshot = {
   topic?: string
@@ -22,6 +26,8 @@ const relatedResources = ref<any[]>([])
 const graphError = ref('')
 const canvasRef = ref<HTMLDivElement | null>(null)
 let network: Network | null = null
+let resizeObserver: ResizeObserver | null = null
+let renderFrame: number | null = null
 
 const categoryColors: Record<string, string> = {
   current: '#00c8aa', prerequisite: '#4da3e0', recommended: '#a78bfa', resource: '#7b90a8',
@@ -79,9 +85,18 @@ onMounted(() => {
   void loadExistingKnowledgePoint()
 })
 
+onUnmounted(() => {
+  destroyGraph()
+})
+
 async function loadExistingKnowledgePoint() {
+  const workspaceContext = readStudentWorkspaceContext(user.userId)
+  if (workspaceContext?.topic?.trim()) {
+    applyKnowledgePoint(workspaceContext.topic, '来自当前学习路径')
+  }
+
   const stored = readCoursewareSnapshot()
-  if (stored?.topic?.trim()) {
+  if (stored?.topic?.trim() && sameWorkspaceTopic(stored.topic, workspaceContext?.topic ?? stored.topic)) {
     applyKnowledgePoint(stored.topic, '来自已生成课件')
     return
   }
@@ -118,6 +133,7 @@ async function queryGraph() {
     await loadExistingKnowledgePoint()
   }
   if (!knowledgePoint.value.trim()) { ElMessage.warning('请先生成学习路径或课件'); return }
+  destroyGraph()
   loading.value = true; graphError.value = ''; graphVisualization.value = null; dependencyPaths.value = []
   try {
     const payload = { knowledge_point: knowledgePoint.value, max_depth: 3 }
@@ -139,7 +155,7 @@ async function queryGraph() {
       relatedResources.value = (rrRes.data as any).data ?? (rrRes.data as any).resources ?? []
     } catch { relatedResources.value = [] }
     await nextTick()
-    renderGraph()
+    scheduleGraphRender()
   } catch (error: any) {
     const detail = error?.response?.data?.detail ?? error?.message ?? '未知错误'
     graphError.value = `查询失败：${detail}`
@@ -149,10 +165,37 @@ async function queryGraph() {
   }
 }
 
+function destroyGraph() {
+  if (renderFrame !== null) {
+    window.cancelAnimationFrame(renderFrame)
+    renderFrame = null
+  }
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  network?.destroy()
+  network = null
+}
+
+function scheduleGraphRender() {
+  if (renderFrame !== null) {
+    window.cancelAnimationFrame(renderFrame)
+  }
+  renderFrame = window.requestAnimationFrame(() => {
+    renderFrame = null
+    renderGraph()
+  })
+}
+
 function renderGraph() {
   if (!canvasRef.value || !graphVisualization.value) return
+  network?.destroy()
+  network = null
   const nodes = graphVisualization.value.nodes ?? []
   const edges = graphVisualization.value.edges ?? []
+  if (!nodes.length) {
+    graphError.value = '知识图谱没有返回可展示节点'
+    return
+  }
   const nodeDataset = new DataSet((nodes as any[]).map((n: any) => ({
     id: n.id,
     label: n.label,
@@ -175,8 +218,10 @@ function renderGraph() {
     font: { color: '#8fa6bb', size: 10, strokeWidth: 0 },
     smooth: { type: 'dynamic' },
   })))
-  if (network) network.destroy()
   network = new Network(canvasRef.value, { nodes: nodeDataset, edges: edgeDataset } as any, {
+    autoResize: true,
+    width: '100%',
+    height: '100%',
     layout: { improvedLayout: true },
     physics: {
       solver: 'forceAtlas2Based',
@@ -190,6 +235,19 @@ function renderGraph() {
     },
     interaction: { hover: true, tooltipDelay: 200, navigationButtons: true, keyboard: true },
   } as any)
+  network.once('stabilizationIterationsDone', () => {
+    network?.fit({ animation: { duration: 260, easingFunction: 'easeInOutQuad' } } as any)
+    network?.redraw()
+  })
+  window.setTimeout(() => {
+    network?.fit({ animation: false } as any)
+    network?.redraw()
+  }, 80)
+  resizeObserver = new ResizeObserver(() => {
+    network?.redraw()
+    network?.fit({ animation: false } as any)
+  })
+  resizeObserver.observe(canvasRef.value)
 }
 </script>
 
@@ -221,8 +279,9 @@ function renderGraph() {
       </span>
     </div>
     <div class="knowledge-graph-layout" :class="{ 'knowledge-graph-layout--ready': graphVisualization }">
-      <div ref="canvasRef" style="width:100%;min-height:560px;border-radius:16px;background:var(--panel);border:1px solid var(--line)">
-        <div v-if="!graphVisualization && !loading" style="display:flex;align-items:center;justify-content:center;height:450px;color:var(--muted)">{{ hasKnowledgePoint ? '点击“查询图谱”查看知识依赖关系' : '先生成学习路径或课件，系统会自动带入知识点' }}</div>
+      <div class="knowledge-graph-canvas">
+        <div v-if="graphVisualization" ref="canvasRef" class="knowledge-graph-network"></div>
+        <div v-else-if="!loading" class="knowledge-graph-empty">{{ hasKnowledgePoint ? '点击“查询图谱”查看知识依赖关系' : '先生成学习路径或课件，系统会自动带入知识点' }}</div>
       </div>
       <div v-if="graphVisualization" style="padding:16px;border-radius:16px;background:var(--panel);border:1px solid var(--line);min-height:560px;display:flex;flex-direction:column;gap:18px">
         <section>
@@ -280,6 +339,34 @@ function renderGraph() {
 
 .knowledge-graph-layout--ready {
   grid-template-columns: minmax(0, 1fr) 320px;
+}
+
+.knowledge-graph-canvas {
+  position: relative;
+  width: 100%;
+  height: 560px;
+  min-height: 560px;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.knowledge-graph-network {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.knowledge-graph-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
 }
 
 @media (max-width: 980px) {

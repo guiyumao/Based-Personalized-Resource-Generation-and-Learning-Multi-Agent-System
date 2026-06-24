@@ -51,31 +51,41 @@ class ResourceGenerationService:
         return f"{request.knowledge_point} {request.resource_type} {request.resource_style}".strip()
 
     def _normalize_knowledge_point(self, request: ResourceGenerationRequest, request_text: str) -> str:
-        knowledge_point = request.knowledge_point.strip() or "通用学习主题"
-        article = self.knowledge_base.get_article(knowledge_point)
-        if article is not None:
-            return article.title
-
-        matches = self.knowledge_base.search_by_keywords(request_text, top_k=1) if request_text else []
-        if matches:
-            generic_markers = ("python", "编程", "代码", "学习", "知识点", "主题")
-            if len(knowledge_point) <= 4 or any(marker in knowledge_point.lower() for marker in generic_markers):
-                return matches[0].title
-        return knowledge_point
+        _ = request_text
+        knowledge_point = request.knowledge_point.strip()
+        if knowledge_point:
+            return knowledge_point
+        return "通用学习主题"
 
     def _infer_resource_type(self, request: ResourceGenerationRequest, request_text: str) -> str:
         if request.resource_type != "courseware":
             return request.resource_type
 
         lowered = request_text.lower()
+        courseware_keywords = (
+            "课件",
+            "讲义",
+            "教案",
+            "课程",
+            "courseware",
+            "lesson",
+            "slides",
+        )
         keyword_map = {
             "exercise": ("练习", "刷题", "习题", "题目", "自测", "测试"),
             "notes": ("笔记", "总结", "速记", "提纲"),
             "exam": ("考试", "模拟", "试卷", "测验", "冲刺"),
         }
-        for resource_type, keywords in keyword_map.items():
-            if any(keyword in lowered for keyword in keywords):
-                return resource_type
+        matched_types = [
+            resource_type
+            for resource_type, keywords in keyword_map.items()
+            if any(keyword in lowered for keyword in keywords)
+        ]
+        unique_matches = set(matched_types)
+        if any(keyword in lowered for keyword in courseware_keywords) or len(unique_matches) > 1:
+            return request.resource_type
+        if len(unique_matches) == 1:
+            return matched_types[0]
         return request.resource_type
 
     def _infer_difficulty(
@@ -210,6 +220,14 @@ class ResourceGenerationService:
         else:
             hints.append("保留课堂互动感，在关键处加入提问和自检提示。")
 
+        if snapshot is not None:
+            summaries = snapshot.learner_profile.get("profile_analysis_summaries", {})
+            if isinstance(summaries, dict):
+                for key in ("knowledgeBase", "cognitiveStyle", "errorPreference", "goalOrientation"):
+                    summary = str(summaries.get(key) or "").strip()
+                    if summary:
+                        hints.append(f"结合深度画像结论：{summary}。")
+
         return hints[:4]
 
     def _build_generation_plan(
@@ -306,6 +324,7 @@ class ResourceGenerationService:
             "correct_rate": snapshot.correct_rate,
             "answered_count": snapshot.answered_count,
             "weak_question_types": snapshot.learner_profile.get("weak_question_types", []),
+            "profile_analysis_summaries": snapshot.learner_profile.get("profile_analysis_summaries", {}),
             "basis": basis,
             "recent_mistakes": recent_mistakes,
         }
@@ -339,6 +358,13 @@ class ResourceGenerationService:
             )
         else:
             basis.append("当前还没有错题记录，本次课件会先用标准讲解帮助建立基础框架。")
+
+        summaries = snapshot.learner_profile.get("profile_analysis_summaries", {})
+        if isinstance(summaries, dict):
+            for key in ("knowledgeBase", "cognitiveStyle", "errorPreference", "goalOrientation"):
+                summary = str(summaries.get(key) or "").strip()
+                if summary:
+                    basis.append(f"深度画像提示：{summary}。")
 
         return basis
 
@@ -392,7 +418,7 @@ class ResourceGenerationService:
             return chain.invoke(variables)
         except Exception as exc:
             logger.exception("Model-based courseware generation failed")
-            return self._build_fallback_markdown(variables)
+            raise ResourceGenerationError("Model-based courseware generation failed.") from exc
 
     def _build_fallback_markdown(self, variables: dict[str, Any]) -> str:
         knowledge_point = str(variables.get("knowledge_point") or "当前知识点")
@@ -702,4 +728,6 @@ class ResourceGenerationService:
                 continue
             sanitized_lines.append(line)
         sanitized = "\n".join(sanitized_lines).strip()
-        return sanitized or self._build_fallback_markdown({"knowledge_point": "当前知识点"})
+        if sanitized:
+            return sanitized
+        raise ResourceGenerationError("Model returned empty courseware content.")

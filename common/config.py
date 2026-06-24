@@ -107,8 +107,10 @@ class Settings:
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
+    qwen_api_key: str = os.getenv("QWEN_API_KEY", "")
     qwen_api_base: str = os.getenv("QWEN_API_BASE", "")
     qwen_model: str = os.getenv("QWEN_MODEL", "qwen-plus")
+    deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_api_base: str = os.getenv("DEEPSEEK_API_BASE", "")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
     chroma_persist_directory: str = os.getenv("CHROMA_PERSIST_DIRECTORY", "./.chroma")

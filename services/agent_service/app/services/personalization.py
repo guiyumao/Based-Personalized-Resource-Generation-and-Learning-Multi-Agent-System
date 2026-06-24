@@ -43,6 +43,12 @@ class PersonalizationService:
             if isinstance(habits.get("agent_collaboration_context"), dict)
             else {}
         )
+        profile_analysis = profile.profile_analysis if profile and isinstance(profile.profile_analysis, dict) else {}
+        profile_analysis_summaries = (
+            profile_analysis.get("summaries")
+            if isinstance(profile_analysis.get("summaries"), dict)
+            else {}
+        )
 
         records = self._load_records(user_id, knowledge_point)
         correct_count = sum(1 for item in records if item["is_correct"])
@@ -60,6 +66,8 @@ class PersonalizationService:
             **fallback_profile,
             "learning_style": learning_style,
             "profile_dimensions": profile_dimensions,
+            "profile_analysis": profile_analysis,
+            "profile_analysis_summaries": profile_analysis_summaries,
             "agent_collaboration_context": collaboration_context,
             "agent_handoff": collaboration_context.get("agent_handoff", {}) if isinstance(collaboration_context, dict) else {},
             "preferred_resource_modes": collaboration_context.get("preferred_resource_modes", []) if isinstance(collaboration_context, dict) else [],

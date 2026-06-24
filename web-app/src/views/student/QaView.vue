@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import {
@@ -11,10 +12,18 @@ import {
   type ChatMessageItem,
   type ChatSessionDetail,
   type ChatSessionSummary,
+  type ExerciseGenerationResponse,
   type QAAnalysisPayload,
   type QARequestPayload,
   type QAResponsePayload,
+  type ResourceResult,
 } from '../../api'
+import {
+  EXERCISE_STORAGE_KEY,
+  readStudentWorkspaceContext,
+  sameWorkspaceTopic,
+  type StudentWorkspaceContext,
+} from '../../utils/studentWorkspace'
 
 type UiMessage = {
   id: string
@@ -24,6 +33,8 @@ type UiMessage = {
   model_used?: string
   analysis?: QAAnalysisPayload | null
   confidence?: number | null
+  generatedExercises?: ExerciseGenerationResponse | null
+  generatedResource?: ResourceResult | null
 }
 
 type SessionGroup = {
@@ -39,6 +50,8 @@ type SessionGroup = {
 type UiSession = {
   id: number
   title: string
+  subject: string
+  topicHint: string
   updatedAt: string
   messageCount: number
   messages: UiMessage[]
@@ -48,6 +61,8 @@ type UiSession = {
 
 const authStore = useAuthStore()
 const user = authStore.user!
+const router = useRouter()
+const workspaceContext = ref<StudentWorkspaceContext | null>(null)
 
 const qaForm = reactive<QARequestPayload>({
   student_id: String(user.userId),
@@ -77,10 +92,58 @@ const activeSession = computed(() => sessions.value.find((item) => item.id === a
 const activeMessages = computed(() => activeSession.value?.messages ?? [])
 const sessionTitle = computed(() => activeSession.value?.title || '新对话')
 
+function formatModelUsed(modelUsed?: string) {
+  const normalized = modelUsed?.trim()
+  if (!normalized) {
+    return ''
+  }
+  const labelMap: Record<string, string> = {
+    qa_learning_llm: '学习助教',
+    qa_general_llm: '通用助手',
+    qa_general_grounded: '检索辅助',
+    qa_general_fallback: '基础回答',
+    qa_realtime: '实时信息',
+    qa_orchestrated: '学习助教',
+    large_model: '深度回答',
+    small_model: '快速回答',
+    fallback: '基础回答',
+  }
+  return labelMap[normalized] ?? 'AI 助手'
+}
+
+function isBrokenSessionTitle(value: string | null | undefined) {
+  const normalized = value?.trim() ?? ''
+  if (!normalized) {
+    return true
+  }
+  const lowered = normalized.toLowerCase()
+  if (['new chat', '新对话', '智能问答'].includes(lowered)) {
+    return false
+  }
+  if (normalized.includes('�')) {
+    return true
+  }
+  const questionMarkCount = (normalized.match(/[?？]/g) ?? []).length
+  const hasMeaningfulChar = /[\p{L}\p{N}]/u.test(normalized)
+  return !hasMeaningfulChar || questionMarkCount >= Math.max(2, Math.floor(normalized.length / 2))
+}
+
+function resolveSessionTitle(title: string | null | undefined, fallback = '新对话') {
+  const normalized = title?.trim() ?? ''
+  if (!normalized || isBrokenSessionTitle(normalized)) {
+    return fallback
+  }
+  return normalized
+}
+
 const filteredSessionGroups = computed<SessionGroup[]>(() => {
   const keyword = sessionSearch.value.trim().toLowerCase()
   const source = keyword
-    ? sessions.value.filter((item) => item.title.toLowerCase().includes(keyword) || item.messages.some((msg) => msg.content.toLowerCase().includes(keyword)))
+    ? sessions.value.filter((item) => {
+        const title = item.title.toLowerCase()
+        const hasMessage = item.messages.some((msg) => msg.content.toLowerCase().includes(keyword))
+        return title.includes(keyword) || hasMessage
+      })
     : sessions.value
 
   const groups = new Map<string, SessionGroup['items']>()
@@ -103,6 +166,7 @@ function formatSessionTime(value: string) {
   try {
     return new Date(value).toLocaleString('zh-CN', {
       hour12: false,
+      timeZone: 'Asia/Shanghai',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
@@ -130,20 +194,23 @@ function formatSessionGroup(value: string) {
 }
 
 function createLocalDraftSession() {
+  const draftTitle = workspaceContext.value ? buildWorkspaceSessionTitle(workspaceContext.value.topic) : '新对话'
   const id = Date.now()
   const session: UiSession = {
     id,
-    title: '新对话',
+    title: draftTitle,
+    subject: workspaceContext.value?.subject ?? '',
+    topicHint: workspaceContext.value?.topic ?? '',
     updatedAt: new Date().toISOString(),
     messageCount: 0,
-    messages: [] as UiMessage[],
+    messages: [],
     persisted: false,
     loaded: true,
   }
   sessions.value = [session, ...sessions.value.filter((item) => item.persisted || item.messageCount > 0)]
   activeSessionId.value = id
   qaForm.session_id = null
-  qaForm.session_title = ''
+  qaForm.session_title = draftTitle
   qaError.value = ''
 }
 
@@ -155,7 +222,7 @@ async function createEmptySession(persist = true) {
   try {
     const detail = await createChatSession({
       user_id: user.userId,
-      title: '新对话',
+      title: workspaceContext.value ? buildWorkspaceSessionTitle(workspaceContext.value.topic) : '新对话',
       subject: qaForm.subject,
     })
     const session = mapSessionDetail(detail)
@@ -166,7 +233,7 @@ async function createEmptySession(persist = true) {
     qaError.value = ''
     await scrollToBottom()
   } catch (error: any) {
-    ElMessage.error(error?.response?.data?.detail ?? error?.message ?? '新建会话失败，已临时保存在当前页面')
+    ElMessage.error(error?.response?.data?.detail ?? error?.message ?? '新建会话失败，已切换到临时会话')
     createLocalDraftSession()
   }
 }
@@ -175,17 +242,20 @@ async function loadPersistedSessions() {
   loadingSessions.value = true
   qaError.value = ''
   try {
+    applyWorkspaceContext()
     const rows = await listChatSessions(user.userId)
     sessions.value = rows.map(mapSessionSummary)
-    if (sessions.value.length) {
+    if (workspaceContext.value && shouldStartWorkspaceDraft()) {
+      createLocalDraftSession()
+    } else if (sessions.value.length) {
       await selectSession(sessions.value[0].id)
     } else {
-      await createEmptySession()
+      createLocalDraftSession()
     }
   } catch (error: any) {
     qaError.value = error?.response?.data?.detail ?? error?.message ?? '加载历史会话失败'
     ElMessage.error(qaError.value)
-    await createEmptySession(false)
+    createLocalDraftSession()
   } finally {
     loadingSessions.value = false
   }
@@ -194,7 +264,9 @@ async function loadPersistedSessions() {
 function mapSessionSummary(row: ChatSessionSummary): UiSession {
   return {
     id: row.id,
-    title: row.title || '新对话',
+    title: resolveSessionTitle(row.title),
+    subject: row.subject ?? '',
+    topicHint: inferSessionTopic([], row.subject ?? '', resolveSessionTitle(row.title)),
     updatedAt: row.last_message_at || row.created_at,
     messageCount: row.message_count,
     messages: [],
@@ -204,12 +276,15 @@ function mapSessionSummary(row: ChatSessionSummary): UiSession {
 }
 
 function mapSessionDetail(row: ChatSessionDetail): UiSession {
+  const normalizedMessages = normalizeChatMessages(row.messages)
   return {
     id: row.id,
-    title: row.title || '新对话',
+    title: resolveSessionTitle(row.title),
+    subject: row.subject ?? '',
+    topicHint: inferSessionTopic(normalizedMessages, row.subject ?? '', resolveSessionTitle(row.title)),
     updatedAt: row.last_message_at || row.created_at,
     messageCount: row.message_count,
-    messages: normalizeChatMessages(row.messages),
+    messages: normalizedMessages,
     persisted: true,
     loaded: true,
   }
@@ -235,6 +310,12 @@ async function selectSession(sessionId: number) {
   const selected = sessions.value.find((item) => item.id === sessionId)
   qaForm.session_id = selected?.persisted ? selected.id : null
   qaForm.session_title = selected?.title ?? session.title
+  if (selected?.subject?.trim()) {
+    qaForm.subject = selected.subject
+  }
+  if (selected?.topicHint?.trim()) {
+    qaForm.current_knowledge_points = [selected.topicHint]
+  }
   qaError.value = ''
   await scrollToBottom()
 }
@@ -260,6 +341,20 @@ async function removeSession(sessionId: number) {
   }
 }
 
+function normalizeGeneratedExercises(value: unknown): ExerciseGenerationResponse | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  return value as ExerciseGenerationResponse
+}
+
+function normalizeGeneratedResource(value: unknown): ResourceResult | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  return value as ResourceResult
+}
+
 function normalizeChatMessages(messages: ChatMessageItem[]) {
   return messages
     .filter((item) => item.role === 'user' || item.role === 'assistant')
@@ -270,6 +365,12 @@ function normalizeChatMessages(messages: ChatMessageItem[]) {
       const confidence = item.role === 'assistant' && typeof item.metadata?.confidence === 'number'
         ? item.metadata.confidence
         : null
+      const generatedExercises = item.role === 'assistant'
+        ? normalizeGeneratedExercises(item.metadata?.generated_exercises)
+        : null
+      const generatedResource = item.role === 'assistant'
+        ? normalizeGeneratedResource(item.metadata?.generated_resource)
+        : null
       return {
         id: `${item.role}-${item.id}`,
         role: item.role,
@@ -278,19 +379,29 @@ function normalizeChatMessages(messages: ChatMessageItem[]) {
         model_used: item.model_used,
         analysis,
         confidence,
+        generatedExercises,
+        generatedResource,
       } satisfies UiMessage
     })
 }
 
 function upsertSessionFromResponse(data: QAResponsePayload, question: string) {
-  const normalizedMessages = normalizeQaMessages(data.message_history ?? [], data.structured_analysis, data.confidence)
+  const normalizedMessages = normalizeQaMessages(
+    data.message_history ?? [],
+    data.structured_analysis,
+    data.confidence,
+    data.generated_exercises ?? null,
+    data.generated_resource ?? null,
+  )
   const updatedAt = normalizedMessages[normalizedMessages.length - 1]?.created_at ?? new Date().toISOString()
   const persistentId = data.session_id ?? activeSessionId.value ?? Date.now()
-  const title = data.session_title?.trim() || question.slice(0, 24) || '智能问答'
+  const title = resolveSessionTitle(data.session_title, question.slice(0, 24) || '智能问答')
 
   const nextSession = {
     id: persistentId,
     title,
+    subject: data.subject ?? qaForm.subject,
+    topicHint: inferSessionTopic(normalizedMessages, data.subject ?? qaForm.subject, title),
     updatedAt,
     messageCount: normalizedMessages.length,
     messages: normalizedMessages,
@@ -304,25 +415,119 @@ function upsertSessionFromResponse(data: QAResponsePayload, question: string) {
   qaForm.session_title = title
 }
 
+function applyWorkspaceContext() {
+  workspaceContext.value = readStudentWorkspaceContext(user.userId)
+  if (!workspaceContext.value) {
+    return
+  }
+
+  qaForm.subject = workspaceContext.value.subject || workspaceContext.value.topic
+  qaForm.current_knowledge_points = [workspaceContext.value.topic]
+  qaForm.learning_route = {
+    subject: workspaceContext.value.subject,
+    knowledge_point: workspaceContext.value.topic,
+    overview: workspaceContext.value.goal ?? '',
+  }
+  if (!qaForm.session_title.trim() || qaForm.session_title === '新对话') {
+    qaForm.session_title = buildWorkspaceSessionTitle(workspaceContext.value.topic)
+  }
+}
+
+function shouldStartWorkspaceDraft() {
+  if (!workspaceContext.value) {
+    return false
+  }
+  const latestSession = sessions.value[0]
+  if (!latestSession) {
+    return true
+  }
+  return !sessionMatchesWorkspace(latestSession, workspaceContext.value)
+}
+
+function sessionMatchesWorkspace(session: UiSession, context: StudentWorkspaceContext) {
+  if (sameWorkspaceTopic(session.topicHint, context.topic)) {
+    return true
+  }
+  if (sameWorkspaceTopic(session.subject, context.topic)) {
+    return true
+  }
+  if (sameWorkspaceTopic(session.subject, context.subject)) {
+    return session.title.includes(context.topic)
+  }
+  return session.title.includes(context.topic)
+}
+
+function buildWorkspaceSessionTitle(topic: string) {
+  return `${topic} 问答`
+}
+
+function inferSessionTopic(messages: UiMessage[], subject: string, title: string) {
+  for (const message of [...messages].reverse()) {
+    const resourceTopic = message.generatedResource?.knowledge_point?.trim()
+    if (resourceTopic) {
+      return resourceTopic
+    }
+    const exerciseTopic = message.generatedExercises?.knowledge_point?.trim()
+    if (exerciseTopic) {
+      return exerciseTopic
+    }
+    const analysisTopic = message.analysis?.identified_knowledge_gaps?.find((item) => item.trim())
+    if (analysisTopic) {
+      return analysisTopic.trim()
+    }
+  }
+  if (title.endsWith(' 问答')) {
+    return title.slice(0, -3).trim()
+  }
+  return subject.trim()
+}
+
 function normalizeQaMessages(
   history: QAResponsePayload['message_history'],
   latestAnalysis: QAAnalysisPayload,
   confidence: number | null,
+  generatedExercises: ExerciseGenerationResponse | null,
+  generatedResource: ResourceResult | null,
 ) {
+  const lastAssistantIndex = history.map((entry) => entry.role).lastIndexOf('assistant')
   return history
     .filter((item) => item.role === 'user' || item.role === 'assistant')
-    .map((item, index, source) => {
-      const isLatestAssistant = item.role === 'assistant' && index === source.map((entry) => entry.role).lastIndexOf('assistant')
+    .map((item, index) => {
+      const isLatestAssistant = item.role === 'assistant' && index === lastAssistantIndex
+      const metadataExercises = normalizeGeneratedExercises(item.metadata?.generated_exercises)
+      const metadataResource = normalizeGeneratedResource(item.metadata?.generated_resource)
       return {
         id: `${item.role}-${item.id ?? index}`,
         role: item.role,
         content: item.content,
         created_at: item.created_at,
         model_used: item.model_used,
-        analysis: isLatestAssistant ? latestAnalysis : null,
+        analysis: isLatestAssistant ? latestAnalysis : (item.metadata?.structured_analysis as QAAnalysisPayload | undefined) ?? null,
         confidence: isLatestAssistant ? confidence : null,
+        generatedExercises: isLatestAssistant ? generatedExercises : metadataExercises,
+        generatedResource: isLatestAssistant ? generatedResource : metadataResource,
       } satisfies UiMessage
     })
+}
+
+function resourcePreview(content: string, maxLength = 320) {
+  const trimmed = content.trim()
+  if (!trimmed) {
+    return ''
+  }
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}...` : trimmed
+}
+
+async function openExercisesInPractice(exerciseSet: ExerciseGenerationResponse) {
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.setItem(EXERCISE_STORAGE_KEY, JSON.stringify({
+      generatedAt: Date.now(),
+      source: 'qa',
+      exerciseSet,
+    }))
+  }
+  ElMessage.success('已将生成习题带入练习测评')
+  await router.push({ name: 'student-exercise' })
 }
 
 async function askQaAgent() {
@@ -331,9 +536,14 @@ async function askQaAgent() {
     return
   }
 
+  applyWorkspaceContext()
+  if (workspaceContext.value && activeSession.value && !sessionMatchesWorkspace(activeSession.value, workspaceContext.value)) {
+    createLocalDraftSession()
+  }
+
   const currentSession = activeSession.value
   if (!currentSession) {
-    await createEmptySession()
+    createLocalDraftSession()
   }
 
   sending.value = true
@@ -424,7 +634,7 @@ onMounted(() => {
         <div>
           <div class="qa-header-kicker">Chat Workspace</div>
           <h2>{{ sessionTitle }}</h2>
-          <p>这里按网页版聊天的方式保留历史上下文，你可以连续追问，不再是单轮表单式问答。</p>
+          <p>这里会保留上下文连续对话，你可以继续追问，也可以直接要求生成课件、习题和知识点补充。</p>
         </div>
       </header>
 
@@ -432,7 +642,7 @@ onMounted(() => {
         <div v-if="qaError" class="qa-system-card qa-error">{{ qaError }}</div>
         <div v-else-if="!activeMessages.length" class="qa-empty-chat">
           <strong>开始一段连续对话</strong>
-          <p>首轮提问后，这个会话会自动生成标题，并一直带着历史上下文继续。</p>
+          <p>例如：我要学习高等数学的定积分，补充说明知识点，再生成课件和习题。</p>
         </div>
 
         <article
@@ -446,8 +656,59 @@ onMounted(() => {
             <div class="qa-bubble-content">{{ message.content }}</div>
             <div class="qa-bubble-meta">
               <span>{{ formatSessionTime(message.created_at) }}</span>
-              <span v-if="message.model_used">{{ message.model_used }}</span>
-              <span v-if="message.confidence !== null && message.confidence !== undefined">置信度 {{ Math.round(message.confidence * 100) }}%</span>
+              <span v-if="formatModelUsed(message.model_used)">{{ formatModelUsed(message.model_used) }}</span>
+              <span v-if="message.confidence !== null && message.confidence !== undefined">
+                置信度 {{ Math.round(message.confidence * 100) }}%
+              </span>
+            </div>
+            <p v-if="(message.generatedExercises?.exercises?.length ?? 0) > 2" class="qa-card-summary">
+              其余题目已带入练习测评页，可在那里继续答题、提交和记录错题。
+            </p>
+          </div>
+
+          <div v-if="message.generatedResource" class="qa-generated-card">
+            <div class="qa-card-kicker">生成课件</div>
+            <h4>{{ message.generatedResource.generation_plan?.title_suggestion || `${message.generatedResource.knowledge_point} 课件` }}</h4>
+            <p class="qa-card-meta">
+              {{ message.generatedResource.knowledge_point }}
+              <span>·</span>
+              <span>{{ message.generatedResource.resource_style }}</span>
+            </p>
+            <div v-if="message.generatedResource.generation_plan?.suggested_outline?.length" class="qa-chip-row">
+              <span
+                v-for="item in message.generatedResource.generation_plan.suggested_outline.slice(0, 5)"
+                :key="item"
+                class="qa-chip"
+              >
+                {{ item }}
+              </span>
+            </div>
+            <pre class="qa-resource-preview">{{ resourcePreview(message.generatedResource.content) }}</pre>
+          </div>
+
+          <div v-if="message.generatedExercises" class="qa-generated-card">
+            <div class="qa-card-kicker">生成习题</div>
+            <h4>{{ message.generatedExercises.knowledge_point }}</h4>
+            <p class="qa-card-summary">{{ message.generatedExercises.summary }}</p>
+            <button class="qa-action-btn" @click="openExercisesInPractice(message.generatedExercises)">
+              去练习测评做题
+            </button>
+            <div class="qa-exercise-list">
+              <section
+                v-for="exercise in message.generatedExercises.exercises.slice(0, 2)"
+                :key="exercise.exercise_id"
+                class="qa-exercise-item"
+              >
+                <div class="qa-exercise-head">
+                  <strong>{{ exercise.prompt }}</strong>
+                  <span>{{ exercise.difficulty }}</span>
+                </div>
+                <ul v-if="exercise.options?.length" class="qa-option-list">
+                  <li v-for="option in exercise.options ?? []" :key="option">{{ option }}</li>
+                </ul>
+                <p class="qa-answer">答案：{{ exercise.answer }}</p>
+                <p class="qa-analysis-text">解析：{{ exercise.analysis }}</p>
+              </section>
             </div>
           </div>
 
@@ -455,12 +716,12 @@ onMounted(() => {
             <h4>本轮学习分析</h4>
             <p v-if="message.analysis.learning_state">{{ message.analysis.learning_state }}</p>
 
-            <div v-if="message.analysis.identified_knowledge_gaps.length" class="qa-chip-row">
-              <span v-for="gap in message.analysis.identified_knowledge_gaps" :key="gap" class="qa-chip">{{ gap }}</span>
+            <div v-if="message.analysis.identified_knowledge_gaps?.length" class="qa-chip-row">
+              <span v-for="gap in message.analysis.identified_knowledge_gaps ?? []" :key="gap" class="qa-chip">{{ gap }}</span>
             </div>
 
-            <ul v-if="message.analysis.study_suggestions.length" class="qa-analysis-list">
-              <li v-for="item in message.analysis.study_suggestions" :key="item">{{ item }}</li>
+            <ul v-if="message.analysis.study_suggestions?.length" class="qa-analysis-list">
+              <li v-for="item in message.analysis.study_suggestions ?? []" :key="item">{{ item }}</li>
             </ul>
           </div>
         </article>
@@ -479,7 +740,7 @@ onMounted(() => {
             v-model="qaForm.question"
             class="qa-textarea"
             rows="4"
-            placeholder="输入你的问题，系统会按当前会话上下文继续聊天"
+            placeholder="输入问题，例如：继续讲一下定积分应用题，再来 5 道更难一点的题"
             @keydown.enter.exact.prevent="askQaAgent"
           />
           <button class="qa-send-btn" :disabled="sending || !qaForm.question.trim()" @click="askQaAgent">
@@ -523,7 +784,8 @@ onMounted(() => {
 }
 
 .qa-sidebar-kicker,
-.qa-header-kicker {
+.qa-header-kicker,
+.qa-card-kicker {
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -687,8 +949,13 @@ onMounted(() => {
   color: var(--muted);
 }
 
+.qa-bubble,
+.qa-analysis-card,
+.qa-generated-card {
+  max-width: min(860px, 92%);
+}
+
 .qa-bubble {
-  max-width: min(820px, 88%);
   border-radius: 20px;
   border: 1px solid var(--line);
   padding: 16px 18px;
@@ -714,21 +981,38 @@ onMounted(() => {
   color: var(--muted);
 }
 
+.qa-generated-card,
 .qa-analysis-card {
-  max-width: min(820px, 88%);
   padding: 14px 16px;
   border-radius: 18px;
   border: 1px solid var(--line);
+}
+
+.qa-generated-card {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent), color-mix(in srgb, var(--accent-deep) 4%, transparent));
+}
+
+.qa-analysis-card {
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
+.qa-generated-card h4,
 .qa-analysis-card h4 {
-  margin: 0 0 8px;
+  margin: 4px 0 8px;
 }
 
+.qa-card-meta,
+.qa-card-summary,
 .qa-analysis-card p {
   margin: 0 0 10px;
   color: var(--muted);
+}
+
+.qa-card-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
 }
 
 .qa-chip-row {
@@ -746,11 +1030,76 @@ onMounted(() => {
   color: var(--accent);
 }
 
-.qa-analysis-list {
+.qa-resource-preview {
   margin: 0;
+  white-space: pre-wrap;
+  font-family: inherit;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.qa-action-btn {
+  border: none;
+  border-radius: 12px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: #fff;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.qa-exercise-list {
+  display: grid;
+  gap: 12px;
+}
+
+.qa-exercise-item {
+  border: 1px solid color-mix(in srgb, var(--line) 90%, transparent);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.qa-exercise-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.qa-exercise-head strong {
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.qa-exercise-head span {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: capitalize;
+}
+
+.qa-option-list,
+.qa-analysis-list {
+  margin: 8px 0 0;
   padding-left: 18px;
   color: var(--muted);
   line-height: 1.7;
+}
+
+.qa-answer,
+.qa-analysis-text {
+  margin: 8px 0 0;
+  line-height: 1.7;
+}
+
+.qa-answer {
+  color: var(--text);
+}
+
+.qa-analysis-text {
+  color: var(--muted);
 }
 
 .qa-composer {
@@ -818,12 +1167,14 @@ onMounted(() => {
 
 @media (max-width: 720px) {
   .qa-input-grid,
-  .qa-textarea-wrap {
+  .qa-textarea-wrap,
+  .qa-exercise-head {
     grid-template-columns: 1fr;
   }
 
   .qa-bubble,
-  .qa-analysis-card {
+  .qa-analysis-card,
+  .qa-generated-card {
     max-width: 100%;
   }
 }

@@ -60,6 +60,7 @@ const progressPercent = computed(() =>
   totalDimensions.value > 0 ? Math.round((filledCount.value / totalDimensions.value) * 100) : 0)
 const canFinish = computed(() => Boolean(status.value?.completed) || filledCount.value >= minRequiredDimensions)
 const remainingRequired = computed(() => Math.max(0, minRequiredDimensions - filledCount.value))
+const showInlineCompletionCta = computed(() => canFinish.value && !loading.value)
 const quickChoiceGroups: QuickChoiceGroup[] = [
   {
     key: 'knowledgeBase',
@@ -189,6 +190,15 @@ const selectedQuickSummary = computed(() =>
     }))
     .filter((item) => item.values.length > 0),
 )
+const completionPromptText = computed(() => {
+  if (filledCount.value >= totalDimensions.value) {
+    return '画像维度已经补全，可以直接进入学习。'
+  }
+  if (canFinish.value) {
+    return '当前信息已经够系统联动使用，也可以继续补充更多细节。'
+  }
+  return `再补充 ${remainingRequired.value} 个维度后，就能稳定接入系统智能体。`
+})
 const activeDimension = computed(() => quickChoiceGroups[activeDimensionIndex.value])
 const activeDimensionSelections = computed(() =>
   activeDimension.value ? selectedQuickChoices.value[activeDimension.value.key] || [] : [],
@@ -597,6 +607,33 @@ function scrollToBottom() {
               {{ option }}
             </button>
           </div>
+
+          <section class="assistant-section capture-assistant-section">
+            <div class="side-title-row">
+              <div>
+                <div class="panel-kicker-text">AI 助手</div>
+                <strong>只用于补充说明和追问缺口</strong>
+              </div>
+            </div>
+
+            <div id="chat-messages" class="assistant-thread">
+              <div v-if="messages.length === 0 && loading" class="assistant-muted">正在准备补充问题...</div>
+              <div v-for="(msg, i) in messages" :key="i" class="assistant-message" :class="msg.role">
+                <span>{{ msg.role === 'user' ? '你补充' : 'AI 补充' }}</span>
+                <p>{{ msg.text }}</p>
+              </div>
+              <div v-if="loading && messages.length > 0" class="assistant-muted">AI 正在分析补充内容...</div>
+            </div>
+
+            <div class="assistant-input-row">
+              <input v-model="inputText" @keydown.enter="sendMessage" :disabled="loading"
+                placeholder="有选项没覆盖的内容，再写在这里"
+                class="assistant-input" />
+              <button @click="sendMessage" :disabled="loading || !inputText.trim()" class="assistant-send">
+                {{ loading ? '...' : '发送' }}
+              </button>
+            </div>
+          </section>
         </article>
 
         <div class="capture-actions">
@@ -631,6 +668,17 @@ function scrollToBottom() {
           </div>
           <div class="handoff-agent-list">
             <span v-for="agent in connectedAgents" :key="agent.name">{{ agent.name }}</span>
+          </div>
+          <div class="completion-callout" :class="{ ready: canFinish }">
+            <strong>{{ canFinish ? '可以完成并进入学习' : '继续补充画像' }}</strong>
+            <p>{{ completionPromptText }}</p>
+            <button
+              v-if="showInlineCompletionCta"
+              type="button"
+              class="completion-callout-button"
+              @click="finishSetup">
+              完成，进入学习
+            </button>
           </div>
         </section>
 
@@ -687,32 +735,6 @@ function scrollToBottom() {
           </div>
         </section>
 
-        <section class="side-section assistant-section">
-          <div class="side-title-row">
-            <div>
-              <div class="panel-kicker-text">AI 助手</div>
-              <strong>只用于补充说明和追问缺口</strong>
-            </div>
-          </div>
-
-          <div id="chat-messages" class="assistant-thread">
-            <div v-if="messages.length === 0 && loading" class="assistant-muted">正在准备补充问题...</div>
-            <div v-for="(msg, i) in messages" :key="i" class="assistant-message" :class="msg.role">
-              <span>{{ msg.role === 'user' ? '你补充' : 'AI 补充' }}</span>
-              <p>{{ msg.text }}</p>
-            </div>
-            <div v-if="loading && messages.length > 0" class="assistant-muted">AI 正在分析补充内容...</div>
-          </div>
-
-          <div class="assistant-input-row">
-            <input v-model="inputText" @keydown.enter="sendMessage" :disabled="loading"
-              placeholder="有选项没覆盖的内容，再写在这里"
-              class="assistant-input" />
-            <button @click="sendMessage" :disabled="loading || !inputText.trim()" class="assistant-send">
-              {{ loading ? '...' : '发送' }}
-            </button>
-          </div>
-        </section>
       </aside>
     </main>
   </div>
@@ -769,6 +791,47 @@ function scrollToBottom() {
   line-height: 1.35;
 }
 
+.completion-callout {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--muted) 16%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+}
+
+.completion-callout.ready {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.completion-callout strong {
+  display: block;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.completion-callout p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.completion-callout-button {
+  margin-top: 10px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .panel-heading-line,
 .side-title-row,
 .capture-actions,
@@ -819,8 +882,8 @@ function scrollToBottom() {
   position: relative;
   overflow: hidden;
   flex: 1;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto minmax(220px, 1fr);
   min-width: 0;
   min-height: 0;
   margin-top: 16px;
@@ -972,7 +1035,6 @@ function scrollToBottom() {
 }
 
 .quick-option-list.single {
-  flex: 1;
   align-content: start;
   margin-top: 4px;
 }
@@ -1053,7 +1115,7 @@ function scrollToBottom() {
   position: sticky;
   top: 14px;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 12px;
   align-self: stretch;
   height: 100%;
@@ -1200,16 +1262,25 @@ function scrollToBottom() {
 }
 
 .assistant-section {
-  grid-row: -2 / -1;
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0;
 }
 
+.capture-assistant-section {
+  margin-top: 18px;
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 8%, transparent), transparent 32%),
+    color-mix(in srgb, var(--bg) 48%, transparent);
+}
+
 .assistant-thread {
   flex: 1;
-  min-height: 190px;
+  min-height: 128px;
   max-height: none;
   overflow-y: auto;
   display: grid;

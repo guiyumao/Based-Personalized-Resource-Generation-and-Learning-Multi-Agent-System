@@ -25,6 +25,7 @@ from common.schemas.user import (
 )
 from common.security.auth import create_access_token, hash_password, verify_password
 from services.user_service.app.dependencies import get_current_user
+from services.user_service.app.services.profile_analysis import ProfileAnalysisService
 from services.user_service.app.services.profile_builder import (
     PROFILE_DIMENSION_KEYS,
     ProfileBuilderService,
@@ -234,13 +235,56 @@ def get_profile_dashboard(user_id: int, db: Session = Depends(get_db)) -> Learne
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    empty_dashboard = LearnerProfileDashboard(
+    habits = profile.habits if isinstance(profile.habits, dict) else {}
+    raw_dimensions = habits.get("profile_dimensions")
+    profile_dimensions = sanitize_profile_dimensions(raw_dimensions)
+    filled_labels = [
+        {
+            "knowledgeBase": "知识基础",
+            "cognitiveStyle": "认知风格",
+            "errorPreference": "易错偏好",
+            "learningSpeed": "学习节奏",
+            "interestDirection": "兴趣方向",
+            "goalOrientation": "目标导向",
+        }.get(key, key)
+        for key in PROFILE_DIMENSION_KEYS
+        if profile_dimensions.get(key)
+    ]
+    habit_summary_parts: list[str] = []
+    if filled_labels:
+        habit_summary_parts.append(f"已记录画像维度：{'、'.join(filled_labels)}")
+    learning_style = _empty_learning_style(profile.learning_style)
+    if learning_style:
+        style_label_map = {
+            "visual": "视觉型",
+            "reading": "文本型",
+            "auditory": "听觉型",
+            "kinesthetic": "动手实践型",
+        }
+        habit_summary_parts.append(f"学习风格：{style_label_map.get(learning_style, learning_style)}")
+
+    radar_metrics = []
+    if learning_style:
+        radar_metrics.append({"dimension": "学习画像已构建", "score": 100})
+    for key in PROFILE_DIMENSION_KEYS:
+        if profile_dimensions.get(key):
+            label = {
+                "knowledgeBase": "知识基础",
+                "cognitiveStyle": "认知风格",
+                "errorPreference": "易错偏好",
+                "learningSpeed": "学习节奏",
+                "interestDirection": "兴趣方向",
+                "goalOrientation": "目标导向",
+            }.get(key, key)
+            radar_metrics.append({"dimension": label, "score": 50})
+
+    base_dashboard = LearnerProfileDashboard(
         user_id=user_id,
-        learning_style=_empty_learning_style(profile.learning_style),
+        learning_style=learning_style,
         mastery_overview=0,
         weekly_focus_minutes=0,
-        habit_summary="",
-        radar_metrics=[],
+        habit_summary="；".join(habit_summary_parts) if habit_summary_parts else "",
+        radar_metrics=radar_metrics,
         heatmap=[],
     )
 
@@ -253,11 +297,45 @@ def get_profile_dashboard(user_id: int, db: Session = Depends(get_db)) -> Learne
         payload = response.json()
         data = payload.get("data") or {}
         if not isinstance(data, dict):
-            return empty_dashboard
+            return base_dashboard
         data["learning_style"] = _empty_learning_style(data.get("learning_style") or profile.learning_style)
+        if not data.get("habit_summary"):
+            data["habit_summary"] = base_dashboard.habit_summary
+        if not data.get("radar_metrics"):
+            data["radar_metrics"] = base_dashboard.radar_metrics
         return LearnerProfileDashboard(**data)
     except Exception:
-        return empty_dashboard
+        return base_dashboard
+
+
+@router.get("/{user_id}/profile/analysis", response_model=dict[str, object])
+def get_profile_analysis(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    """Return cached deep profile analysis or trigger generation."""
+
+    service = ProfileAnalysisService(db)
+    try:
+        return service.get_or_generate(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{user_id}/profile/analysis/status", response_model=dict[str, object])
+def get_profile_analysis_status(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    """Poll deep profile analysis generation status."""
+
+    service = ProfileAnalysisService(db)
+    return service.get_status(user_id)
+
+
+@router.post("/{user_id}/profile/analysis/refresh", response_model=dict[str, object])
+def refresh_profile_analysis(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
+    """Force refresh deep profile analysis."""
+
+    service = ProfileAnalysisService(db)
+    try:
+        return service.force_refresh(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{user_id}/token")

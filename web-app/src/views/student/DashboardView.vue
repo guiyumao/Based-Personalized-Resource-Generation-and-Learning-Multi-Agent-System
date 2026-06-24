@@ -278,6 +278,22 @@ function goToProfileSetup() {
       <p style="color:var(--muted)">以下是您的学习概览</p>
     </div>
 
+    <router-link
+      to="/student/profile-analysis"
+      style="display:flex;align-items:center;gap:16px;padding:20px 24px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-bottom:20px;text-decoration:none;color:inherit;cursor:pointer;transition:box-shadow .2s"
+      onmouseover="this.style.boxShadow='0 2px 16px color-mix(in srgb,var(--accent) 12%,transparent)'"
+      onmouseout="this.style.boxShadow='none'"
+    >
+      <div style="width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 15%,transparent),color-mix(in srgb,var(--accent-deep) 15%,transparent))">
+        🧠
+      </div>
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:16px">用户画像分析</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:2px">查看 AI 结合画像与练习行为生成的深度分析</div>
+      </div>
+      <div style="font-size:20px;color:var(--muted)">→</div>
+    </router-link>
+
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
       <span
         v-for="service in services"

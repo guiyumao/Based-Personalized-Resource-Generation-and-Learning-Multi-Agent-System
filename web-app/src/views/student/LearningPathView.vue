@@ -15,12 +15,16 @@ import {
   type ResourceResult,
   type TeachingScopeItem,
 } from '../../api'
+import {
+  clearStudentWorkspaceArtifacts,
+  COURSEWARE_STORAGE_KEY,
+  EXERCISE_STORAGE_KEY,
+  sameWorkspaceTopic,
+  writeStudentWorkspaceContext,
+} from '../../utils/studentWorkspace'
 
 const authStore = useAuthStore()
 const user = authStore.user!
-
-const COURSEWARE_STORAGE_KEY = 'student-workspace-courseware'
-const EXERCISE_STORAGE_KEY = 'student-workspace-exercise-set'
 
 const pathForm = reactive<LearningPathPayload>({
   user_id: user.userId,
@@ -45,14 +49,35 @@ const selectedTeachingScope = computed(() =>
 const completedStages = computed(() => learningPath.value?.stages.filter((stage) => stage.tasks.every((task) => task.completed)).length ?? 0)
 const totalStages = computed(() => learningPath.value?.stages.length ?? 0)
 const progressPct = computed(() => totalStages.value > 0 ? Math.round((completedStages.value / totalStages.value) * 100) : 0)
+const coordinationOutputs = computed(() => coordination.value?.outputs ?? {})
+const pathOutput = computed(() => coordinationOutputs.value.path_planning_agent as Record<string, unknown> | undefined)
+const resourceOutput = computed(() => coordinationOutputs.value.resource_generation_agent as Record<string, unknown> | undefined)
+const exerciseOutput = computed(() => coordinationOutputs.value.exercise_generation_agent as Record<string, unknown> | undefined)
+const hasPathResult = computed(() => hasAgentPayload(pathOutput.value, 'learning_path'))
+const hasCoursewareResult = computed(() => hasAgentPayload(resourceOutput.value, 'resource'))
+const hasExerciseResult = computed(() => hasAgentPayload(exerciseOutput.value, 'exercise_set'))
+const coursewareFailureReason = computed(() => describeAgentFailure(resourceOutput.value))
+const exerciseFailureReason = computed(() => describeAgentFailure(exerciseOutput.value))
+const coordinationWarnings = computed(() => {
+  const warnings: string[] = []
+  if (pathOutput.value?.status === 'failed') {
+    warnings.push(`学习路径生成失败：${describeAgentFailure(pathOutput.value)}`)
+  }
+  if (resourceOutput.value?.status === 'failed') {
+    warnings.push(`课件生成失败：${describeAgentFailure(resourceOutput.value)}`)
+  }
+  if (exerciseOutput.value?.status === 'failed') {
+    warnings.push(`练习生成失败：${describeAgentFailure(exerciseOutput.value)}`)
+  }
+  return warnings
+})
 const agentOutputSummary = computed(() => {
-  const outputs = coordination.value?.outputs ?? {}
   return [
-    hasAgentPayload(outputs.learner_profiling_agent, 'learner_profile') ? '画像已合并' : '',
-    hasAgentPayload(outputs.knowledge_graph_agent, 'visualization') ? '图谱已分析' : '',
-    hasAgentPayload(outputs.path_planning_agent, 'learning_path') ? '路径已生成' : '',
-    hasAgentPayload(outputs.resource_generation_agent, 'resource') ? '课件已生成' : '',
-    hasAgentPayload(outputs.exercise_generation_agent, 'exercise_set') ? '练习已生成' : '',
+    hasAgentPayload(coordinationOutputs.value.learner_profiling_agent as Record<string, unknown> | undefined, 'learner_profile') ? '画像已合并' : '',
+    hasAgentPayload(coordinationOutputs.value.knowledge_graph_agent as Record<string, unknown> | undefined, 'visualization') ? '图谱已分析' : '',
+    hasPathResult.value ? '路径已生成' : '',
+    hasCoursewareResult.value ? '课件已生成' : '',
+    hasExerciseResult.value ? '练习已生成' : '',
   ].filter(Boolean).join(' · ')
 })
 
@@ -148,7 +173,8 @@ onMounted(async () => {
 })
 
 async function generateLearningPath() {
-  if (!pathForm.knowledge_point.trim()) {
+  const requestedTopic = pathForm.knowledge_point.trim()
+  if (!requestedTopic) {
     ElMessage.warning('请先输入学习主题')
     return
   }
@@ -157,6 +183,7 @@ async function generateLearningPath() {
   pathError.value = ''
   coordination.value = null
   try {
+    clearWorkspaceForNewTopic(requestedTopic)
     pathForm.user_id = user.userId
     await requestCoordination()
 
@@ -170,13 +197,14 @@ async function generateLearningPath() {
     learningPath.value = coordinatedPath
     pathForm.subject = coordinatedPath.subject
     pathForm.knowledge_point = coordinatedPath.knowledge_point
+    persistWorkspaceContext(coordinatedPath)
     const hasTeacherScope = Boolean(coordinatedPath.teacher_scope)
     syncTeacherScopeFromPath(coordinatedPath)
     if (!hasTeacherScope) {
       persistCoordinatedCourseware()
     }
     persistCoordinatedExercises()
-    ElMessage.success(agentOutputSummary.value ? '学习路径、课件和练习已生成' : '学习路径已生成')
+    notifyGenerationResult()
   } catch (error: any) {
     const detail = error?.response?.data?.detail ?? error?.message ?? '未知错误'
     pathError.value = `请求失败：${detail}`
@@ -221,6 +249,69 @@ async function requestCoordination() {
 
 function hasAgentPayload(output: Record<string, unknown> | undefined, key: string) {
   return Boolean(output && output.status !== 'failed' && output[key])
+}
+
+function clearWorkspaceForNewTopic(nextTopic: string) {
+  const currentTopic = learningPath.value?.knowledge_point || pathForm.knowledge_point
+  if (sameWorkspaceTopic(currentTopic, nextTopic)) {
+    return
+  }
+  clearStudentWorkspaceArtifacts(user.userId, {
+    clearCourseware: true,
+    clearExercises: true,
+    clearPracticeSession: true,
+    clearContext: false,
+  })
+}
+
+function persistWorkspaceContext(path: LearningPathResponse) {
+  writeStudentWorkspaceContext({
+    userId: user.userId,
+    subject: path.subject,
+    topic: path.knowledge_point,
+    goal: path.overview,
+    generatedAt: Date.now(),
+  })
+}
+
+function describeAgentFailure(output: Record<string, unknown> | undefined) {
+  const rawError = typeof output?.error === 'string' ? output.error.trim() : ''
+  if (!rawError) {
+    return '服务暂时不可用'
+  }
+  if (rawError.includes('No LLM credentials configured')) {
+    return '未配置 LLM 凭据，请在后端 .env 中填写对应模型提供商的 API Key'
+  }
+  return rawError
+}
+
+function notifyGenerationResult() {
+  if (hasPathResult.value && hasCoursewareResult.value && hasExerciseResult.value) {
+    ElMessage.success('学习路径、课件和练习已生成')
+    return
+  }
+
+  if (hasPathResult.value && !hasCoursewareResult.value && hasExerciseResult.value) {
+    ElMessage.warning(`学习路径和练习已生成，但课件生成失败：${coursewareFailureReason.value}`)
+    return
+  }
+
+  if (hasPathResult.value && !hasCoursewareResult.value && !hasExerciseResult.value) {
+    ElMessage.warning(`学习路径已生成，但课件和练习未完成。课件失败原因：${coursewareFailureReason.value}`)
+    return
+  }
+
+  if (hasPathResult.value && hasCoursewareResult.value && !hasExerciseResult.value) {
+    ElMessage.warning(`学习路径和课件已生成，但练习生成失败：${exerciseFailureReason.value}`)
+    return
+  }
+
+  if (hasPathResult.value) {
+    ElMessage.success('学习路径已生成')
+    return
+  }
+
+  ElMessage.warning('本次仅完成了部分协同结果，请查看页面中的失败原因')
 }
 
 async function ensureWorkspaceArtifacts(path: LearningPathResponse) {
@@ -271,6 +362,7 @@ async function generateFallbackCourseware(path: LearningPathResponse) {
       resource,
     }
   } catch (error: any) {
+    window.sessionStorage.removeItem(COURSEWARE_STORAGE_KEY)
     coordination.value!.outputs.resource_generation_agent = {
       status: 'failed',
       error: error?.response?.data?.detail ?? error?.message ?? '课件生成失败',
@@ -297,6 +389,7 @@ async function generateFallbackExercises(path: LearningPathResponse) {
       exercise_set: exerciseSet,
     }
   } catch (error: any) {
+    window.sessionStorage.removeItem(EXERCISE_STORAGE_KEY)
     coordination.value!.outputs.exercise_generation_agent = {
       status: 'failed',
       error: error?.response?.data?.detail ?? error?.message ?? '练习生成失败',
@@ -331,6 +424,7 @@ function persistCoordinatedExercises() {
   }
   window.sessionStorage.setItem(EXERCISE_STORAGE_KEY, JSON.stringify({
     generatedAt: Date.now(),
+    source: 'learning_path',
     exerciseSet,
   }))
 }
@@ -443,6 +537,11 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
             <span v-for="agent in selectedAgents" :key="agent">{{ agent }}</span>
           </div>
           <p>{{ agentOutputSummary || coordination.route_reason }}</p>
+          <div v-if="coordinationWarnings.length" class="warning-list">
+            <p v-for="warning in coordinationWarnings" :key="warning" class="warning-text">
+              {{ warning }}
+            </p>
+          </div>
           <p v-if="coordination.status !== 'success'" class="warning-text">
             部分智能体未完成，请查看服务日志。
           </p>
@@ -737,6 +836,12 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
 
 .warning-text {
   color: var(--red) !important;
+}
+
+.warning-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
 }
 
 .empty-state {

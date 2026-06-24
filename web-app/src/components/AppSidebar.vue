@@ -26,7 +26,7 @@ const menuItems: MenuItem[] = [
   { key: 'knowledge-graph', label: '知识图谱', icon: '🔗', route: '/student/knowledge-graph', roles: ['student'] },
   { key: 'report', label: '学习报告', icon: '📈', route: '/student/report', roles: ['student'] },
   { key: 'qa', label: '智能问答', icon: '💬', route: '/student/qa', roles: ['student'] },
-  { key: 'resources', label: '课件下载', icon: '🎓', route: '/student/resources', roles: ['student'] },
+  { key: 'resources', label: '学习资源', icon: '🎓', route: '/student/resources', roles: ['student'] },
   { key: 'teacher-overview', label: '教师总览', icon: '🏫', route: '/teacher/overview', roles: ['teacher'] },
   { key: 'teacher-classes', label: '班级管理', icon: '👥', route: '/teacher/classes', roles: ['teacher'] },
   { key: 'teacher-knowledge-base', label: '课程知识库', icon: '🎓', route: '/teacher/knowledge-base', roles: ['teacher'] },

@@ -49,6 +49,7 @@ class UserProfile(Base):
     learning_style: Mapped[str] = mapped_column(String(20), default="")
     cognitive_abilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     habits: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    profile_analysis: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.utcnow,

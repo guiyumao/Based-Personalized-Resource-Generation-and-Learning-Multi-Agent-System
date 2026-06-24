@@ -4,13 +4,23 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from common.config import get_settings
 from common.models.learning import ChatMessage, ChatSession
-from common.schemas.agent import ChatMessageInput, ChatResponse, ChatSessionCreate, ChatSessionDetail, ChatSessionSummary
+from common.schemas.agent import (
+    ChatMessageInput,
+    ChatMessageItem,
+    ChatResponse,
+    ChatSessionCreate,
+    ChatSessionDetail,
+    ChatSessionSummary,
+)
+from common.utils.text import is_placeholder_session_title, looks_like_unreadable_text
+from common.utils.time import to_utc_isoformat
 from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.llm_factory import LLMFactory
 
@@ -18,11 +28,14 @@ from services.agent_service.app.services.llm_factory import LLMFactory
 class ChatService:
     """Manage continuous conversations with large-small model collaboration."""
 
+    DEFAULT_SESSION_TITLE = "新对话"
+
     def __init__(self, db: Session) -> None:
         self.db = db
         self.settings = get_settings()
         self.knowledge_base = KnowledgeBaseService()
         self.llm_factory = LLMFactory(self.settings)
+        self.default_session_title = "\u65b0\u5bf9\u8bdd"
 
     def create_session(self, request: ChatSessionCreate) -> ChatSessionDetail:
         """Create a new chat session."""
@@ -33,6 +46,7 @@ class ChatService:
             is_active=True,
             last_message_at=datetime.utcnow(),
         )
+        session.title = self._normalize_session_title(session.title)
         self.db.add(session)
         self.db.commit()
         self.db.refresh(session)
@@ -49,6 +63,7 @@ class ChatService:
         if session is None:
             return None
 
+        self._repair_session_title(session)
         return self._session_to_detail(session)
 
     def list_sessions(self, user_id: int, limit: int = 50) -> list[ChatSessionSummary]:
@@ -73,6 +88,8 @@ class ChatService:
 
         if session is None:
             raise ValueError(f"Chat session {request.session_id} not found or access denied")
+
+        self._repair_session_title(session, fallback_question=request.content)
 
         # Save user message
         user_message = ChatMessage(
@@ -136,7 +153,7 @@ class ChatService:
             content=response_content,
             model_used=model_used,
             metadata=metadata,
-            created_at=assistant_message.created_at.isoformat(),
+            created_at=to_utc_isoformat(assistant_message.created_at),
         )
 
     def delete_session(self, session_id: int, user_id: int) -> bool:
@@ -373,6 +390,7 @@ class ChatService:
 
     def _session_to_detail(self, session: ChatSession) -> ChatSessionDetail:
         """Convert session to detail response."""
+        resolved_title = self._resolve_session_title(session)
         messages = [
             ChatMessageItem(
                 id=msg.id,
@@ -380,7 +398,7 @@ class ChatService:
                 content=msg.content,
                 model_used=msg.model_used,
                 metadata=msg.metadata_json,
-                created_at=msg.created_at.isoformat(),
+                created_at=to_utc_isoformat(msg.created_at),
             )
             for msg in session.messages
         ]
@@ -388,26 +406,85 @@ class ChatService:
         return ChatSessionDetail(
             id=session.id,
             user_id=session.user_id,
-            title=session.title,
+            title=resolved_title,
             subject=session.subject,
             is_active=session.is_active,
-            created_at=session.created_at.isoformat(),
-            last_message_at=session.last_message_at.isoformat(),
+            created_at=to_utc_isoformat(session.created_at),
+            last_message_at=to_utc_isoformat(session.last_message_at),
             message_count=len(messages),
             messages=messages,
         )
 
     def _session_to_summary(self, session: ChatSession) -> ChatSessionSummary:
         """Convert session to summary response."""
+        resolved_title = self._resolve_session_title(session)
         message_count = self.db.query(ChatMessage).filter(ChatMessage.session_id == session.id).count()
 
         return ChatSessionSummary(
             id=session.id,
             user_id=session.user_id,
-            title=session.title,
+            title=resolved_title,
             subject=session.subject,
             is_active=session.is_active,
-            created_at=session.created_at.isoformat(),
-            last_message_at=session.last_message_at.isoformat(),
+            created_at=to_utc_isoformat(session.created_at),
+            last_message_at=to_utc_isoformat(session.last_message_at),
             message_count=message_count,
         )
+
+    def _resolve_session_title(self, session: ChatSession) -> str:
+        self._repair_session_title(session)
+        return self._normalize_session_title(session.title)
+
+    def _repair_session_title(self, session: ChatSession, fallback_question: str = "") -> None:
+        normalized_title = self._normalize_session_title(session.title)
+        if normalized_title != session.title and not self._looks_like_invalid_session_title(session.title):
+            session.title = normalized_title
+            self.db.commit()
+            self.db.refresh(session)
+            return
+
+        if not self._looks_like_invalid_session_title(session.title):
+            return
+
+        rebuilt_title = self._build_title_from_messages(session)
+        if not rebuilt_title and fallback_question.strip():
+            rebuilt_title = self._build_title_from_question(fallback_question)
+        if not rebuilt_title:
+            rebuilt_title = self.default_session_title
+
+        if rebuilt_title != session.title:
+            session.title = rebuilt_title
+            self.db.commit()
+            self.db.refresh(session)
+
+    def _build_title_from_messages(self, session: ChatSession) -> str:
+        first_user_message = (
+            self.db.query(ChatMessage)
+            .filter(ChatMessage.session_id == session.id, ChatMessage.role == "user")
+            .order_by(ChatMessage.created_at.asc(), ChatMessage.id.asc())
+            .first()
+        )
+        if first_user_message is None:
+            return ""
+        return self._build_title_from_question(first_user_message.content)
+
+    def _build_title_from_question(self, question: str) -> str:
+        cleaned = re.sub(r"\s+", " ", question.strip())
+        return cleaned[:24]
+
+    def _looks_like_invalid_session_title(self, title: str) -> bool:
+        normalized = (title or "").strip()
+        if not normalized:
+            return True
+        if is_placeholder_session_title(normalized):
+            return False
+        return looks_like_unreadable_text(normalized)
+
+    def _normalize_session_title(self, title: str | None) -> str:
+        normalized = (title or "").strip()
+        if not normalized or self._looks_like_invalid_session_title(normalized):
+            return self.default_session_title
+        return normalized
+
+    def _looks_like_broken_title(self, title: str) -> bool:
+        return self._looks_like_invalid_session_title(title)

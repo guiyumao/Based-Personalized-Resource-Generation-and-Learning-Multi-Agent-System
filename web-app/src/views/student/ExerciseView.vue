@@ -4,13 +4,20 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import { agentApi, evaluationApi, type ApiEnvelope, type ExerciseGenerationPayload, type ExerciseGenerationResponse, type ExerciseItem, type LearningPathResponse, type MistakeNotebook, type PracticeFeedback, type PracticeSubmissionPayload } from '../../api'
 import { postContentWithTimeout } from '../../utils/viewHelpers'
+import {
+  buildPracticeSessionStorageKey,
+  COURSEWARE_STORAGE_KEY,
+  EXERCISE_STORAGE_KEY,
+  readStudentWorkspaceContext,
+  sameWorkspaceTopic,
+} from '../../utils/studentWorkspace'
 
 const authStore = useAuthStore()
 const user = authStore.user!
-const COURSEWARE_STORAGE_KEY = 'student-workspace-courseware'
-const EXERCISE_STORAGE_KEY = 'student-workspace-exercise-set'
 const MISTAKE_NOTEBOOK_STORAGE_KEY = 'student-workspace-mistakes'
-const PRACTICE_SESSION_STORAGE_KEY = `student-practice-session-${user.userId}`
+const PRACTICE_SESSION_STORAGE_KEY = buildPracticeSessionStorageKey(user.userId)
+const REQUIRED_EXERCISE_COUNT = 10
+const REQUIRED_QUESTION_TYPE_COUNTS = { choice: 5, judge: 3, blank: 2 } as const
 
 type StoredCoursewareSnapshot = {
   subject?: string
@@ -22,6 +29,7 @@ type StoredCoursewareSnapshot = {
 
 type StoredExerciseSnapshot = {
   generatedAt?: number
+  source?: string
   exerciseSet?: ExerciseGenerationResponse
 }
 
@@ -56,7 +64,8 @@ type StoredMistakeSnapshot = {
 
 const exerciseForm = reactive<ExerciseGenerationPayload>({
   user_id: user.userId, knowledge_point: '', resource_style: 'interactive',
-  learner_profile: {}, exercise_count: 5,
+  learner_profile: {}, exercise_count: REQUIRED_EXERCISE_COUNT,
+  question_type_counts: { ...REQUIRED_QUESTION_TYPE_COUNTS },
   generation_mode: 'self_test', courseware_content: '',
 })
 
@@ -102,17 +111,31 @@ function hasDistinctExercisePromptsV2(set: ExerciseGenerationResponse) {
   return new Set(prompts).size === prompts.length
 }
 
+function matchesRequiredExerciseMix(set: ExerciseGenerationResponse) {
+  if (set.exercises.length !== REQUIRED_EXERCISE_COUNT) {
+    return false
+  }
+  const counts = set.exercises.reduce<Record<string, number>>((acc, item) => {
+    acc[item.question_type] = (acc[item.question_type] ?? 0) + 1
+    return acc
+  }, {})
+  return Object.entries(REQUIRED_QUESTION_TYPE_COUNTS).every(
+    ([type, count]) => counts[type] === count,
+  )
+}
+
 function clearStoredExerciseSnapshots() {
   if (typeof window === 'undefined') {
-    return
+    return false
   }
   window.localStorage.removeItem(PRACTICE_SESSION_STORAGE_KEY)
   window.sessionStorage.removeItem(EXERCISE_STORAGE_KEY)
 }
 
 onMounted(() => {
-  if (!loadStoredPracticeSession()) {
-    loadStoredExerciseSet()
+  const hasIncomingExerciseSet = loadStoredExerciseSet()
+  if (!hasIncomingExerciseSet) {
+    loadStoredPracticeSession()
   }
   void loadExistingKnowledgePoint()
   void refreshMistakeNotebook()
@@ -123,6 +146,7 @@ function loadStoredPracticeSession() {
     return false
   }
   try {
+    const workspaceContext = readStudentWorkspaceContext(user.userId)
     const raw = window.localStorage.getItem(PRACTICE_SESSION_STORAGE_KEY)
     if (!raw) {
       return false
@@ -131,8 +155,12 @@ function loadStoredPracticeSession() {
     if (stored.userId !== user.userId || !stored.exerciseSet?.exercises?.length) {
       return false
     }
-    if (!hasDistinctExercisePromptsV2(stored.exerciseSet)) {
-      window.localStorage.removeItem(PRACTICE_SESSION_STORAGE_KEY)
+    if (workspaceContext && !sameWorkspaceTopic(stored.exerciseSet.knowledge_point, workspaceContext.topic)) {
+      clearStoredExerciseSnapshots()
+      return false
+    }
+    if (!hasDistinctExercisePromptsV2(stored.exerciseSet) || !matchesRequiredExerciseMix(stored.exerciseSet)) {
+      clearStoredExerciseSnapshots()
       return false
     }
 
@@ -153,29 +181,53 @@ function loadStoredPracticeSession() {
 
 function loadStoredExerciseSet() {
   if (typeof window === 'undefined') {
-    return
+    return false
   }
   try {
+    const workspaceContext = readStudentWorkspaceContext(user.userId)
     const raw = window.sessionStorage.getItem(EXERCISE_STORAGE_KEY)
     if (!raw) {
-      return
+      return false
     }
     const stored = JSON.parse(raw) as StoredExerciseSnapshot
-    if (stored.exerciseSet?.exercises?.length && hasDistinctExercisePromptsV2(stored.exerciseSet)) {
+    window.sessionStorage.removeItem(EXERCISE_STORAGE_KEY)
+    if (
+      stored.exerciseSet?.exercises?.length
+      && (!workspaceContext || sameWorkspaceTopic(stored.exerciseSet.knowledge_point, workspaceContext.topic))
+      && hasDistinctExercisePromptsV2(stored.exerciseSet)
+      && matchesRequiredExerciseMix(stored.exerciseSet)
+    ) {
+      window.localStorage.removeItem(PRACTICE_SESSION_STORAGE_KEY)
       exerciseSet.value = stored.exerciseSet
       exerciseForm.knowledge_point = stored.exerciseSet.knowledge_point
       ElMessage.success('已载入协同智能体生成的练习题')
+      return true
     } else {
-      window.sessionStorage.removeItem(EXERCISE_STORAGE_KEY)
+      return false
     }
   } catch {
     // Ignore malformed session snapshots.
+    return false
   }
 }
 
 async function loadExistingKnowledgePoint() {
+  const workspaceContext = readStudentWorkspaceContext(user.userId)
+  const currentKnowledgePoint = exerciseSet.value?.knowledge_point?.trim()
+  if (currentKnowledgePoint) {
+    const storedCourseware = readCoursewareSnapshot()
+    if (storedCourseware?.topic?.trim() === currentKnowledgePoint) {
+      exerciseForm.courseware_content = storedCourseware.resourceResult?.content ?? ''
+    }
+    return
+  }
+
+  if (workspaceContext?.topic?.trim()) {
+    applyKnowledgePoint(workspaceContext.topic, '来自当前学习路径')
+  }
+
   const stored = readCoursewareSnapshot()
-  if (stored?.topic?.trim()) {
+  if (stored?.topic?.trim() && sameWorkspaceTopic(stored.topic, workspaceContext?.topic ?? stored.topic)) {
     applyKnowledgePoint(stored.topic, '来自已生成课件')
     exerciseForm.courseware_content = stored.resourceResult?.content ?? ''
     return
@@ -225,6 +277,11 @@ async function generateExercises() {
     }
     if (!hasDistinctExercisePromptsV2(data)) {
       genError.value = '生成结果中仍有重复题目，请重新生成'
+      ElMessage.error(genError.value)
+      return
+    }
+    if (!matchesRequiredExerciseMix(data)) {
+      genError.value = '生成结果题型配比不符合要求，请重新生成'
       ElMessage.error(genError.value)
       return
     }

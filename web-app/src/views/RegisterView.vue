@@ -45,6 +45,10 @@ async function handleRegister() {
       },
     })
     ElMessage.success('注册成功，已自动登录')
+    if (data.role === 'student') {
+      await router.replace('/profile-setup')
+      return
+    }
     await router.replace(authStore.homeRoute)
   } catch (error: unknown) {
     ElMessage.error(extractErrorMessage(error, '注册失败，请检查输入信息'))

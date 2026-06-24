@@ -71,13 +71,46 @@ class CoordinatorWorkflow:
 
         intent = state["intent"].lower()
         payload = state.get("payload", {})
+        forced_agents = [str(agent) for agent in payload.get("force_agents", []) if str(agent).strip()]
+
+        if forced_agents:
+            deduped_agents = list(dict.fromkeys(forced_agents))
+            return {
+                **state,
+                "selected_agents": deduped_agents,
+                "route_reason": f"Intent '{state['intent']}' used forced agents: {', '.join(deduped_agents)}.",
+            }
+
         selected_agents: list[str] = []
 
         if payload.get("only_exercises"):
             selected_agents.extend(["learner_profiling_agent", "exercise_generation_agent"])
-        if payload.get("force_agents"):
-            selected_agents.extend(str(agent) for agent in payload["force_agents"])
 
+        if payload.get("full_collaboration") or self._matches(
+            intent,
+            [
+                "全部",
+                "联合",
+                "协同",
+                "系统配合",
+                "全系统",
+                "all agents",
+                "full collaboration",
+                "orchestrate all",
+            ],
+        ):
+            selected_agents.extend(
+                [
+                    "learner_profiling_agent",
+                    "knowledge_graph_agent",
+                    "knowledge_base_agent",
+                    "path_planning_agent",
+                    "resource_generation_agent",
+                    "exercise_generation_agent",
+                    "qa_agent",
+                    "evaluation_feedback_agent",
+                ]
+            )
         if self._matches(intent, ["课件", "练习", "习题", "资源", "courseware", "exercise", "resource"]):
             selected_agents.extend(["learner_profiling_agent", "resource_generation_agent"])
         if self._matches(intent, ["路径", "计划", "学习路线", "path", "schedule", "plan"]):
@@ -194,6 +227,8 @@ class CoordinatorWorkflow:
                     "basis": self._build_profile_basis(snapshot),
                     "agent_handoff": learner_profile.get("agent_handoff", {}),
                     "profile_dimensions": learner_profile.get("profile_dimensions", {}),
+                    "profile_analysis_summaries": learner_profile.get("profile_analysis_summaries", {}),
+                    "profile_analysis": learner_profile.get("profile_analysis", {}),
                     "preferred_resource_modes": learner_profile.get("preferred_resource_modes", []),
                     "learner_profile": learner_profile,
                 }
@@ -210,7 +245,7 @@ class CoordinatorWorkflow:
             if "path_planning_agent" in selected:
                 path_request = LearningPathRequest(
                     user_id=payload.user_id,
-                    subject=str(context.get("subject") or "Python 程序设计"),
+                    subject=str(context.get("subject") or knowledge_point or ""),
                     knowledge_point=knowledge_point,
                     daily_minutes=int(context.get("daily_minutes") or 45),
                     learner_profile=learner_profile,
@@ -257,6 +292,13 @@ class CoordinatorWorkflow:
                     context=context,
                 )
                 plan_parts.append("evaluation")
+
+            outputs["coordinator_summary"] = self._build_collaboration_summary(
+                selected_agents=result.get("selected_agents", []),
+                outputs=outputs,
+                learner_profile=learner_profile,
+                knowledge_point=knowledge_point,
+            )
 
             failed = [name for name, output in outputs.items() if output.get("status") == "failed"]
             status = "partial" if failed else "success"
@@ -364,6 +406,7 @@ class CoordinatorWorkflow:
             resource_style=str(context.get("resource_style") or "interactive"),  # type: ignore[arg-type]
             learner_profile=learner_profile,
             exercise_count=int(context.get("exercise_count") or 5),
+            question_type_counts=dict(context.get("question_type_counts") or {}),
             generation_mode=str(context.get("generation_mode") or "self_test"),  # type: ignore[arg-type]
             courseware_content=courseware_content,
         )
@@ -389,7 +432,7 @@ class CoordinatorWorkflow:
         session_id = context.get("qa_session_id", context.get("session_id"))
         request = QARequest(
             student_id=str(context.get("student_id") or payload.user_id),
-            subject=str(context.get("subject") or "Python 绋嬪簭璁捐"),
+            subject=str(context.get("subject") or ""),
             grade=str(context.get("grade") or context.get("learning_stage") or "university"),
             question=str(context.get("question") or context.get("request_text") or payload.intent).strip(),
             session_id=int(session_id) if session_id is not None else None,
@@ -496,3 +539,56 @@ class CoordinatorWorkflow:
             if isinstance(values, list):
                 return [str(item) for item in values if str(item).strip()]
         return []
+
+    def _build_collaboration_summary(
+        self,
+        *,
+        selected_agents: list[str],
+        outputs: dict[str, Any],
+        learner_profile: dict[str, Any],
+        knowledge_point: str,
+    ) -> dict[str, Any]:
+        """Summarize how agents cooperated and what context was shared."""
+
+        completed_agents = [
+            name
+            for name in selected_agents
+            if isinstance(outputs.get(name), dict) and outputs[name].get("status") == "completed"
+        ]
+        failed_agents = [
+            name
+            for name in selected_agents
+            if isinstance(outputs.get(name), dict) and outputs[name].get("status") == "failed"
+        ]
+        handoff = learner_profile.get("agent_handoff", {})
+        return {
+            "status": "completed" if not failed_agents else "partial",
+            "knowledge_point": knowledge_point,
+            "completed_agents": completed_agents,
+            "failed_agents": failed_agents,
+            "shared_context": {
+                "profile_dimensions": learner_profile.get("profile_dimensions", {}),
+                "profile_analysis_summaries": learner_profile.get("profile_analysis_summaries", {}),
+                "preferred_resource_modes": learner_profile.get("preferred_resource_modes", []),
+                "known_background": learner_profile.get("known_background", ""),
+                "interest_direction": learner_profile.get("interest_direction", ""),
+                "goal_orientation": learner_profile.get("goal_orientation", ""),
+                "weakness_hint": learner_profile.get("weakness_hint", ""),
+                "learning_speed": learner_profile.get("learning_speed", ""),
+            },
+            "handoff_map": handoff if isinstance(handoff, dict) else {},
+            "execution_order": [
+                name
+                for name in [
+                    "learner_profiling_agent",
+                    "knowledge_graph_agent",
+                    "knowledge_base_agent",
+                    "path_planning_agent",
+                    "resource_generation_agent",
+                    "exercise_generation_agent",
+                    "qa_agent",
+                    "evaluation_feedback_agent",
+                ]
+                if name in selected_agents
+            ],
+        }

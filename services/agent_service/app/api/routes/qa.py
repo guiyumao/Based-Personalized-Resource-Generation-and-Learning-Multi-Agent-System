@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from common.db.session import get_db
 from common.schemas.agent import CoordinationRequest, QARequest, QAResponse
 from services.agent_service.app.agents.coordinator import CoordinatorWorkflow
+from services.agent_service.app.services.qa_service import QAService
 
 router = APIRouter()
 
@@ -17,16 +18,24 @@ def analyze_question(
 ) -> QAResponse:
     """Answer one student question through profile + graph + QA agents."""
 
-    knowledge_point = next((item for item in payload.current_knowledge_points if item.strip()), payload.subject)
+    intent = QAService.detect_intent_mode_from_request(payload)
+    knowledge_point = QAService.infer_route_knowledge_point_from_request(payload)
+    force_agents = ["qa_agent"] if intent["mode"] == "general" else [
+        "learner_profiling_agent",
+        "knowledge_graph_agent",
+        "qa_agent",
+    ]
     result = CoordinatorWorkflow(db).run(
         CoordinationRequest(
             user_id=int(payload.student_id) if payload.student_id.isdigit() else 0,
-            intent="qa question analysis",
+            intent=f"{intent['mode']} qa question analysis",
             knowledge_point=knowledge_point,
             payload={
                 **payload.model_dump(),
                 "execute": True,
-                "force_agents": ["learner_profiling_agent", "knowledge_graph_agent", "qa_agent"],
+                "force_agents": force_agents,
+                "intent_mode": intent["mode"],
+                "intent_reason": intent["reason"],
             },
         )
     )

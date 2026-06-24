@@ -15,7 +15,10 @@ from common.schemas.user import ProfileChatResponse, sanitize_profile_dimensions
 from services.agent_service.app.services.llm_factory import LLMFactory
 
 
-FIRST_QUESTION = "为了更方便地了解您的需求，提供个性化服务，请您简单地描述一下您现在的情况——比如您的学习基础、目标、感兴趣的领域以及平时的学习习惯。"
+FIRST_QUESTION = (
+    "为了更方便地了解您的需求，提供个性化服务，请您简单地描述一下您现在的情况"
+    "——比如您的学习基础、目标、感兴趣的领域以及平时的学习习惯。"
+)
 
 PROFILE_DIMENSION_KEYS = (
     "knowledgeBase",
@@ -57,52 +60,111 @@ PROFILE_QUESTION_BANK = {
     "goalOrientation": "你当前的学习目标更偏向考试、项目实践、求职，还是长期兴趣？",
 }
 
+PARSER_PROMPT = """你是一个学习对话解析器。你的唯一任务是把学生的自然语言输入
+拆解为清晰的语义要点，供下游 Agent 使用。你不生成对话回复，
+不提取画像维度，不做判断，只做解析。
+
+1. explicit_points：学生字面上说了什么，拆成独立要点。
+2. implicit_needs：学生没明说但可能存在的学习需求、困惑或期待。
+3. sentiment：只从 positive / neutral / anxious / frustrated 中选一个。
+4. key_terms：学生提到的课程、技术、工具、领域名词。
+
+严格返回 JSON：
+{
+  "explicit_points": ["要点1"],
+  "implicit_needs": ["隐含需求1"],
+  "sentiment": "neutral",
+  "key_terms": ["术语1"]
+}
+"""
+
+ANALYSIS_PROMPT = """你是一个学习画像分析器。你的唯一任务是根据上游解析结果，
+提取结构化的学习画像事实。你不生成对话回复。
+
+六个维度：
+- knowledgeBase：知识基础，可使用 needs_basics / has_foundation / proficient / wants_deeper
+- cognitiveStyle：视觉型 / 文本型 / 听觉型 / 动手实践型
+- errorPreference：常卡住的题型或知识点
+- learningSpeed：较快 / 适中 / 较慢
+- interestDirection：想学的技术、领域、方向
+- goalOrientation：考试 / 项目实践 / 求职 / 长期兴趣
+
+严格返回 JSON：
+{
+  "facts_extracted": {
+    "knowledgeBase": {"value": "...", "confidence": "high|medium|low"},
+    "cognitiveStyle": {"value": "...", "confidence": "high|medium|low"},
+    "errorPreference": {"value": "...", "confidence": "high|medium|low"},
+    "learningSpeed": {"value": "...", "confidence": "high|medium|low"},
+    "interestDirection": {"value": "...", "confidence": "high|medium|low"},
+    "goalOrientation": {"value": "...", "confidence": "high|medium|low"}
+  },
+  "clarification_needed": ["具体追问1"],
+  "suggested_next_dimension": "knowledgeBase",
+  "suggested_next_reason": "为什么建议追问这个维度"
+}
+
+没提取到的字段填 null。
+"""
+
+OUTPUT_PROMPT = """你是一个专业、真诚的学习画像访谈助手，正在和学生做一对一访谈。
+
+原则：
+- 用追问代替赞美。
+- 每轮最多一句共情，然后立刻转入具体追问。
+- 问题要窄，不要宽泛。
+- 如果上游识别到隐含需求，顺着它追问。
+- 已填充 4 个及以上维度时，可以自然提醒学生随时点击“完成，进入学习”。
+
+输入包含 parser_result、analysis_result、filled_dimensions、conversation_round。
+只输出自然语言回复，不要 JSON，不要额外格式，控制在 80-150 字。
+"""
+
+NEGATION_PATTERNS = [
+    r"没有.*基础",
+    r"没学过",
+    r"不会",
+    r"不了解",
+    r"不懂",
+    r"零基础",
+    r"完全没",
+    r"没接触过",
+    r"不太会",
+    r"不太懂",
+    r"不熟悉",
+    r"不擅长",
+    r"没做过",
+    r"很少",
+]
+
+WANTS_DEEPER_PATTERNS = [
+    r"熟悉.*(?:深入|进阶|提高|加强|更进|学好|系统)",
+    r"(?:学过|会|了解|掌握).*(?:深入|进阶|提高|加强|更进|学好|系统)",
+    r"(?:想|希望|打算).*(?:深入|进阶|提高|加强).*",
+    r"(?:有.*基础).*(?:但|不过|然而|只是|但是).*(?:深入|进阶|加强|提高)",
+    r"(?:做过|写过|用过).*(?:但|不过|然而|但是|只是).*(?:不够|不足|还需要).*",
+]
+
 COGNITIVE_STYLE_RULES = (
-    (("动手", "实践", "上机", "写代码", "实操"), "动手实践型"),
+    (("动手", "实践", "上机", "写代码", "实操", "边做边学"), "动手实践型"),
     (("看图", "图示", "图表", "可视化", "视觉"), "视觉型"),
     (("阅读", "文字", "文本", "文档"), "文本型"),
     (("听", "讲解", "讲一遍", "语音"), "听觉型"),
 )
 
 LEARNING_SPEED_RULES = (
-    (("学得快", "上手快", "节奏快", "比较快"), "较快"),
-    (("慢", "吃力", "跟不上", "慢一点"), "较慢"),
-    (("适中", "正常", "还行"), "适中"),
+    (("学得快", "上手快", "节奏快", "比较快", "较快推进"), "较快"),
+    (("慢", "吃力", "跟不上", "慢一点", "分步讲"), "较慢"),
+    (("适中", "正常", "还行", "适中节奏"), "适中"),
 )
-
-SYSTEM_PROMPT = """
-你是个性化学习平台里的学习者画像构建智能体。你需要对学生每一轮回答做语义分析，并把分析结果交给后续的学习路径、资源生成、练习生成和答疑智能体协作使用。
-
-画像维度只能使用这些 key：
-- knowledgeBase：学习基础、已学内容、当前正在学的学科/知识范围
-- cognitiveStyle：偏好的理解方式，例如视觉型、文本型、听觉型、动手实践型、混合型
-- errorPreference：学生自述的薄弱点、易错点、卡点、困惑点
-- learningSpeed：学习节奏，例如较快、适中、较慢，或学生自己的描述
-- interestDirection：兴趣方向、想深入的主题、偏好的应用场景
-- goalOrientation：学习目标，例如考试、项目、求职、兴趣、补弱等
-
-分析规则：
-1. 必须结合最近对话和当前系统正在追问的维度理解短回答，不能只看关键词。
-2. 如果学生只回答一个词或短语，也要判断它是在回答上一轮问题的哪个画像维度。
-3. 不要内置或偏向任何特定学科；学生说什么领域，就按原文归纳。
-4. 对每一轮回答都尽可能提取明确画像信息；无法确定时再少提取。
-5. reply 要自然反馈已经理解到的信息，并继续追问当前最缺失、对协作最有用的一个维度。
-
-请只返回 JSON，格式如下：
-{
-  "reply": "给学生的自然语言回复",
-  "profileUpdates": {
-    "knowledgeBase": "已识别内容",
-    "cognitiveStyle": "已识别内容"
-  }
-}
-
-缺失字段不要猜测。profileUpdates 中的值要短而具体，保留学生原意。
-""".strip()
 
 
 class ProfileBuilderService:
     """Build and update learner profile dimensions from conversation turns."""
+
+    PARSER_TEMPERATURE = 0.7
+    ANALYSIS_TEMPERATURE = 0.2
+    OUTPUT_TEMPERATURE = 0.6
 
     def __init__(self, db: Session, settings: Settings | None = None) -> None:
         self.db = db
@@ -116,8 +178,6 @@ class ProfileBuilderService:
             raise ValueError("User not found")
 
         profile = self._get_or_create_profile(user_id)
-
-        # First interaction: return the standard opening question
         history = self._load_recent_history(user_id)
         if not history and not message.strip():
             return ProfileChatResponse(
@@ -152,7 +212,12 @@ class ProfileBuilderService:
             estimated_remaining_rounds=self._estimate_remaining_rounds(completeness),
         )
 
-    def update_profile(self, user_id: int, learning_style: str | None, profile_dimensions: dict[str, str]) -> UserProfile:
+    def update_profile(
+        self,
+        user_id: int,
+        learning_style: str | None,
+        profile_dimensions: dict[str, str],
+    ) -> UserProfile:
         """Apply a manual learner-profile update."""
 
         user = self.db.get(User, user_id)
@@ -168,6 +233,8 @@ class ProfileBuilderService:
             for key in deleted_keys:
                 self._clear_dimension_side_effect(profile, key)
             self._apply_updates(profile, self._normalize_updates(profile_dimensions))
+            if deleted_keys:
+                self._mark_analysis_stale(user_id)
 
         self._sync_agent_collaboration_context(profile, self._get_profile_dimensions(profile))
         self.db.commit()
@@ -191,40 +258,11 @@ class ProfileBuilderService:
         profile.habits = {**habits, "profile_dimensions": profile_dimensions}
 
         self._clear_dimension_side_effect(profile, dimension_key)
+        self._mark_analysis_stale(user_id)
         self._sync_agent_collaboration_context(profile, self._get_profile_dimensions(profile))
         self.db.commit()
         self.db.refresh(profile)
         return profile
-
-    def _get_or_create_profile(self, user_id: int) -> UserProfile:
-        profile = self.db.get(UserProfile, user_id)
-        if profile is not None:
-            return profile
-
-        profile = UserProfile(
-            user_id=user_id,
-            mastery_json={},
-            learning_style="",
-            cognitive_abilities={},
-            habits={},
-        )
-        self.db.add(profile)
-        self.db.flush()
-        return profile
-
-    def _save_message(self, user_id: int, role: str, content: str) -> None:
-        self.db.add(ProfileConversation(user_id=user_id, role=role, content=content.strip()))
-        self.db.flush()
-
-    def _load_recent_history(self, user_id: int, limit: int = 20) -> list[ProfileConversation]:
-        records = (
-            self.db.query(ProfileConversation)
-            .filter(ProfileConversation.user_id == user_id)
-            .order_by(ProfileConversation.id.desc())
-            .limit(limit)
-            .all()
-        )
-        return list(reversed(records))
 
     def _generate_reply_and_updates(
         self,
@@ -232,60 +270,161 @@ class ProfileBuilderService:
         history: list[ProfileConversation],
         existing_dimensions: dict[str, str],
     ) -> tuple[str, dict[str, str]]:
+        structured_updates = self._extract_structured_dimension_updates(message)
         heuristic_updates = self._extract_updates_from_text(message, history, existing_dimensions)
-        llm_result = self._run_llm(message, history, existing_dimensions)
-        llm_reply = ""
-        llm_updates: dict[str, str] = {}
-        if llm_result is not None:
-            llm_reply, llm_updates = llm_result
+        agent_reply = ""
+        agent_updates: dict[str, str] = {}
 
-        merged_updates = {**heuristic_updates, **llm_updates}
+        if not structured_updates:
+            parsed = self._run_parser_agent(message, history)
+            if parsed is not None:
+                analysis = self._run_analysis_agent(parsed, history, existing_dimensions)
+                if analysis is not None:
+                    agent_reply, agent_updates = self._run_output_agent(
+                        parsed,
+                        analysis,
+                        history,
+                        existing_dimensions,
+                    )
+
+        merged_updates = {
+            **agent_updates,
+            **heuristic_updates,
+            **structured_updates,
+        }
+        normalized_updates = self._normalize_updates(merged_updates)
         reply = self._build_agent_feedback_reply(
             existing_dimensions=existing_dimensions,
-            updates=merged_updates,
-            model_reply=llm_reply,
+            updates=normalized_updates,
+            model_reply=agent_reply,
         )
-        return reply, merged_updates
+        return reply, normalized_updates
 
-    def _run_llm(
+    def _run_parser_agent(
         self,
         message: str,
         history: list[ProfileConversation],
+    ) -> dict[str, Any] | None:
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            model = LLMFactory(self.settings).build_chat_model(
+                temperature=self.PARSER_TEMPERATURE
+            )
+            last_ai_message = ""
+            for item in reversed(history):
+                if item.role == "assistant":
+                    last_ai_message = item.content
+                    break
+
+            context = f"学生本轮输入：{message}"
+            if last_ai_message:
+                context = f"上一轮 AI 提问：{last_ai_message[:200]}\n学生本轮输入：{message}"
+
+            result = model.invoke(
+                [
+                    SystemMessage(content=PARSER_PROMPT),
+                    HumanMessage(content=context),
+                ]
+            )
+            return self._parse_json_payload(self._coerce_llm_text(result.content))
+        except Exception:
+            return None
+
+    def _run_analysis_agent(
+        self,
+        parsed: dict[str, Any],
+        history: list[ProfileConversation],
         existing_dimensions: dict[str, str],
-    ) -> tuple[str, dict[str, str]] | None:
+    ) -> dict[str, Any] | None:
+        try:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            model = LLMFactory(self.settings).build_chat_model(
+                temperature=self.ANALYSIS_TEMPERATURE
+            )
+            expected_dimension = self._infer_expected_dimension(history, existing_dimensions)
+            filled_list = [
+                f"{PROFILE_DIMENSION_LABELS[key]}：{value}"
+                for key, value in existing_dimensions.items()
+                if value
+            ]
+            missing_list = [
+                PROFILE_DIMENSION_LABELS[key]
+                for key in PROFILE_DIMENSION_KEYS
+                if not existing_dimensions.get(key)
+            ]
+            context = (
+                f"解析结果-显性表达：{json.dumps(parsed.get('explicit_points') or [], ensure_ascii=False)}\n"
+                f"解析结果-隐含需求：{json.dumps(parsed.get('implicit_needs') or [], ensure_ascii=False)}\n"
+                f"解析结果-情感：{parsed.get('sentiment', 'neutral')}\n"
+                f"解析结果-关键术语：{json.dumps(parsed.get('key_terms') or [], ensure_ascii=False)}\n"
+                f"当前优先维度：{expected_dimension or '自动判断'}\n"
+                f"已填充维度：{'; '.join(filled_list) if filled_list else '无'}\n"
+                f"待填充维度：{'; '.join(missing_list) if missing_list else '无'}"
+            )
+            result = model.invoke(
+                [
+                    SystemMessage(content=ANALYSIS_PROMPT),
+                    HumanMessage(content=context),
+                ]
+            )
+            return self._parse_json_payload(self._coerce_llm_text(result.content))
+        except Exception:
+            return None
+
+    def _run_output_agent(
+        self,
+        parsed: dict[str, Any],
+        analysis: dict[str, Any],
+        history: list[ProfileConversation],
+        existing_dimensions: dict[str, str],
+    ) -> tuple[str, dict[str, str]]:
         try:
             from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-            model = LLMFactory(self.settings).build_chat_model(temperature=0.4)
-            expected_dimension = self._infer_expected_dimension(history, existing_dimensions)
-            prompt_messages: list[Any] = [SystemMessage(content=SYSTEM_PROMPT)]
-            prompt_messages.append(
-                SystemMessage(
-                    content=(
-                        "当前已获取画像维度："
-                        f"{json.dumps(existing_dimensions, ensure_ascii=False)}\n"
-                        f"当前优先分析/追问维度：{expected_dimension or '自动判断'}"
-                    )
-                )
+            facts = analysis.get("facts_extracted") or {}
+            extracted_updates: dict[str, str] = {}
+            for key in PROFILE_DIMENSION_KEYS:
+                fact = facts.get(key)
+                if not isinstance(fact, dict):
+                    continue
+                value = str(fact.get("value") or "").strip()
+                confidence = str(fact.get("confidence") or "medium").lower()
+                if value and confidence in {"high", "medium"}:
+                    extracted_updates[key] = value
+
+            model = LLMFactory(self.settings).build_chat_model(
+                temperature=self.OUTPUT_TEMPERATURE
             )
-            for item in history[-12:]:
+            filled_after = len(
+                [
+                    key
+                    for key in PROFILE_DIMENSION_KEYS
+                    if existing_dimensions.get(key) or extracted_updates.get(key)
+                ]
+            )
+            conversation_round = (len(history) // 2) + 1
+            output_context = (
+                f"parser_result={json.dumps(parsed, ensure_ascii=False)}\n"
+                f"analysis_result={json.dumps(analysis, ensure_ascii=False)}\n"
+                f"filled_dimensions={filled_after}\n"
+                f"conversation_round={conversation_round}\n"
+                f"new_updates={json.dumps(extracted_updates, ensure_ascii=False)}"
+            )
+            prompt_messages: list[Any] = [SystemMessage(content=OUTPUT_PROMPT)]
+            for item in history[-4:]:
                 if item.role == "assistant":
                     prompt_messages.append(AIMessage(content=item.content))
                 else:
                     prompt_messages.append(HumanMessage(content=item.content))
-            prompt_messages.append(HumanMessage(content=message))
+            prompt_messages.append(HumanMessage(content=output_context))
 
             result = model.invoke(prompt_messages)
-            parsed = self._parse_llm_payload(self._coerce_llm_text(result.content))
-            if parsed is None:
-                return None
-            reply = str(parsed.get("reply") or "").strip()
-            updates = self._normalize_updates(parsed.get("profileUpdates") or {})
-            if not reply:
-                return None
-            return reply, updates
+            reply = self._coerce_llm_text(result.content).strip()
+            return reply, extracted_updates
         except Exception:
-            return None
+            return "", {}
 
     def _coerce_llm_text(self, content: Any) -> str:
         if isinstance(content, str):
@@ -299,7 +438,7 @@ class ProfileBuilderService:
             return "".join(parts)
         return str(content)
 
-    def _parse_llm_payload(self, raw_text: str) -> dict[str, Any] | None:
+    def _parse_json_payload(self, raw_text: str) -> dict[str, Any] | None:
         text = raw_text.strip()
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
@@ -333,18 +472,23 @@ class ProfileBuilderService:
             if self._looks_like_bulk_profile_dump(normalized):
                 continue
 
-            if (
-                "knowledgeBase" not in updates
-                and (
-                    expected_key == "knowledgeBase"
-                    or any(token in sentence for token in ("学过", "掌握", "基础", "了解过", "接触过", "做过"))
-                )
-            ):
-                updates["knowledgeBase"] = normalized
+            negated = any(re.search(pattern, normalized) for pattern in NEGATION_PATTERNS)
+            wants_deeper = any(re.search(pattern, normalized) for pattern in WANTS_DEEPER_PATTERNS)
+
+            if "knowledgeBase" not in updates:
+                if wants_deeper:
+                    updates["knowledgeBase"] = f"wants_deeper: {normalized}"
+                elif negated:
+                    updates["knowledgeBase"] = f"needs_basics: {normalized}"
+                elif expected_key == "knowledgeBase" or any(
+                    token in normalized
+                    for token in ("学过", "掌握", "基础", "了解过", "接触过", "做过", "熟悉", "会写", "熟练")
+                ):
+                    updates["knowledgeBase"] = normalized
 
             if "cognitiveStyle" not in updates:
                 for tokens, label in COGNITIVE_STYLE_RULES:
-                    if any(token in sentence for token in tokens):
+                    if any(token in normalized for token in tokens):
                         updates["cognitiveStyle"] = label
                         break
                 if "cognitiveStyle" not in updates and expected_key == "cognitiveStyle":
@@ -356,14 +500,17 @@ class ProfileBuilderService:
                 "errorPreference" not in updates
                 and (
                     expected_key == "errorPreference"
-                    or any(token in sentence for token in ("不会", "不懂", "不太会", "困难", "难", "容易错", "卡", "薄弱"))
+                    or any(
+                        token in normalized
+                        for token in ("不会", "不懂", "不太会", "困难", "难", "容易错", "卡", "薄弱")
+                    )
                 )
             ):
                 updates["errorPreference"] = normalized
 
             if "learningSpeed" not in updates:
                 for tokens, label in LEARNING_SPEED_RULES:
-                    if any(token in sentence for token in tokens):
+                    if any(token in normalized for token in tokens):
                         updates["learningSpeed"] = label
                         break
 
@@ -371,14 +518,35 @@ class ProfileBuilderService:
                 "interestDirection" not in updates
                 and (
                     expected_key == "interestDirection"
-                    or any(token in sentence for token in ("感兴趣", "喜欢", "想学", "偏向", "更想"))
+                    or any(
+                        token in normalized
+                        for token in (
+                            "感兴趣",
+                            "喜欢",
+                            "想学",
+                            "偏向",
+                            "更想",
+                            "后端",
+                            "前端",
+                            "算法",
+                            "数据分析",
+                            "AI",
+                            "人工智能",
+                        )
+                    )
                 )
             ):
                 updates["interestDirection"] = normalized
 
             if (
                 "goalOrientation" not in updates
-                and any(token in sentence for token in ("目标", "希望", "找工作", "求职", "实习", "考研", "考试", "项目"))
+                and (
+                    expected_key == "goalOrientation"
+                    or any(
+                        token in normalized
+                        for token in ("目标", "希望", "找工作", "求职", "实习", "考研", "考试", "项目", "面试")
+                    )
+                )
             ):
                 updates["goalOrientation"] = normalized
 
@@ -394,8 +562,7 @@ class ProfileBuilderService:
             if not match:
                 continue
             raw_label, raw_value = match.groups()
-            label = raw_label.strip()
-            key = PROFILE_LABEL_TO_KEY.get(label)
+            key = PROFILE_LABEL_TO_KEY.get(raw_label.strip())
             if not key:
                 continue
             value = re.sub(r"\s+", " ", raw_value).strip(" ，,;；")
@@ -449,19 +616,19 @@ class ProfileBuilderService:
         return normalized
 
     def _canonicalize_update(self, key: str, value: str) -> str:
-        if not value:
-            return ""
-        if self._looks_like_bulk_profile_dump(value):
+        if not value or self._looks_like_bulk_profile_dump(value):
             return ""
 
         if key == "cognitiveStyle":
+            if any(separator in value for separator in ("、", "，", ",")):
+                return value
             for tokens, label in COGNITIVE_STYLE_RULES:
                 if any(token in value for token in tokens):
                     return label
 
         if key == "learningSpeed":
             for tokens, label in LEARNING_SPEED_RULES:
-                if any(token in value for token in tokens):
+                if value == label or any(token == value for token in tokens):
                     return label
 
         return value
@@ -478,7 +645,10 @@ class ProfileBuilderService:
 
         if "knowledgeBase" in updates:
             mastery_json = profile.mastery_json if isinstance(profile.mastery_json, dict) else {}
-            profile.mastery_json = {**mastery_json, "_self_reported_background": updates["knowledgeBase"]}
+            profile.mastery_json = {
+                **mastery_json,
+                "_self_reported_background": updates["knowledgeBase"],
+            }
 
         cognitive = profile.cognitive_abilities if isinstance(profile.cognitive_abilities, dict) else {}
         profile.cognitive_abilities = {
@@ -493,6 +663,7 @@ class ProfileBuilderService:
                 if value
             },
         }
+        self._mark_analysis_stale(profile.user_id)
 
     def _delete_blank_dimensions(self, profile: UserProfile, updates: dict[str, Any]) -> list[str]:
         blank_keys = [
@@ -592,7 +763,8 @@ class ProfileBuilderService:
         hints = []
         if dimensions.get("errorPreference"):
             hints.append(f"练习优先覆盖易卡点：{dimensions['errorPreference']}")
-        if dimensions.get("learningSpeed") == "较慢":
+        learning_speed = dimensions.get("learningSpeed", "")
+        if learning_speed == "较慢" or any(token in learning_speed for token in ("慢", "分步")):
             hints.append("题组先基础后进阶，降低单题跨度")
         return hints
 
@@ -612,10 +784,7 @@ class ProfileBuilderService:
         normalized = value.replace("\r\n", "\n").replace("\r", "\n")
         if "我想一次补充画像多维度" in normalized:
             return True
-        marker_count = sum(
-            marker in normalized
-            for marker in PROFILE_DIMENSION_LABELS.values()
-        )
+        marker_count = sum(marker in normalized for marker in PROFILE_DIMENSION_LABELS.values())
         if marker_count >= 2:
             return True
         return normalized.count("\n") >= 2 and "：" in normalized
@@ -647,9 +816,9 @@ class ProfileBuilderService:
                 for key, value in updates.items()
             )
             if not missing:
-                return f"我已经记录下这些画像信息：{captured}。当前画像已经比较完整，可以开始进入学习路径和资源生成了。"
+                return f"我已分析并记录：{captured}。当前画像已经比较完整，可以开始进入学习路径和资源生成了。"
             next_key = missing[0]
-            return f"我先记下这些关键信息：{captured}。接下来想继续了解一下，{PROFILE_QUESTION_BANK[next_key]}"
+            return f"我已分析并记录：{captured}。接下来想继续了解一下，{PROFILE_QUESTION_BANK[next_key]}"
 
         if not missing:
             return "你的学习画像已经比较完整了，如果愿意，我们可以直接开始生成学习路径、课件或练习。"
@@ -669,20 +838,26 @@ class ProfileBuilderService:
             for key, value in updates.items()
         )
 
-        parts: list[str] = []
-        if captured:
-            parts.append(f"我已分析并记录：{captured}。")
-        elif model_reply.strip():
-            parts.append(model_reply.strip())
+        if model_reply.strip():
+            reply = model_reply.strip()
+            if captured and captured not in reply:
+                reply = f"我已记录这些信息：{captured}。{reply}"
+        elif updates:
+            reply = self._build_fallback_reply(existing_dimensions, updates)
         else:
-            parts.append("我已分析了你的回答。")
+            reply = self._build_fallback_reply(existing_dimensions, updates)
 
-        if missing:
-            next_key = missing[0]
-            parts.append(f"为了让画像智能体更好地和路径、资源、练习、答疑智能体协作，我还想了解：{PROFILE_QUESTION_BANK[next_key]}")
-        else:
-            parts.append("当前画像已经比较完整，后续会交给学习路径、资源生成、练习生成和答疑智能体协同使用。")
-        return "".join(parts)
+        if not missing:
+            if "完成，进入学习" not in reply and "完成" not in reply:
+                reply = f"{reply} 当前画像已经比较完整，随时可以点击“完成，进入学习”。"
+            return reply
+
+        next_question = PROFILE_QUESTION_BANK[missing[0]]
+        if next_question in reply:
+            return reply
+        if reply.endswith("。") or reply.endswith("？"):
+            return f"{reply} {next_question}"
+        return f"{reply}。{next_question}"
 
     def _map_learning_style(self, cognitive_style: str) -> str:
         if "视觉" in cognitive_style:
@@ -694,3 +869,43 @@ class ProfileBuilderService:
         if "实践" in cognitive_style or "动手" in cognitive_style:
             return "kinesthetic"
         return cognitive_style
+
+    def _mark_analysis_stale(self, user_id: int) -> None:
+        """Invalidate cached deep analysis after profile changes."""
+
+        try:
+            from services.user_service.app.services.profile_analysis import ProfileAnalysisService
+
+            ProfileAnalysisService(self.db).mark_stale(user_id)
+        except Exception:
+            pass
+
+    def _get_or_create_profile(self, user_id: int) -> UserProfile:
+        profile = self.db.get(UserProfile, user_id)
+        if profile is not None:
+            return profile
+
+        profile = UserProfile(
+            user_id=user_id,
+            mastery_json={},
+            learning_style="",
+            cognitive_abilities={},
+            habits={},
+        )
+        self.db.add(profile)
+        self.db.flush()
+        return profile
+
+    def _save_message(self, user_id: int, role: str, content: str) -> None:
+        self.db.add(ProfileConversation(user_id=user_id, role=role, content=content.strip()))
+        self.db.flush()
+
+    def _load_recent_history(self, user_id: int, limit: int = 20) -> list[ProfileConversation]:
+        records = (
+            self.db.query(ProfileConversation)
+            .filter(ProfileConversation.user_id == user_id)
+            .order_by(ProfileConversation.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return list(reversed(records))

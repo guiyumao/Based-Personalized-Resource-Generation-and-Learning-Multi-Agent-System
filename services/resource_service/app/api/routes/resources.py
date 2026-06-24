@@ -27,17 +27,6 @@ def list_resources(db: Session = Depends(get_db)) -> ApiResponse[list[ResourceIt
     return ApiResponse(data=manager.list_resources(), message="Resources fetched successfully.")
 
 
-@router.get("/{resource_id}", response_model=ApiResponse[ResourceItem])
-def get_resource(resource_id: int, db: Session = Depends(get_db)) -> ApiResponse[ResourceItem]:
-    """Get one resource by ID."""
-
-    manager = ResourceManager(db)
-    resource = manager.get_resource(resource_id)
-    if resource is None:
-        raise HTTPException(status_code=404, detail="Resource not found")
-    return ApiResponse(data=resource, message="Resource fetched successfully.")
-
-
 @router.post("/import-external", response_model=ApiResponse[ResourceItem])
 def import_external_resource(
     payload: ExternalResourceImportRequest,
@@ -48,6 +37,17 @@ def import_external_resource(
     manager = ResourceManager(db)
     resource = manager.import_external_resource(payload)
     return ApiResponse(data=resource, message="External resource imported successfully.")
+
+
+@router.get("/{resource_id}", response_model=ApiResponse[ResourceItem])
+def get_resource(resource_id: int, db: Session = Depends(get_db)) -> ApiResponse[ResourceItem]:
+    """Get one resource by ID."""
+
+    manager = ResourceManager(db)
+    resource = manager.get_resource(resource_id)
+    if resource is None:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return ApiResponse(data=resource, message="Resource fetched successfully.")
 
 
 @router.post("/{resource_id}/export", response_model=ApiResponse[dict[str, str]])

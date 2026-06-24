@@ -110,7 +110,7 @@ class LearningPathRequest(BaseModel):
     """Payload for generating a learning path."""
 
     user_id: int
-    subject: str = Field(default="Python 程序设计")
+    subject: str = Field(default="")
     knowledge_point: str
     daily_minutes: int = Field(default=45, ge=15, le=180)
     learner_profile: dict[str, Any] = Field(default_factory=dict)
@@ -167,6 +167,7 @@ class ExerciseGenerationRequest(BaseModel):
     resource_style: Literal["concise", "case", "interactive"] = "interactive"
     learner_profile: dict[str, Any] = Field(default_factory=dict)
     exercise_count: int = Field(default=5, ge=3, le=10)
+    question_type_counts: dict[str, int] = Field(default_factory=dict)
     generation_mode: Literal["practice", "self_test", "remedial"] = "practice"
     courseware_content: str = ""
 
@@ -275,6 +276,8 @@ class QAResponse(BaseModel):
     message_history: list[QAConversationMessage] = Field(default_factory=list)
     context_snippets: list[str] = Field(default_factory=list)
     confidence: float | None = Field(default=None, ge=0, le=1)
+    generated_exercises: ExerciseGenerationResponse | None = None
+    generated_resource: ResourceGenerationResponse | None = None
 
 
 class ChatSessionCreate(BaseModel):

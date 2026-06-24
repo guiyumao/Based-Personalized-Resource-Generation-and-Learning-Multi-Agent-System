@@ -4,9 +4,57 @@ from __future__ import annotations
 
 import json
 
+from fastapi.testclient import TestClient
+
 from common.models.learning import KnowledgePoint, Resource
 from services.resource_service.app.schemas.resource import ExternalResourceImportRequest
+from services.resource_service.app.main import app
 from services.resource_service.app.services.resource_manager import ResourceManager
+
+
+def test_import_external_route_is_not_shadowed_by_resource_id(monkeypatch) -> None:
+    """Static import route should handle POST before the dynamic resource ID route."""
+
+    def fake_import_external_resource(self, payload):
+        return {
+            "id": 999,
+            "title": payload.title,
+            "type": "courseware",
+            "format": "pdf",
+            "status": "ready",
+            "knowledge_point": payload.knowledge_point,
+            "owner_user_id": payload.owner_user_id,
+            "source_type": "external_import",
+            "provider": payload.provider,
+            "source_kind": payload.kind,
+            "external_url": payload.url,
+            "download_url": "/resources/999/download",
+            "notes": payload.notes,
+            "file_name": "sample.pdf",
+            "is_downloadable": True,
+        }
+
+    monkeypatch.setattr(ResourceManager, "import_external_resource", fake_import_external_resource)
+
+    client = TestClient(app)
+    response = client.post(
+        "/resources/import-external",
+        json={
+            "title": "Sample Courseware",
+            "provider": "Example University",
+            "url": "https://example.com/courseware.pdf",
+            "kind": "lecture_notes",
+            "license": "CC BY",
+            "notes": "Official notes",
+            "knowledge_point": "Python 循环",
+            "owner_user_id": None,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["id"] == 999
+    assert payload["data"]["source_type"] == "external_import"
 
 
 def test_import_external_resource_creates_downloadable_item(db_session, monkeypatch) -> None:

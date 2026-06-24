@@ -83,16 +83,23 @@ def _ensure_legacy_columns() -> None:
     """Backfill columns that were added after the initial local schema."""
 
     inspector = inspect(engine)
-    if "answer_records" not in inspector.get_table_names():
+    table_names = set(inspector.get_table_names())
+    if "answer_records" not in table_names and "user_profiles" not in table_names:
         return
 
-    existing_columns = {column["name"] for column in inspector.get_columns("answer_records")}
     statements: list[str] = []
 
-    if "evaluation_json" not in existing_columns:
-        statements.append("ALTER TABLE answer_records ADD COLUMN evaluation_json JSON")
-    if "created_at" not in existing_columns:
-        statements.append("ALTER TABLE answer_records ADD COLUMN created_at DATETIME")
+    if "answer_records" in table_names:
+        answer_record_columns = {column["name"] for column in inspector.get_columns("answer_records")}
+        if "evaluation_json" not in answer_record_columns:
+            statements.append("ALTER TABLE answer_records ADD COLUMN evaluation_json JSON")
+        if "created_at" not in answer_record_columns:
+            statements.append("ALTER TABLE answer_records ADD COLUMN created_at DATETIME")
+
+    if "user_profiles" in table_names:
+        user_profile_columns = {column["name"] for column in inspector.get_columns("user_profiles")}
+        if "profile_analysis" not in user_profile_columns:
+            statements.append("ALTER TABLE user_profiles ADD COLUMN profile_analysis JSON")
 
     if not statements:
         return

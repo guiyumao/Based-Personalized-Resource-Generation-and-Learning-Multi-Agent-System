@@ -70,6 +70,18 @@ export type ProfileChatResponsePayload = {
   estimated_remaining_rounds: number
 }
 
+export type ProfileAnalysisPayload = {
+  knowledgeBase?: string
+  cognitiveStyle?: string
+  errorPreference?: string
+  learningSpeed?: string
+  interestDirection?: string
+  goalOrientation?: string
+  generated_at?: string
+  model?: string
+  summaries?: Record<string, string>
+}
+
 export type CoordinationPayload = {
   user_id: number
   intent: string
@@ -141,6 +153,7 @@ export type ExerciseGenerationPayload = {
   resource_style: 'concise' | 'case' | 'interactive'
   learner_profile: Record<string, unknown>
   exercise_count: number
+  question_type_counts?: Partial<Record<'choice' | 'blank' | 'judge' | 'short_answer' | 'programming', number>>
   generation_mode?: 'practice' | 'self_test' | 'remedial'
   courseware_content?: string
 }
@@ -288,6 +301,8 @@ export type QAResponsePayload = {
   message_history: QAConversationMessage[]
   context_snippets: string[]
   confidence: number | null
+  generated_exercises?: ExerciseGenerationResponse | null
+  generated_resource?: ResourceResult | null
 }
 
 export type PracticeSubmissionPayload = {

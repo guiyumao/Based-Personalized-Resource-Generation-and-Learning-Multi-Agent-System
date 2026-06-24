@@ -40,7 +40,13 @@ def test_generate_learning_path_contains_stages() -> None:
                 "subject": "Python 程序设计",
                 "knowledge_point": "Python 循环",
                 "daily_minutes": 45,
-                "learner_profile": {"learning_style": "visual"},
+                "learner_profile": {
+                    "learning_style": "visual",
+                    "profile_analysis_summaries": {
+                        "knowledgeBase": "基础稳但综合题易卡",
+                        "learningSpeed": "节奏适中可继续进阶",
+                    },
+                },
             },
         )()
     )
@@ -48,6 +54,7 @@ def test_generate_learning_path_contains_stages() -> None:
     assert response["knowledge_point"] == "Python 循环"
     assert response["stages"]
     assert response["stages"][0]["tasks"]
+    assert "深度画像建议" in response["overview"]
 
 
 def test_generate_structured_exercises() -> None:
@@ -70,6 +77,67 @@ def test_generate_structured_exercises() -> None:
     assert len(response["exercises"]) == 5
     assert response["exercises"][0]["prompt"]
     assert "personalization" in response
+
+
+def test_generate_exercises_respects_question_type_counts() -> None:
+    """Exercise generation should honor an explicit 5/3/2 question-type mix."""
+
+    service = ExerciseGenerationService()
+    response = service.generate_exercises(
+        ExerciseGenerationRequest(
+            user_id=1,
+            knowledge_point="高数",
+            resource_style="interactive",
+            learner_profile={},
+            exercise_count=10,
+            question_type_counts={"choice": 5, "judge": 3, "blank": 2},
+            generation_mode="self_test",
+        )
+    )
+
+    counts: dict[str, int] = {}
+    for exercise in response["exercises"]:
+        counts[exercise["question_type"]] = counts.get(exercise["question_type"], 0) + 1
+
+    assert len(response["exercises"]) == 10
+    assert counts == {"choice": 5, "judge": 3, "blank": 2}
+
+
+def test_calculus_exercises_are_grounded_in_knowledge_fragments(monkeypatch) -> None:
+    """Calculus fallback questions should be concrete math prompts, not generic shells."""
+
+    service = ExerciseGenerationService()
+    monkeypatch.setattr(service, "_try_generate_with_llm", lambda *args, **kwargs: None)
+    response = service.generate_exercises(
+        ExerciseGenerationRequest(
+            user_id=1,
+            knowledge_point="高数",
+            resource_style="interactive",
+            learner_profile={},
+            exercise_count=8,
+            generation_mode="self_test",
+        )
+    )
+
+    combined_text = "\n".join(
+        "\n".join(
+            [
+                str(exercise["prompt"]),
+                str(exercise["answer"]),
+                str(exercise["analysis"]),
+                "\n".join(map(str, exercise.get("options", []))),
+            ]
+        )
+        for exercise in response["exercises"]
+    )
+
+    assert len(response["exercises"]) == 8
+    assert all(exercise["question_type"] != "programming" for exercise in response["exercises"])
+    assert "??" not in combined_text
+    assert "哪一步最应该优先完成" not in combined_text
+    assert "写一个简单代码思路" not in combined_text
+    assert any(token in combined_text for token in ("连续", "导数", "定积分", "极限"))
+    assert any(token in combined_text for token in ("lim_{x->a}", "f'(x)", "integral_a^b", "左右极限"))
 
 
 def test_exercise_generation_deduplicates_repeated_llm_questions(monkeypatch) -> None:
@@ -115,6 +183,37 @@ def test_exercise_generation_deduplicates_repeated_llm_questions(monkeypatch) ->
     prompts = [exercise["prompt"] for exercise in response["exercises"]]
     assert len(prompts) == 5
     assert len(set(prompts)) == 5
+
+
+def test_generate_exercises_avoids_previous_questions_for_same_knowledge_point(monkeypatch) -> None:
+    """Repeated generation for one knowledge point should not reuse previous prompts."""
+
+    service = ExerciseGenerationService()
+    monkeypatch.setattr(service, "_try_generate_with_llm", lambda *args, **kwargs: None)
+    request = ExerciseGenerationRequest(
+        user_id=1,
+        knowledge_point="calculus-nonrepeat-practice",
+        resource_style="interactive",
+        learner_profile={
+            "profile_analysis_summaries": {
+                "knowledgeBase": "needs foundation reinforcement",
+                "learningSpeed": "slow pace, small variants work better",
+            }
+        },
+        exercise_count=10,
+        question_type_counts={"choice": 5, "judge": 3, "blank": 2},
+        generation_mode="self_test",
+    )
+
+    first = service.generate_exercises(request)
+    second = service.generate_exercises(request)
+
+    first_signatures = {service._exercise_signature(exercise) for exercise in first["exercises"]}
+    second_signatures = {service._exercise_signature(exercise) for exercise in second["exercises"]}
+
+    assert len(first["exercises"]) == 10
+    assert len(second["exercises"]) == 10
+    assert first_signatures.isdisjoint(second_signatures)
 
 
 def test_practice_submission_returns_feedback(test_user) -> None:

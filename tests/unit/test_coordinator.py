@@ -49,6 +49,10 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
                     "mastery": 72,
                     "weak_question_types": ["short_answer"],
                     "profile_dimensions": {"cognitiveStyle": "视觉型"},
+                    "profile_analysis_summaries": {
+                        "knowledgeBase": "基础不错但迁移偏弱",
+                        "goalOrientation": "求职导向较明确",
+                    },
                     "preferred_resource_modes": ["diagram"],
                     "agent_handoff": {
                         "path_planning_agent": ["use visual path"],
@@ -140,6 +144,7 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
     assert len(published_messages) == 5
     assert result["outputs"]["learner_profiling_agent"]["learner_profile"]["mastery"] == 72
     assert result["outputs"]["learner_profiling_agent"]["agent_handoff"]["resource_generation_agent"] == ["use diagrams"]
+    assert result["outputs"]["learner_profiling_agent"]["profile_analysis_summaries"]["knowledgeBase"] == "基础不错但迁移偏弱"
     assert result["outputs"]["knowledge_graph_agent"]["dependencies"][0]["name"] == "变量"
     assert result["outputs"]["path_planning_agent"]["learning_path"]["overview"] == "协同路径"
     assert result["outputs"]["path_planning_agent"]["profile_handoff"] == ["use visual path"]
@@ -147,3 +152,56 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
     assert result["outputs"]["resource_generation_agent"]["profile_handoff"] == ["use diagrams"]
     assert result["outputs"]["exercise_generation_agent"]["exercise_set"]["summary"] == "课件正文"
     assert result["outputs"]["exercise_generation_agent"]["profile_handoff"] == ["practice graph mistakes"]
+    summary = result["outputs"]["coordinator_summary"]
+    assert summary["completed_agents"] == result["selected_agents"]
+    assert summary["shared_context"]["profile_analysis_summaries"]["knowledgeBase"] == "基础不错但迁移偏弱"
+    assert summary["handoff_map"]["resource_generation_agent"] == ["use diagrams"]
+
+
+def test_coordinator_full_collaboration_intent_selects_all_agents():
+    """Full-collaboration intent should schedule every local agent capability."""
+
+    workflow = CoordinatorWorkflow(db=object())
+    workflow.publisher.publish = lambda queue_name, message: None
+
+    result = workflow.run(
+        CoordinationRequest(
+            user_id=3,
+            intent="智能体全部联合实现系统配合",
+            knowledge_point="Python 循环",
+            payload={},
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["selected_agents"] == [
+        "learner_profiling_agent",
+        "knowledge_graph_agent",
+        "knowledge_base_agent",
+        "path_planning_agent",
+        "resource_generation_agent",
+        "exercise_generation_agent",
+        "qa_agent",
+        "evaluation_feedback_agent",
+    ]
+
+
+def test_coordinator_force_agents_override_intent_routing():
+    """Forced agents should bypass automatic intent-based agent expansion."""
+
+    workflow = CoordinatorWorkflow(db=object())
+    workflow.publisher.publish = lambda queue_name, message: None
+
+    result = workflow.run(
+        CoordinationRequest(
+            user_id=3,
+            intent="qa question analysis",
+            knowledge_point="",
+            payload={
+                "force_agents": ["qa_agent"],
+            },
+        )
+    )
+
+    assert result["selected_agents"] == ["qa_agent"]
+    assert "used forced agents" in result["route_reason"]

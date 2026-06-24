@@ -34,7 +34,13 @@ def test_generate_courseware_with_stubbed_llm(monkeypatch):
             knowledge_point="Python loops",
             resource_style="interactive",
             resource_type="courseware",
-            learner_profile={"style": "visual"},
+            learner_profile={
+                "style": "visual",
+                "profile_analysis_summaries": {
+                    "knowledgeBase": "基础可以但抽象迁移偏弱",
+                    "goalOrientation": "项目导向明确",
+                },
+            },
             request_text="Please generate a beginner-friendly Python loop lesson for review.",
         )
     )
@@ -46,6 +52,7 @@ def test_generate_courseware_with_stubbed_llm(monkeypatch):
     assert response["generation_plan"]["analysis_source"] == "profile_enriched"
     assert response["generation_plan"]["suggested_outline"]
     assert response["generation_plan"]["knowledge_point"] == response["knowledge_point"]
+    assert "profile_analysis_summaries" in response["personalization"]
     assert len(response["variants"]) == 1
     assert response["variants"][0]["resource_style"] == "interactive"
 
@@ -83,3 +90,39 @@ def test_generate_courseware_raises_when_model_generation_fails(monkeypatch):
                 request_text="Please generate a beginner-friendly Python loop lesson for review.",
             )
         )
+
+
+def test_infer_resource_type_prefers_courseware_when_request_mentions_courseware_and_exercises():
+    """Mixed requests should keep the current courseware generation intent."""
+
+    service = ResourceGenerationService()
+
+    resource_type = service._infer_resource_type(
+        ResourceGenerationRequest(
+            user_id=1,
+            knowledge_point="Python loops",
+            resource_style="interactive",
+            resource_type="courseware",
+            learner_profile={},
+            request_text="请生成 Python 循环的课件和习题",
+        ),
+        "请生成 Python 循环的课件和习题",
+    )
+
+    assert resource_type == "courseware"
+
+
+def test_normalize_knowledge_point_keeps_user_requested_topic():
+    """Courseware generation should honor the user's topic instead of replacing it from the KB."""
+
+    service = ResourceGenerationService()
+    request = ResourceGenerationRequest(
+        user_id=1,
+        knowledge_point="物理",
+        resource_style="interactive",
+        resource_type="courseware",
+        learner_profile={},
+        request_text="围绕物理生成可独立阅读的正式课件",
+    )
+
+    assert service._normalize_knowledge_point(request, request.request_text) == "物理"
