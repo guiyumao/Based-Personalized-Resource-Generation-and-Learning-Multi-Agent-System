@@ -102,3 +102,23 @@ def test_import_external_resource_creates_downloadable_item(db_session, monkeypa
     if knowledge_point is not None:
         db_session.delete(knowledge_point)
     db_session.commit()
+
+
+def test_delete_all_resources_can_filter_by_source_type(monkeypatch) -> None:
+    """Bulk delete route should forward source_type to the manager."""
+
+    captured: dict[str, str | None] = {}
+
+    def fake_delete_all_resources(self, source_type=None):
+        captured["source_type"] = source_type
+        return 7
+
+    monkeypatch.setattr(ResourceManager, "delete_all_resources", fake_delete_all_resources)
+
+    client = TestClient(app)
+    response = client.delete("/resources", params={"source_type": "generated"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["data"]["deleted_count"] == 7
+    assert captured["source_type"] == "generated"

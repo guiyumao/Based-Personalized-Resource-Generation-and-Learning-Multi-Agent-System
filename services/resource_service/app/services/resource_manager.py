@@ -143,8 +143,8 @@ class ResourceManager:
         self.db.commit()
         return True
 
-    def delete_all_resources(self) -> int:
-        """Delete all managed resources and their downloaded files."""
+    def delete_all_resources(self, source_type: str | None = None) -> int:
+        """Delete all managed resources, optionally filtered by source type."""
 
         rows = self.db.query(Resource).all()
         if not rows:
@@ -153,6 +153,10 @@ class ResourceManager:
         deleted_count = 0
         for resource in rows:
             metadata = self._parse_external_metadata(resource)
+            current_source_type = "external_import" if metadata is not None else "generated"
+            if source_type is not None and current_source_type != source_type:
+                continue
+
             if metadata is not None:
                 relative_path = str(metadata.get("local_path") or "").strip()
                 if relative_path:

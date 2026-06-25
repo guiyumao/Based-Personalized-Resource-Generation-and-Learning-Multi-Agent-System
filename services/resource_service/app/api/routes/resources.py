@@ -119,9 +119,18 @@ def delete_resource(resource_id: int, db: Session = Depends(get_db)) -> ApiRespo
 
 
 @router.delete("", response_model=ApiResponse[dict[str, int]])
-def delete_all_resources(db: Session = Depends(get_db)) -> ApiResponse[dict[str, int]]:
-    """Delete all managed resources."""
+def delete_all_resources(
+    source_type: str | None = None,
+    db: Session = Depends(get_db),
+) -> ApiResponse[dict[str, int]]:
+    """Delete all managed resources, optionally filtered by source type."""
 
     manager = ResourceManager(db)
-    deleted_count = manager.delete_all_resources()
-    return ApiResponse(data={"deleted_count": deleted_count}, message="All resources deleted successfully.")
+    if source_type not in {None, "generated", "external_import"}:
+        raise HTTPException(status_code=400, detail="Invalid source_type")
+
+    deleted_count = manager.delete_all_resources(source_type=source_type)
+    return ApiResponse(
+        data={"deleted_count": deleted_count},
+        message="Filtered resources deleted successfully." if source_type else "All resources deleted successfully.",
+    )

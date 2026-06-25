@@ -274,16 +274,11 @@ async function deleteAllGeneratedResources() {
       { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
-  const ids = generatedResources.value.map(r => r.id)
-  let deleted = 0
-  for (const id of ids) {
-    try {
-      await resourceApi.delete(`/resources/${id}`)
-      deleted++
-    } catch { /* skip individual failures */ }
-  }
+  const { data } = await resourceApi.delete<ApiEnvelope<{ deleted_count: number }>>('/resources', {
+    params: { source_type: 'generated' },
+  })
   await fetchResources()
-  ElMessage.success(`已删除 ${deleted} 项系统生成资源`)
+  ElMessage.success(`已删除 ${data.data?.deleted_count ?? 0} 项系统生成资源`)
 }
 
 async function deleteAllImportedResources() {
@@ -298,16 +293,11 @@ async function deleteAllImportedResources() {
       { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
-  const ids = importedResources.value.map(r => r.id)
-  let deleted = 0
-  for (const id of ids) {
-    try {
-      await resourceApi.delete(`/resources/${id}`)
-      deleted++
-    } catch { /* skip individual failures */ }
-  }
+  const { data } = await resourceApi.delete<ApiEnvelope<{ deleted_count: number }>>('/resources', {
+    params: { source_type: 'external_import' },
+  })
   await fetchResources()
-  ElMessage.success(`已删除 ${deleted} 项官方课件`)
+  ElMessage.success(`已删除 ${data.data?.deleted_count ?? 0} 项官方课件`)
 }
 </script>
 
