@@ -37,18 +37,18 @@ const currentArticleDownloaded = computed(() => {
 })
 const isLoading = computed(() => knowledgeLoading.value || resourceLoading.value)
 
-const typeLabel: Record<string, string> = { courseware: 'è¯¾ä»¶', exercise: 'ç»ä¹ ', notes: 'ç¬è®°', exam: 'è¯å·' }
-const statusLabel: Record<string, string> = { draft: 'èç¨¿', ready: 'å°±ç»ª', archived: 'å½æ¡£' }
+const typeLabel: Record<string, string> = { courseware: '课件', exercise: '练习', notes: '笔记', exam: '试卷' }
+const statusLabel: Record<string, string> = { draft: '草稿', ready: '就绪', archived: '归档' }
 const statusNext: Record<string, 'draft' | 'ready' | 'archived'> = { draft: 'ready', ready: 'archived', archived: 'draft' }
-const sourceLabel: Record<string, string> = { generated: 'ç³»ç»çæ', external_import: 'å®æ¹è¯¾ä»¶' }
+const sourceLabel: Record<string, string> = { generated: '系统生成', external_import: '官方课件' }
 const kindLabel: Record<string, string> = {
-  mooc_course: 'MOOC è¯¾ç¨',
-  textbook: 'ææèµæ',
-  lecture_notes: 'è®²ä¹ç¬è®°',
-  course: 'è¯¾ç¨èµæº',
-  video: 'è§é¢è¯¾ç¨',
-  interactive: 'äºå¨èµæº',
-  practice: 'ä¹ é¢ç»ä¹ ',
+  mooc_course: 'MOOC 课程',
+  textbook: '教材资料',
+  lecture_notes: '讲义笔记',
+  course: '课程资源',
+  video: '视频课程',
+  interactive: '互动资源',
+  practice: '习题练习',
 }
 
 onMounted(() => {
@@ -268,8 +268,8 @@ async function deleteAllResources() {
     <header class="resource-header">
       <div>
         <div class="panel-kicker">University Courseware</div>
-        <h2>å¤§å­¦ç¥è¯åºä¸è¯¾ä»¶ä¸è½½</h2>
-        <p>å¤§å­¦ç¥è¯åºåå­¦ä¹ èµæºå·²åå¹¶ãéæ©ç¥è¯ç¹åï¼å¯ç´æ¥ä¸è½½å³èè¯¾ä»¶ï¼å·²ä¸è½½æä»¶ä¼ä¿å­å¨ä¸æ¹èµæºåºä¸­ã</p>
+        <h2>大学知识库与课件下载</h2>
+        <p>大学知识库和学习资源已合并。选择知识点后，可直接下载关联课件；已下载文件会保存在下方资源库中。</p>
       </div>
       <div class="header-actions">
         <button :disabled="isLoading" class="secondary-button" @click="refreshPage">
