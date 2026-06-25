@@ -22,7 +22,7 @@ class KnowledgeGraphRepository:
 
     _SECTION_ALIASES = {
         "prerequisite": ("前置知识", "前置基础", "基础知识", "预备知识"),
-        "recommended": ("后续模块", "进阶内容", "拓展学习", "延伸学习", "相关知识"),
+        "recommended": ("后续模块", "进阶内容", "拓展学习", "拓展延伸", "延伸学习", "相关知识"),
         "resource": ("学习资源", "关联资源", "推荐资源", "练习建议"),
     }
 
@@ -53,6 +53,10 @@ class KnowledgeGraphRepository:
         "典型例题",
         "课堂小结",
     }
+
+    # Topics that appear in the "拓展延伸" section are treated as
+    # recommended follow-up material by the content-based graph builder.
+    _EXTENSION_HEADINGS = ("拓展延伸", "拓展学习", "延伸学习", "扩展阅读")
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -405,6 +409,7 @@ class KnowledgeGraphRepository:
         labels: list[str] = []
         labels.extend(self._recommendations_from_article(article) if article is not None else [])
         labels.extend(self._extract_section_items(knowledge_point, "recommended"))
+        labels.extend(self._extract_extension_targets(knowledge_point))
         labels.extend(self._extract_learning_objective_targets(knowledge_point))
         labels.extend(self._match_existing_points(knowledge_point, relation="recommended"))
         return self._finalize_labels(knowledge_point, labels)
@@ -477,6 +482,33 @@ class KnowledgeGraphRepository:
             if any(token in line for token in ("运用", "解释", "推导", "识别", "区分", "分析")):
                 labels.extend(self._extract_phrases_from_line(line))
         return labels
+
+    def _extract_extension_targets(self, knowledge_point: str) -> list[str]:
+        """Extract next-step topics from `## 拓展延伸` (or similar) sections.
+
+        Real LLM-generated courseware typically ends with a section like::
+
+            ## 拓展延伸：下一步可以学什么？
+            - 机器学习中的概率模型（分类、回归）
+            - A/B 测试与因果推断入门
+            - 数据库索引与查询优化
+
+        Every list item after the heading is harvested as a recommended topic.
+        """
+        content = self._combined_resource_text(knowledge_point)
+        if not content:
+            return []
+
+        items: list[str] = []
+        for heading in self._EXTENSION_HEADINGS:
+            pattern = re.compile(rf"##+\s*{re.escape(heading)}[^\n]*\n(?P<body>.*?)(?:\n##|\Z)", re.S)
+            match = pattern.search(content)
+            if not match:
+                continue
+            body = match.group("body")
+            items.extend(self._extract_bullets_from_text(body))
+
+        return items
 
     def _match_existing_points(self, knowledge_point: str, relation: str) -> list[str]:
         current_tokens = set(self._tokenize(knowledge_point))
@@ -668,6 +700,8 @@ class KnowledgeGraphRepository:
                 label = label[len(prefix) :].strip()
         label = re.sub(r"^(以及|以及它和|以及它|以及|关于|其中|一个|一种)\s*", "", label).strip()
         label = re.sub(r"\s*(是什么|的内容|的关系|时运动状态的区别)$", "", label).strip()
+        # Strip common text book / mooc suffixes that are noise
+        label = re.sub(r"\s+[（(][^)）]*[）)]$", "", label).strip()
         if label in self._STOP_LABELS or len(label) < 2:
             return ""
         if len(label) > max_len:
