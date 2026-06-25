@@ -3,6 +3,17 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
+import { marked } from 'marked'
+
+// Configure marked to add IDs to headings for outline navigation
+marked.use({
+  renderer: {
+    heading({ text, depth }: { text: string; depth: number }) {
+      const id = 'section-' + text.replace(/<[^>]*>/g, '').replace(/[^\w一-鿿]+/g, '-').replace(/^-|-$/g, '').toLowerCase()
+      return `<h${depth} id="${id}">${text}</h${depth}>`
+    }
+  }
+})
 
 import {
   agentApi,
@@ -233,6 +244,11 @@ function ensureMarkdownTitle(content: string, title: string) {
   return `# ${title}\n\n${content}`
 }
 
+function renderMd(raw: string): string {
+  if (!raw) return ''
+  return marked.parse(raw, { breaks: true, gfm: true }) as string
+}
+
 function buildSafeFileName(rawTitle: string) {
   const stem = rawTitle
     .trim()
@@ -315,7 +331,7 @@ function buildCoursewareSections(content: string): CoursewareSection[] {
     const firstLine = lines.shift() ?? `章节 ${index + 1}`
     return {
       heading: firstLine.trim(),
-      anchor: `courseware-page-section-${index + 1}`,
+      anchor: 'section-' + firstLine.trim().replace(/<[^>]*>/g, '').replace(/[^\w一-鿿]+/g, '-').replace(/^-|-$/g, '').toLowerCase(),
       blocks: parseMarkdownBlocks(lines.join('\n').trim()),
     }
   })
@@ -554,29 +570,10 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
             </ul>
           </article>
 
-          <section
-            v-for="section in resourceSections"
-            :id="section.anchor"
-            :key="section.anchor"
-            class="learning-section"
-          >
-            <h3>{{ section.heading }}</h3>
-            <template v-for="block in section.blocks" :key="`${section.anchor}-${block.type}-${block.lines.join('-')}`">
-              <p v-if="block.type === 'paragraph'" class="learning-line">
-                {{ block.lines.join(' ') }}
-              </p>
-              <ul v-else-if="block.type === 'unordered'" class="markdown-list">
-                <li v-for="line in block.lines" :key="line">{{ line }}</li>
-              </ul>
-              <ol v-else-if="block.type === 'ordered'" class="markdown-list markdown-list-ordered">
-                <li v-for="line in block.lines" :key="line">{{ line }}</li>
-              </ol>
-              <div v-else class="code-block">
-                <div v-if="block.language" class="code-block-label">{{ block.language }}</div>
-                <pre><code>{{ block.lines.join('\n') }}</code></pre>
-              </div>
-            </template>
-          </section>
+          <div
+            class="markdown-body"
+            v-html="renderMd(coursewareContent)"
+          ></div>
 
           <article v-if="snapshot.resourceResult.references?.length" class="learning-section">
             <h3>参考材料</h3>
@@ -678,10 +675,29 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
 .reader-toc {
   position: sticky;
   top: 80px;
+  max-height: calc(100vh - 110px);
+  display: flex;
+  flex-direction: column;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+
+.reader-toc .outline-list {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+.reader-toc .outline-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.reader-toc .outline-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 2px;
 }
 
 .courseware-reading-progress {
@@ -842,4 +858,61 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
     position: static;
   }
 }
+</style>
+
+<!-- Unscoped styles for v-html rendered markdown (scoped CSS doesn't apply to v-html content) -->
+<style>
+.markdown-body {
+  line-height: 1.9;
+  font-size: 15px;
+  color: var(--text);
+}
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  margin-top: 28px;
+  margin-bottom: 12px;
+}
+.markdown-body p { margin-bottom: 14px; }
+.markdown-body ul, .markdown-body ol { padding-left: 22px; margin-bottom: 14px; }
+.markdown-body li { margin-top: 4px; }
+.markdown-body code {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--accent);
+}
+.markdown-body pre {
+  background: #0d1117;
+  padding: 16px;
+  border-radius: 12px;
+  overflow: auto;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+}
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  color: #e6edf3;
+  white-space: pre;
+}
+.markdown-body blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 16px;
+  margin: 14px 0;
+  color: var(--muted);
+}
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+}
+.markdown-body th, .markdown-body td {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.markdown-body th { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.markdown-body a { color: var(--accent); }
+.markdown-body img { max-width: 100%; border-radius: 10px; }
 </style>

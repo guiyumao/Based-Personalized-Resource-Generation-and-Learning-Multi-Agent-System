@@ -117,7 +117,7 @@ class ResourceGenerationService:
             return request.preferred_word_count
 
         defaults = {
-            "courseware": {"foundation": 1500, "intermediate": 1300, "advanced": 1600},
+            "courseware": {"foundation": 4000, "intermediate": 5000, "advanced": 6000},
             "exercise": {"foundation": 900, "intermediate": 1100, "advanced": 1300},
             "notes": {"foundation": 700, "intermediate": 850, "advanced": 1000},
             "exam": {"foundation": 1000, "intermediate": 1200, "advanced": 1400},
@@ -409,7 +409,7 @@ class ResourceGenerationService:
                             "4. 如果掌握度较低，解释更细、例子更基础；如果掌握度较高，增加迁移应用和易错辨析。\n"
                             "5. 必须显式回应近期真实错题暴露的问题，而不是泛泛而谈。\n"
                             "6. 如适合代码示例，请提供真实可运行的代码并解释关键行。\n"
-                            "7. 正文控制在 1000 到 1800 字之间。\n"
+                            "7. 正文控制在 3000 到 6000 字之间，确保内容详细、结构完整，覆盖概念讲解、原理分析、代码示例和课后练习。\n"
                         ),
                     ),
                 ]
