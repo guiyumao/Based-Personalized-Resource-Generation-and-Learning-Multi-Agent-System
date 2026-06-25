@@ -28,20 +28,18 @@ from services.agent_service.app.services.llm_factory import LLMFactory
 class ChatService:
     """Manage continuous conversations with large-small model collaboration."""
 
-    DEFAULT_SESSION_TITLE = "新对话"
 
     def __init__(self, db: Session) -> None:
         self.db = db
         self.settings = get_settings()
         self.knowledge_base = KnowledgeBaseService()
         self.llm_factory = LLMFactory(self.settings)
-        self.default_session_title = "\u65b0\u5bf9\u8bdd"
 
     def create_session(self, request: ChatSessionCreate) -> ChatSessionDetail:
         """Create a new chat session."""
         session = ChatSession(
             user_id=request.user_id,
-            title=request.title or "新对话",
+            title=request.title or "",
             subject=request.subject,
             is_active=True,
             last_message_at=datetime.utcnow(),
@@ -425,7 +423,7 @@ class ChatService:
         if not rebuilt_title and fallback_question.strip():
             rebuilt_title = self._build_title_from_question(fallback_question)
         if not rebuilt_title:
-            rebuilt_title = self.default_session_title
+            rebuilt_title = ""
 
         if rebuilt_title != session.title:
             session.title = rebuilt_title
@@ -458,7 +456,7 @@ class ChatService:
     def _normalize_session_title(self, title: str | None) -> str:
         normalized = (title or "").strip()
         if not normalized or self._looks_like_invalid_session_title(normalized):
-            return self.default_session_title
+            return ""
         return normalized
 
     def _looks_like_broken_title(self, title: str) -> bool:

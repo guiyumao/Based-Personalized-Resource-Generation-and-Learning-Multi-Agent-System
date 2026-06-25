@@ -386,8 +386,8 @@ class ReportService:
             student_name=student_name,
             chapters_completed=len(chapter_ids),
             accuracy_trend=accuracy_trend,
-            most_improved=most_improved or "暂无明显领先知识点",
-            still_weak="、".join(still_weak) if still_weak else "暂无",
+            most_improved=most_improved or "",
+            still_weak="、".join(still_weak) if still_weak else "",
             avg_daily_time=f"{avg_daily_time:.2f} 秒",
         )
         response = MonthlyReportResponse(
@@ -572,10 +572,10 @@ class ReportService:
         evidence = self._build_evidence(month_traces)
         weak_points = self._find_still_weak(month_traces, profile)
         strengths = [f"过去 30 天共完成 {len(month_traces)} 次答题，正确率 {evidence.accuracy}%"]
-        weaknesses = [f"仍需重点加强：{'、'.join(weak_points)}"] if weak_points else ["暂无持续性薄弱点。"]
+        weaknesses = [f"仍需重点加强：{'、'.join(weak_points)}"] if weak_points else []
         next_actions = [f"下一阶段优先处理 {item}" for item in weak_points[:3]]
         if not next_actions:
-            next_actions = ["保持当前节奏，逐步增加进阶题比例。"]
+            next_actions = []
         return ReportDetail(
             report_type="comprehensive",
             user_id=user_id,
@@ -1391,10 +1391,10 @@ class ReportService:
             report_type=report_type,
             user_id=user_id,
             title=title,
-            summary="暂无真实答题记录，系统无法生成分析报告。",
+            summary="",
             strengths=[],
-            weaknesses=["请先提交真实答题数据。"],
-            next_actions=["完成至少一组真实练习后再查看报告。"],
+            weaknesses=[],
+            next_actions=[],
             evidence=ReportEvidence(),
         )
 
@@ -1483,11 +1483,7 @@ class ReportService:
         return "reasoning_gap"
 
     def _build_encouragement(self, is_correct: bool, ratio: float) -> str:
-        if is_correct and ratio >= 1.0:
-            return "这题处理得很稳，继续保持。"
-        if is_correct:
-            return "方向是对的，再把细节打磨一下会更好。"
-        return "这次没答对也没关系，复盘后再做一题会进步更快。"
+        return ""
 
     def _looks_numeric(self, value: str) -> bool:
         cleaned = value.replace(".", "", 1).replace("-", "", 1)

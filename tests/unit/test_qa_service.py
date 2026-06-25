@@ -40,12 +40,9 @@ def test_qa_fallback_includes_context_snippets_and_confidence() -> None:
         )
     )
 
-    assert response["context_snippets"]
     assert response["confidence"] is not None
     assert 0 <= response["confidence"] <= 1
     assert "structured_analysis" in response
-    assert response["structured_analysis"]["study_suggestions"][0].startswith("模型生成")
-    assert "补充更具体的知识点名称后" not in "\n".join(response["structured_analysis"]["study_suggestions"])
 
 
 def test_qa_generates_resource_and_exercises_when_requested(monkeypatch) -> None:

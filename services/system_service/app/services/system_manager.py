@@ -15,20 +15,9 @@ class SystemManager:
     """Provide admin-side management data for the system service."""
 
     def __init__(self) -> None:
-        self._subjects = [
-            SubjectItem(id=1, name="Python 程序设计", description="编程基础与实战"),
-            SubjectItem(id=2, name="数据结构", description="线性表、树、图"),
-        ]
-        self._configs = [
-            SystemConfigItem(key="resource_generation_timeout", value="15"),
-            SystemConfigItem(key="qa_response_timeout", value="5"),
-            SystemConfigItem(key="llm_default_model", value="deepseek-chat"),
-        ]
-        self._logs = [
-            AuditLogItem(level="INFO", event="user_login", message="User 1 logged in."),
-            AuditLogItem(level="INFO", event="resource_generated", message="Generated Python loop courseware."),
-            AuditLogItem(level="WARN", event="config_changed", message="Timeout configuration was updated."),
-        ]
+        self._subjects: list[SubjectItem] = []
+        self._configs: list[SystemConfigItem] = []
+        self._logs: list[AuditLogItem] = []
 
     def assign_role(self, payload: RoleAssignment) -> dict[str, object]:
         """Return one role assignment result."""

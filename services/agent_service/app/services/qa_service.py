@@ -301,7 +301,7 @@ class QAService:
                 self.db.refresh(session)
             return session
 
-        title = request.session_title.strip() or self._build_session_title(request.question) or "智能问答"
+        title = request.session_title.strip() or self._build_session_title(request.question) or ""
         try:
             user_id = int(request.student_id)
         except ValueError:

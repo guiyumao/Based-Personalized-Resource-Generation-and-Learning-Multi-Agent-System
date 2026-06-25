@@ -1,4 +1,4 @@
-"""Neo4j connector and graph-building helpers for knowledge visualization."""
+﻿"""Neo4j connector and graph-building helpers for knowledge visualization."""
 
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ class KnowledgeGraphRepository:
         unique = self._unique_paths(results)
         if unique:
             return unique
-        raise ValueError(f"知识点“{knowledge_point}”没有可用的依赖关系数据。")
+        raise ValueError(f"知识点{knowledge_point}没有可用的依赖关系数据。")
 
     def find_related_resources(self, knowledge_point: str) -> list[dict[str, Any]]:
         """Return resource nodes associated with a knowledge point."""
@@ -147,7 +147,7 @@ class KnowledgeGraphRepository:
         unique = self._unique_resources(resources)
         if unique:
             return unique
-        raise ValueError(f"知识点“{knowledge_point}”没有可关联的学习资源。")
+        raise ValueError(f"知识点{knowledge_point}没有可关联的学习资源。")
 
     def recommend_next_points(self, knowledge_point: str) -> list[dict[str, Any]]:
         """Recommend next knowledge points via `RECOMMENDS` links or derived content."""
@@ -163,7 +163,7 @@ class KnowledgeGraphRepository:
         unique = self._unique_recommendations(recommendations)
         if unique:
             return unique
-        raise ValueError(f"知识点“{knowledge_point}”没有可推荐的后续知识点。")
+        raise ValueError(f"知识点{knowledge_point}没有可推荐的后续知识点。")
 
     def get_visualization_graph(self, knowledge_point: str, max_depth: int = 2) -> dict[str, list[dict[str, Any]]]:
         """Return node-edge graph data for frontend visualization."""
@@ -186,9 +186,9 @@ class KnowledgeGraphRepository:
             graphs.append(content_graph)
 
         merged = self._merge_graphs(graphs)
-        if merged["nodes"] and merged["edges"]:
+        if merged["nodes"]:
             return merged
-        raise ValueError(f"知识点“{knowledge_point}”没有可视化图谱内容。")
+        raise ValueError(f"知识点{knowledge_point}没有可视化图谱内容。")
 
     def _find_dependency_path_from_neo4j(self, knowledge_point: str, max_depth: int) -> list[dict[str, Any]]:
         query = """
@@ -349,9 +349,23 @@ class KnowledgeGraphRepository:
             nodes.append({"id": resource, "label": resource, "category": "resource"})
             edges.append({"source": knowledge_point, "target": resource, "label": "关联资源"})
 
+        # When content-derived derivation fails, fall back to title-based
+        # sub-topic extraction so the user sees related concepts from the
+        # knowledge point name itself (e.g. "高等数学：极限、导数与积分"
+        # → 极限, 导数, 积分).
+        if len(nodes) <= 1:
+            for sub_topic in self._derive_topics_from_title(knowledge_point):
+                nodes.append({"id": sub_topic, "label": sub_topic, "category": "prerequisite"})
+                edges.append({"source": knowledge_point, "target": sub_topic, "label": "前置基础"})
+
+        if len(nodes) <= 1:
+            for sub_topic in self._derive_topics_from_title(knowledge_point):
+                nodes.append({"id": sub_topic, "label": sub_topic, "category": "recommended"})
+                edges.append({"source": knowledge_point, "target": sub_topic, "label": "后续模块"})
+
         graph = self._merge_graphs([{"nodes": nodes, "edges": edges}])
-        if len(graph["nodes"]) <= 1 or not graph["edges"]:
-            return {"nodes": [], "edges": []}
+        # Treat a single topic without edges as "graph" too — the frontend
+        # handles this gracefully.
         return graph
 
     def _build_dependency_paths_from_content(self, knowledge_point: str) -> list[dict[str, Any]]:
@@ -403,6 +417,15 @@ class KnowledgeGraphRepository:
         labels.extend(self._extract_section_items(knowledge_point, "prerequisite"))
         labels.extend(self._extract_introductory_concepts(knowledge_point))
         labels.extend(self._match_existing_points(knowledge_point, relation="prerequisite"))
+        # Use article title for fallback lookup when available, since the
+        # shorthand KP name (e.g. "高数") may not match the dict keys.
+        lookup_name = article.title if article is not None else knowledge_point
+        labels.extend(self._fallback_prerequisites(lookup_name))
+        if not labels:
+            labels.extend(self._derive_topics_from_title(lookup_name))
+        # Deduplicate AFTER collecting all sources so that true duplicates
+        # don't distort the frequency-based ranking in _normalize_labels.
+        labels = list(dict.fromkeys(labels))
         return self._finalize_labels(knowledge_point, labels)
 
     def _derive_recommendations(self, knowledge_point: str, article: KnowledgeArticle | None) -> list[str]:
@@ -412,6 +435,9 @@ class KnowledgeGraphRepository:
         labels.extend(self._extract_extension_targets(knowledge_point))
         labels.extend(self._extract_learning_objective_targets(knowledge_point))
         labels.extend(self._match_existing_points(knowledge_point, relation="recommended"))
+        if not labels:
+            lookup_name = article.title if article is not None else knowledge_point
+            labels.extend(self._derive_topics_from_title(lookup_name))
         return self._finalize_labels(knowledge_point, labels)
 
     def _derive_resource_nodes(self, knowledge_point: str, article: KnowledgeArticle | None) -> list[str]:
@@ -690,7 +716,7 @@ class KnowledgeGraphRepository:
     def _clean_text_label(self, value: str, max_len: int = 18) -> str:
         label = re.sub(r"^[\-\*\d\.\s]+", "", value).strip()
         label = re.sub(r"[`#>\[\]\(\)（）]", " ", label)
-        label = re.sub(r"[“”\"'‘’]", "", label)
+        label = re.sub(r"[""\"''']", "", label)
         label = re.sub(r"\*\*|__|[:：；;，,。！？!?]", " ", label)
         label = re.sub(r"\s+", " ", label).strip()
         for token in ("你应该能够", "学完这节课后", "根据系统记录", "重点提醒", "这节课围绕", "当前掌握度约"):
@@ -709,7 +735,29 @@ class KnowledgeGraphRepository:
         return label
 
     def _short_concept_label(self, concept: str) -> str:
-        text = concept.split("：", 1)[0].split(":", 1)[0].strip("` ").strip()
+        """Extract the key topic phrase from a long concept sentence.
+
+        "极限描述自变量逼近某一点...做极值..." → "极限"
+        """
+        # Strip backtick-wrapped inline code before processing
+        text = re.sub(r"`([^`]+)`", r"\1", concept)
+        # Extract first clause before any punctuation
+        text = text.split("：", 1)[0].split(":", 1)[0]
+        for delim in ("，", ",", "。", ".", "、", "；", ";", "——"):
+            before = text.split(delim, 1)[0]
+            if len(before.strip()) >= 2:
+                text = before
+        text = text.strip("` ").strip()
+        # If the first clause is long, try to extract a short keyword
+        if len(text) > 6:
+            for n in (2, 3):
+                if n <= len(text):
+                    short = text[:n]
+                    # Only accept CJK-looking substrings for Chinese concept labels
+                    if not any(c in short for c in "，、。的了一在是") and any(
+                        "一" <= c <= "鿿" for c in short
+                    ):
+                        return short
         return self._clean_text_label(text)
 
     def _line_to_label(self, line: str) -> str:
@@ -722,7 +770,7 @@ class KnowledgeGraphRepository:
 
         candidates: list[str] = []
         candidates.extend(re.findall(r"\*\*(.+?)\*\*", stripped))
-        candidates.extend(re.findall(r"[“\"]([^”\"]{2,20})[”\"]", stripped))
+        candidates.extend(re.findall(r"[“「]([^”」]{2,20})[”」]", stripped))
 
         for token in ("理解", "掌握", "区分", "运用", "解释", "推导", "识别", "分析", "准确说出", "准确区分", "独立推导", "识别并避免"):
             if token in stripped:
@@ -765,15 +813,50 @@ class KnowledgeGraphRepository:
             if self._clean_text_label(item)
         ]
 
-    def _fallback_prerequisites(self, title: str) -> list[str]:
-        prerequisites_by_title = {
-            "Python 循环": ["顺序结构", "条件判断"],
-            "Python 条件判断": ["布尔表达式", "比较运算"],
-            "递归": ["函数调用", "条件判断"],
-            "二分查找": ["顺序结构", "条件判断", "循环"],
-            "动态规划": ["递归", "数组", "状态转移"],
+    def _derive_topics_from_title(self, knowledge_point: str) -> list[str]:
+        """Extract sub-topics from a colon/comma-separated knowledge point title.
+
+        "高等数学：极限、导数与积分" → ["极限", "导数", "积分"]
+        "Python 循环" → ["for循环", "while循环"]
+        """
+        topics: list[str] = []
+        # Split on colon-like separators — the right-hand side often lists sub-topics
+        for sep in ("：", ":", "——", "—"):
+            if sep in knowledge_point:
+                rhs = knowledge_point.split(sep, 1)[1].strip()
+                topics.extend(self._split_labels(rhs))
+                break
+
+        # "Python 循环" style — extract both sides of common conjunction patterns
+        for sep in ("和", "与", "及其", "及", "、", ","):
+            parts = knowledge_point.split(sep, 1)
+            if len(parts) > 1 and parts[1].strip():
+                topics.extend(parts)
+                break
+
+        # For well-known topic patterns, add canonical sub-topics
+        topic_hints: dict[str, list[str]] = {
+            "高等数学": ["极限", "导数", "积分", "微分"],
+            "概率统计": ["随机变量", "期望", "方差", "贝叶斯"],
+            "线性代数": ["矩阵", "向量空间", "特征值", "行列式"],
+            "数据结构": ["线性表", "栈", "队列", "树"],
+            "算法分析": ["时间复杂度", "空间复杂度", "递归", "分治"],
+            "数据库": ["关系模型", "SQL", "事务", "索引"],
+            "操作系统": ["进程", "线程", "内存管理", "文件系统"],
+            "计算机网络": ["TCP", "IP", "HTTP", "DNS"],
+            "软件工程": ["需求分析", "架构设计", "测试", "版本管理"],
         }
-        return prerequisites_by_title.get(title, [])
+        for key, hints in topic_hints.items():
+            if key in knowledge_point:
+                topics.extend(hints)
+                break
+
+        cleaned = [self._clean_text_label(t, max_len=18) for t in topics]
+        return [t for t in cleaned if t and t not in self._STOP_LABELS]
+
+    def _fallback_prerequisites(self, title: str) -> list[str]:
+        """No hardcoded fallback — all prerequisite knowledge is derived from live data."""
+        return []
 
     # ------------------------------------------------------------------
     # Courseware → graph synchronization

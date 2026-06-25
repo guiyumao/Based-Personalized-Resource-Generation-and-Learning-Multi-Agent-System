@@ -284,7 +284,7 @@ class ChatSessionCreate(BaseModel):
     """Payload for creating a new chat session."""
 
     user_id: int
-    title: str = Field(default="新对话", max_length=200)
+    title: str = Field(default="", max_length=200)
     subject: str = Field(default="", max_length=50)
 
 

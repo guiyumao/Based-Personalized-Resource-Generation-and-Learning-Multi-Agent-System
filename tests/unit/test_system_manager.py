@@ -31,6 +31,8 @@ def test_system_manager_can_filter_logs() -> None:
     """Admin log filtering should return only matching levels."""
 
     manager = SystemManager()
+    # Trigger a WARN-level log entry
+    manager.update_config("llm_default_model", "qwen-plus")
     manager.assign_role(RoleAssignment(user_id=3, role="teacher"))
 
     warn_logs = manager.list_logs("WARN")

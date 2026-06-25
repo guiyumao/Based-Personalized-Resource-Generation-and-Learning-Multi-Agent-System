@@ -132,24 +132,17 @@ class FeedbackSynthesisService:
         mistake_count = mistake_stats.get("mistake_count", 0) if isinstance(mistake_stats, dict) else 0
 
         return {
-            "overall_assessment": f"系统基于你的 {snapshot.get('mastery_overview', 0) or 0:.0f}% 综合掌握度为本次学习生成了反馈。",
+            "overall_assessment": "",
             "core_strengths": [],
             "improvement_areas": [],
-            "personalized_feedback": (
-                f"学习概况：{habit or '暂无足够作答记录，建议先完成一组练习。'} "
-                f"建议：{recommended_action or '继续当前学习路径，积累更多答题数据。'}"
-            ),
+            "personalized_feedback": error_message[:300],
             "next_step_plan": {
-                "immediate_actions": suggestion_texts[:2] if suggestion_texts else ["完成一组练习以积累评估数据"],
-                "this_week_focus": focus_areas[:3] if focus_areas else [knowledge_point] if knowledge_point else [],
+                "immediate_actions": [],
+                "this_week_focus": [knowledge_point] if knowledge_point else [],
                 "recommended_resources": [],
             },
-            "agent_synthesis_summary": f"LLM 联合反馈生成失败（{error_message[:120]}），已回退至数据驱动反馈。",
-            "learning_insight": (
-                f"当前掌握度约 {mastery:.0f}%，累计错题 {mistake_count} 道。"
-                if mastery or mistake_count
-                else "保持练习节奏，系统会在积累足够数据后给出更精准的分析。"
-            ),
+            "agent_synthesis_summary": error_message[:200],
+            "learning_insight": "",
             "generated_at": datetime.now(UTC).isoformat(),
         }
 
@@ -248,7 +241,7 @@ class FeedbackSynthesisService:
 
         lines = [
             "## 评估数据",
-            f"- 综合掌握度：{mastery:.1f}%" if mastery else "- 综合掌握度：暂无数据",
+            f"- 综合掌握度：{mastery:.1f}%" if mastery else "" if mastery else "- 综合掌握度：暂无数据",
             f"- 错题总数：{mistake_count}",
             f"- 学习概况：{habit or '暂无'}",
         ]

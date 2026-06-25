@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unicodedata
 
-PLACEHOLDER_SESSION_TITLES = frozenset({"new chat", "新对话", "智能问答"})
+PLACEHOLDER_SESSION_TITLES: frozenset[str] = frozenset()
 
 
 def normalize_session_title_key(title: str | None) -> str:

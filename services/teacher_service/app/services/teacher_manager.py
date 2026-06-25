@@ -244,13 +244,13 @@ class TeacherManager:
             knowledge_point = db.get(KnowledgePoint, exercise.knowledge_point_id)
             if knowledge_point is not None:
                 return knowledge_point.name
-        return "暂无真实学习记录"
+        return ""
 
     def _build_student_report_summary(self, total: int, correct: int, mistakes: int, recent_focus: str) -> str:
         """Create a concise teacher-facing summary without fabricated data."""
 
         if total == 0:
-            return "暂无真实作答记录，建议先安排诊断练习。"
+            return ""
         correct_rate = round((correct / total) * 100)
         if mistakes == 0:
             return f"已完成 {total} 次作答，正确率 {correct_rate}%，可围绕 {recent_focus} 提升迁移应用。"
@@ -270,7 +270,9 @@ class TeacherManager:
             if exercise is None:
                 continue
             knowledge_point = db.get(KnowledgePoint, exercise.knowledge_point_id)
-            name = knowledge_point.name if knowledge_point is not None else "未标注知识点"
+            name = knowledge_point.name if knowledge_point is not None else ""
+            if not name:
+                continue
             mistake_counts[name] += 1
             affected_students[name].add(record.user_id)
 
