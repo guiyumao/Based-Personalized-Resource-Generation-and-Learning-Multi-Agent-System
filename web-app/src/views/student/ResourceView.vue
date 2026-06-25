@@ -261,6 +261,52 @@ async function deleteAllResources() {
     ElMessage.error(`一键删除失败：${detail}`)
   }
 }
+
+async function deleteAllGeneratedResources() {
+  if (!generatedResources.value.length) {
+    ElMessage.warning('当前没有可删除的系统生成资源')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除全部 ${generatedResources.value.length} 项系统生成资源吗？`,
+      '删除全部系统生成资源',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch { return }
+  try {
+    const ids = generatedResources.value.map(r => r.id)
+    await resourceApi.post<ApiEnvelope<{ deleted_count: number }>>('/resources/batch-delete', { ids })
+    await fetchResources()
+    ElMessage.success(`已删除 ${ids.length} 项系统生成资源`)
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    ElMessage.error(`删除失败：${detail}`)
+  }
+}
+
+async function deleteAllImportedResources() {
+  if (!importedResources.value.length) {
+    ElMessage.warning('当前没有可删除的官方课件')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认删除全部 ${importedResources.value.length} 项官方课件吗？已下载的本地文件也会一并删除。`,
+      '删除全部官方课件',
+      { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch { return }
+  try {
+    const ids = importedResources.value.map(r => r.id)
+    await resourceApi.post<ApiEnvelope<{ deleted_count: number }>>('/resources/batch-delete', { ids })
+    await fetchResources()
+    ElMessage.success(`已删除 ${ids.length} 项官方课件`)
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    ElMessage.error(`删除失败：${detail}`)
+  }
+}
 </script>
 
 <template>
@@ -276,7 +322,7 @@ async function deleteAllResources() {
           {{ isLoading ? '刷新中...' : '刷新资源' }}
         </button>
         <button :disabled="resourceLoading || !resources.length" class="danger-button" @click="deleteAllResources">
-          一键删除
+          一键删除全部资源
         </button>
       </div>
     </header>
@@ -420,6 +466,22 @@ async function deleteAllResources() {
         <h3>全部已保存资源</h3>
         <p>包含从大学知识库下载的官方课件，以及系统生成的个性化学习资源。</p>
       </div>
+      <div class="section-actions">
+        <button
+          :disabled="resourceLoading || !generatedResources.length"
+          class="danger-button"
+          @click="deleteAllGeneratedResources"
+        >
+          删除全部系统生成
+        </button>
+        <button
+          :disabled="resourceLoading || !importedResources.length"
+          class="danger-button"
+          @click="deleteAllImportedResources"
+        >
+          删除全部官方课件
+        </button>
+      </div>
 
       <div v-if="resources.length" class="library-grid">
         <article v-for="item in resources" :key="item.id" class="library-card" @click="openDetail(item)">
@@ -484,7 +546,7 @@ async function deleteAllResources() {
             切换为 {{ statusLabel[statusNext[selectedResource.status]] }}
           </button>
           <button class="danger-button" @click="deleteSelectedResource">
-            删除资源
+            从资源库删除
           </button>
         </div>
       </div>
