@@ -14,6 +14,8 @@ def get_dependency_path(payload: GraphQueryRequest) -> dict[str, object]:
 
     repository = KnowledgeGraphRepository()
     try:
+        # Sync courseware content into graph relations before querying
+        repository.sync_courseware_to_graph(payload.knowledge_point)
         return {
             "knowledge_point": payload.knowledge_point,
             "dependencies": repository.find_dependency_path(payload.knowledge_point, payload.max_depth),
@@ -30,6 +32,7 @@ def get_related_resources(knowledge_point: str) -> dict[str, object]:
 
     repository = KnowledgeGraphRepository()
     try:
+        repository.sync_courseware_to_graph(knowledge_point)
         return {
             "knowledge_point": knowledge_point,
             "resources": repository.find_related_resources(knowledge_point),
@@ -46,6 +49,7 @@ def get_visualization_graph(payload: GraphQueryRequest) -> GraphVisualizationRes
 
     repository = KnowledgeGraphRepository()
     try:
+        repository.sync_courseware_to_graph(payload.knowledge_point)
         result = repository.get_visualization_graph(payload.knowledge_point, payload.max_depth)
         return GraphVisualizationResponse(
             knowledge_point=payload.knowledge_point,
