@@ -274,15 +274,16 @@ async function deleteAllGeneratedResources() {
       { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
-  try {
-    const ids = generatedResources.value.map(r => r.id)
-    await resourceApi.post<ApiEnvelope<{ deleted_count: number }>>('/resources/batch-delete', { ids })
-    await fetchResources()
-    ElMessage.success(`已删除 ${ids.length} 项系统生成资源`)
-  } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
-    ElMessage.error(`删除失败：${detail}`)
+  const ids = generatedResources.value.map(r => r.id)
+  let deleted = 0
+  for (const id of ids) {
+    try {
+      await resourceApi.delete(`/resources/${id}`)
+      deleted++
+    } catch { /* skip individual failures */ }
   }
+  await fetchResources()
+  ElMessage.success(`已删除 ${deleted} 项系统生成资源`)
 }
 
 async function deleteAllImportedResources() {
@@ -297,15 +298,16 @@ async function deleteAllImportedResources() {
       { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning' },
     )
   } catch { return }
-  try {
-    const ids = importedResources.value.map(r => r.id)
-    await resourceApi.post<ApiEnvelope<{ deleted_count: number }>>('/resources/batch-delete', { ids })
-    await fetchResources()
-    ElMessage.success(`已删除 ${ids.length} 项官方课件`)
-  } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
-    ElMessage.error(`删除失败：${detail}`)
+  const ids = importedResources.value.map(r => r.id)
+  let deleted = 0
+  for (const id of ids) {
+    try {
+      await resourceApi.delete(`/resources/${id}`)
+      deleted++
+    } catch { /* skip individual failures */ }
   }
+  await fetchResources()
+  ElMessage.success(`已删除 ${deleted} 项官方课件`)
 }
 </script>
 
