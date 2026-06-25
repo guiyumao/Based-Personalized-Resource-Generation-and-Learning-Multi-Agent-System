@@ -105,3 +105,23 @@ def update_resource_status(
     if updated is None:
         raise HTTPException(status_code=404, detail="Resource not found")
     return ApiResponse(data=updated, message="Resource status updated successfully.")
+
+
+@router.delete("/{resource_id}", response_model=ApiResponse[dict[str, int]])
+def delete_resource(resource_id: int, db: Session = Depends(get_db)) -> ApiResponse[dict[str, int]]:
+    """Delete a managed resource."""
+
+    manager = ResourceManager(db)
+    deleted = manager.delete_resource(resource_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return ApiResponse(data={"resource_id": resource_id}, message="Resource deleted successfully.")
+
+
+@router.delete("", response_model=ApiResponse[dict[str, int]])
+def delete_all_resources(db: Session = Depends(get_db)) -> ApiResponse[dict[str, int]]:
+    """Delete all managed resources."""
+
+    manager = ResourceManager(db)
+    deleted_count = manager.delete_all_resources()
+    return ApiResponse(data={"deleted_count": deleted_count}, message="All resources deleted successfully.")

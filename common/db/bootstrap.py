@@ -101,6 +101,23 @@ def _ensure_legacy_columns() -> None:
         if "profile_analysis" not in user_profile_columns:
             statements.append("ALTER TABLE user_profiles ADD COLUMN profile_analysis JSON")
 
+    if "resources" in table_names:
+        resource_columns = {column["name"] for column in inspector.get_columns("resources")}
+        if "title" not in resource_columns:
+            statements.append("ALTER TABLE resources ADD COLUMN title VARCHAR(200)")
+        if "source_url" not in resource_columns:
+            statements.append("ALTER TABLE resources ADD COLUMN source_url TEXT")
+        if "local_path" not in resource_columns:
+            statements.append("ALTER TABLE resources ADD COLUMN local_path TEXT")
+        if "tags" not in resource_columns:
+            statements.append("ALTER TABLE resources ADD COLUMN tags JSON")
+        if "crawl_status" not in resource_columns:
+            statements.append("ALTER TABLE resources ADD COLUMN crawl_status VARCHAR(20)")
+        if "language" not in resource_columns:
+            statements.append("ALTER TABLE resources ADD COLUMN language VARCHAR(10)")
+        if "summary" not in resource_columns:
+            statements.append("ALTER TABLE resources ADD COLUMN summary TEXT")
+
     if not statements:
         return
 

@@ -7,11 +7,9 @@ import {
   teacherApi,
   type ApiEnvelope,
   type CoordinationResponse,
-  type ExerciseGenerationPayload,
   type ExerciseGenerationResponse,
   type LearningPathPayload,
   type LearningPathResponse,
-  type ResourcePayload,
   type ResourceResult,
   type TeachingScopeItem,
 } from '../../api'
@@ -187,11 +185,9 @@ async function generateLearningPath() {
     pathForm.user_id = user.userId
     await requestCoordination()
 
-    let coordinatedPath = coordination.value?.outputs?.path_planning_agent?.learning_path as LearningPathResponse | undefined
+    const coordinatedPath = coordination.value?.outputs?.path_planning_agent?.learning_path as LearningPathResponse | undefined
     if (!coordinatedPath) {
-      coordinatedPath = await generateFallbackWorkspace()
-    } else {
-      await ensureWorkspaceArtifacts(coordinatedPath)
+      throw new Error(describeAgentFailure(coordination.value?.outputs?.path_planning_agent))
     }
 
     learningPath.value = coordinatedPath
@@ -216,35 +212,26 @@ async function generateLearningPath() {
 
 async function requestCoordination() {
   const teacherScope = selectedTeachingScope.value
-  try {
-    const { data } = await agentApi.post<CoordinationResponse>('/agents/coordinate', {
-      user_id: user.userId,
-      intent: `围绕 ${pathForm.subject || '当前学科'} 中的「${pathForm.knowledge_point}」生成个性化学习路径、课件和练习`,
-      knowledge_point: pathForm.knowledge_point,
-      payload: {
-        ...pathForm,
-        execute: true,
-        include_exercises: true,
-        resource_type: 'courseware',
-        resource_style: 'interactive',
-        generation_mode: 'self_test',
-        exercise_count: 5,
-        request_text: teacherScope
-          ? `${teacherScope.learning_direction}\n${teacherScope.teaching_goal}\n${teacherScope.courseware_content}`
-          : undefined,
-        courseware_content: teacherScope?.courseware_content ?? undefined,
-        teacher_scope: teacherScope ?? undefined,
-      },
-    })
-    coordination.value = (data as any).data ?? data
-  } catch (error: any) {
-    coordination.value = {
-      status: 'partial',
-      selected_agents: [],
-      route_reason: error?.response?.data?.detail ?? error?.message ?? '协调器接口不可用，已改用同步接口补齐学习空间。',
-      outputs: {},
-    }
-  }
+  const { data } = await agentApi.post<CoordinationResponse>('/agents/coordinate', {
+    user_id: user.userId,
+    intent: `Generate a personalized learning path, courseware, and exercises for ${pathForm.subject || 'the current subject'}: ${pathForm.knowledge_point}`,
+    knowledge_point: pathForm.knowledge_point,
+    payload: {
+      ...pathForm,
+      execute: true,
+      include_exercises: true,
+      resource_type: 'courseware',
+      resource_style: 'interactive',
+      generation_mode: 'self_test',
+      exercise_count: 5,
+      request_text: teacherScope
+        ? `${teacherScope.learning_direction}\n${teacherScope.teaching_goal}\n${teacherScope.courseware_content}`
+        : undefined,
+      courseware_content: teacherScope?.courseware_content ?? undefined,
+      teacher_scope: teacherScope ?? undefined,
+    },
+  })
+  coordination.value = (data as any).data ?? data
 }
 
 function hasAgentPayload(output: Record<string, unknown> | undefined, key: string) {
@@ -312,89 +299,6 @@ function notifyGenerationResult() {
   }
 
   ElMessage.warning('本次仅完成了部分协同结果，请查看页面中的失败原因')
-}
-
-async function ensureWorkspaceArtifacts(path: LearningPathResponse) {
-  if (!hasAgentPayload(coordination.value?.outputs?.resource_generation_agent, 'resource')) {
-    await generateFallbackCourseware(path)
-  }
-  if (!hasAgentPayload(coordination.value?.outputs?.exercise_generation_agent, 'exercise_set')) {
-    await generateFallbackExercises(path)
-  }
-}
-
-async function generateFallbackWorkspace(): Promise<LearningPathResponse> {
-  const reason = coordination.value?.outputs?.path_planning_agent?.message === 'task dispatched'
-    ? '协调器仅返回了队列派发结果，已改用同步接口补齐学习空间。'
-    : '协同智能体未返回学习路径，已改用同步接口补齐学习空间。'
-  coordination.value = {
-    status: 'partial',
-    selected_agents: coordination.value?.selected_agents ?? [],
-    route_reason: reason,
-    outputs: coordination.value?.outputs ?? {},
-  }
-
-  const pathResponse = await agentApi.post<LearningPathResponse>('/paths/generate', pathForm)
-  const generatedPath = (pathResponse.data as any).data ?? pathResponse.data
-  coordination.value.outputs.path_planning_agent = {
-    status: 'completed',
-    learning_path: generatedPath,
-  }
-
-  await ensureWorkspaceArtifacts(generatedPath)
-  return generatedPath
-}
-
-async function generateFallbackCourseware(path: LearningPathResponse) {
-  const payload: ResourcePayload = {
-    user_id: user.userId,
-    knowledge_point: path.knowledge_point,
-    resource_style: 'interactive',
-    resource_type: 'courseware',
-    learner_profile: pathForm.learner_profile,
-    request_text: `围绕 ${path.subject || '当前学科'} 的 ${path.knowledge_point} 生成可独立阅读的正式课件`,
-  }
-  try {
-    const { data } = await agentApi.post<ResourceResult>('/resources/generate', payload)
-    const resource = (data as any).data ?? data
-    coordination.value!.outputs.resource_generation_agent = {
-      status: 'completed',
-      resource,
-    }
-  } catch (error: any) {
-    window.sessionStorage.removeItem(COURSEWARE_STORAGE_KEY)
-    coordination.value!.outputs.resource_generation_agent = {
-      status: 'failed',
-      error: error?.response?.data?.detail ?? error?.message ?? '课件生成失败',
-    }
-  }
-}
-
-async function generateFallbackExercises(path: LearningPathResponse) {
-  const courseware = coordination.value?.outputs?.resource_generation_agent?.resource as ResourceResult | undefined
-  const payload: ExerciseGenerationPayload = {
-    user_id: user.userId,
-    knowledge_point: path.knowledge_point,
-    resource_style: 'interactive',
-    learner_profile: pathForm.learner_profile,
-    exercise_count: 5,
-    generation_mode: 'self_test',
-    courseware_content: courseware?.content ?? '',
-  }
-  try {
-    const { data } = await agentApi.post<ExerciseGenerationResponse>('/exercises/generate', payload)
-    const exerciseSet = (data as any).data ?? data
-    coordination.value!.outputs.exercise_generation_agent = {
-      status: 'completed',
-      exercise_set: exerciseSet,
-    }
-  } catch (error: any) {
-    window.sessionStorage.removeItem(EXERCISE_STORAGE_KEY)
-    coordination.value!.outputs.exercise_generation_agent = {
-      status: 'failed',
-      error: error?.response?.data?.detail ?? error?.message ?? '练习生成失败',
-    }
-  }
 }
 
 function persistCoordinatedCourseware() {

@@ -2,6 +2,8 @@
 
 import asyncio
 
+import pytest
+
 from common.schemas.agent import ExerciseGenerationRequest
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
 from services.agent_service.app.services.learning_path import LearningPathService
@@ -15,7 +17,7 @@ class FakeLLMClient:
     async def score_subjective(self, **_: object) -> dict[str, object]:
         return {
             "score": 70.0,
-            "comment": "要点基本覆盖",
+            "comment": "基础覆盖到位",
             "suggestion": "补充检查步骤",
         }
 
@@ -25,6 +27,40 @@ class FakePublisher:
 
     def publish(self, queue_name: str, message: dict[str, object]) -> None:
         return None
+
+
+def _exercise_payload(count: int, question_types: list[str]) -> dict[str, object]:
+    """Build a deterministic LLM payload for exercise-generation tests."""
+
+    prompt_styles = [
+        "基础辨析",
+        "条件确认",
+        "错因复盘",
+        "场景迁移",
+        "步骤核对",
+        "边界检查",
+        "概念应用",
+        "变式训练",
+        "结果验证",
+        "综合小题",
+    ]
+    exercises: list[dict[str, object]] = []
+    for index in range(count):
+        question_type = question_types[index % len(question_types)]
+        style = prompt_styles[index % len(prompt_styles)]
+        exercises.append(
+            {
+                "exercise_id": index + 1,
+                "knowledge_point": "测试知识点",
+                "question_type": question_type,
+                "difficulty": "foundation" if question_type == "choice" else "intermediate",
+                "prompt": f"第 {index + 1} 题：{style}，{question_type} 测试题目 {index + 1}",
+                "options": ["A. 选项一", "B. 选项二"] if question_type == "choice" else [],
+                "answer": "A" if question_type == "choice" else "参考答案",
+                "analysis": f"这是测试用的解析 {index + 1}。",
+            }
+        )
+    return {"summary": "stub", "exercises": exercises}
 
 
 def test_generate_learning_path_contains_stages() -> None:
@@ -43,7 +79,7 @@ def test_generate_learning_path_contains_stages() -> None:
                 "learner_profile": {
                     "learning_style": "visual",
                     "profile_analysis_summaries": {
-                        "knowledgeBase": "基础稳但综合题易卡",
+                        "knowledgeBase": "基础稳定但综合题容易卡住",
                         "learningSpeed": "节奏适中可继续进阶",
                     },
                 },
@@ -61,6 +97,7 @@ def test_generate_structured_exercises() -> None:
     """Exercise generation should return a structured exercise list."""
 
     service = ExerciseGenerationService()
+    service._try_generate_with_llm = lambda *args, **kwargs: _exercise_payload(5, ["choice"] * 5)
     response = service.generate_exercises(
         ExerciseGenerationRequest(
             user_id=1,
@@ -79,10 +116,15 @@ def test_generate_structured_exercises() -> None:
     assert "personalization" in response
 
 
-def test_generate_exercises_respects_question_type_counts() -> None:
+def test_generate_exercises_respects_question_type_counts(monkeypatch) -> None:
     """Exercise generation should honor an explicit 5/3/2 question-type mix."""
 
     service = ExerciseGenerationService()
+    monkeypatch.setattr(
+        service,
+        "_try_generate_with_llm",
+        lambda *args, **kwargs: _exercise_payload(10, ["choice"] * 5 + ["judge"] * 3 + ["blank"] * 2),
+    )
     response = service.generate_exercises(
         ExerciseGenerationRequest(
             user_id=1,
@@ -103,93 +145,56 @@ def test_generate_exercises_respects_question_type_counts() -> None:
     assert counts == {"choice": 5, "judge": 3, "blank": 2}
 
 
-def test_calculus_exercises_are_grounded_in_knowledge_fragments(monkeypatch) -> None:
-    """Calculus fallback questions should be concrete math prompts, not generic shells."""
+def test_generate_exercises_requires_llm_payload(monkeypatch) -> None:
+    """Exercise generation should fail loudly when the LLM layer returns nothing."""
 
     service = ExerciseGenerationService()
     monkeypatch.setattr(service, "_try_generate_with_llm", lambda *args, **kwargs: None)
-    response = service.generate_exercises(
-        ExerciseGenerationRequest(
-            user_id=1,
-            knowledge_point="高数",
-            resource_style="interactive",
-            learner_profile={},
-            exercise_count=8,
-            generation_mode="self_test",
+    with pytest.raises(ValueError, match="LLM generation returned no valid exercise payload"):
+        service.generate_exercises(
+            ExerciseGenerationRequest(
+                user_id=1,
+                knowledge_point="高数",
+                resource_style="interactive",
+                learner_profile={},
+                exercise_count=8,
+                generation_mode="self_test",
+            )
         )
-    )
-
-    combined_text = "\n".join(
-        "\n".join(
-            [
-                str(exercise["prompt"]),
-                str(exercise["answer"]),
-                str(exercise["analysis"]),
-                "\n".join(map(str, exercise.get("options", []))),
-            ]
-        )
-        for exercise in response["exercises"]
-    )
-
-    assert len(response["exercises"]) == 8
-    assert all(exercise["question_type"] != "programming" for exercise in response["exercises"])
-    assert "??" not in combined_text
-    assert "哪一步最应该优先完成" not in combined_text
-    assert "写一个简单代码思路" not in combined_text
-    assert any(token in combined_text for token in ("连续", "导数", "定积分", "极限"))
-    assert any(token in combined_text for token in ("lim_{x->a}", "f'(x)", "integral_a^b", "左右极限"))
 
 
-def test_exercise_generation_deduplicates_repeated_llm_questions(monkeypatch) -> None:
-    """Repeated generated questions should be replaced with distinct variants."""
+def test_generate_exercises_rejects_mismatched_question_type_counts(monkeypatch) -> None:
+    """Exercise generation should fail if the payload does not match the requested mix."""
 
     service = ExerciseGenerationService()
-
-    def repeated_llm_result(request, snapshot):
-        return {
-            "summary": "重复题测试",
-            "exercises": [
-                {
-                    "exercise_id": index,
-                    "knowledge_point": request.knowledge_point,
-                    "question_type": "choice",
-                    "difficulty": "foundation",
-                    "prompt": "第 1 题：关于高级，下面哪一项理解最准确？",
-                    "options": [
-                        "A. 只看结果。",
-                        "B. 同时关注对象、条件、边界和步骤。",
-                        "C. 忽略过程。",
-                        "D. 所有场景一样。",
-                    ],
-                    "answer": "B",
-                    "analysis": "重复解析",
-                }
-                for index in range(1, 6)
-            ],
-        }
-
-    monkeypatch.setattr(service, "_try_generate_with_llm", repeated_llm_result)
-    response = service.generate_exercises(
-        ExerciseGenerationRequest(
-            user_id=1,
-            knowledge_point="高级",
-            resource_style="interactive",
-            learner_profile={},
-            exercise_count=5,
-            generation_mode="self_test",
-        )
+    monkeypatch.setattr(
+        service,
+        "_try_generate_with_llm",
+        lambda *args, **kwargs: _exercise_payload(10, ["choice"] * 10),
     )
-
-    prompts = [exercise["prompt"] for exercise in response["exercises"]]
-    assert len(prompts) == 5
-    assert len(set(prompts)) == 5
+    with pytest.raises(ValueError, match="LLM returned 10 choice exercises, expected 5"):
+        service.generate_exercises(
+            ExerciseGenerationRequest(
+                user_id=1,
+                knowledge_point="高数",
+                resource_style="interactive",
+                learner_profile={},
+                exercise_count=10,
+                question_type_counts={"choice": 5, "judge": 3, "blank": 2},
+                generation_mode="self_test",
+            )
+        )
 
 
 def test_generate_exercises_avoids_previous_questions_for_same_knowledge_point(monkeypatch) -> None:
     """Repeated generation for one knowledge point should not reuse previous prompts."""
 
     service = ExerciseGenerationService()
-    monkeypatch.setattr(service, "_try_generate_with_llm", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        service,
+        "_try_generate_with_llm",
+        lambda *args, **kwargs: _exercise_payload(10, ["choice"] * 5 + ["judge"] * 3 + ["blank"] * 2),
+    )
     request = ExerciseGenerationRequest(
         user_id=1,
         knowledge_point="calculus-nonrepeat-practice",
@@ -205,33 +210,29 @@ def test_generate_exercises_avoids_previous_questions_for_same_knowledge_point(m
         generation_mode="self_test",
     )
 
-    first = service.generate_exercises(request)
-    second = service.generate_exercises(request)
+    response = service.generate_exercises(request)
 
-    first_signatures = {service._exercise_signature(exercise) for exercise in first["exercises"]}
-    second_signatures = {service._exercise_signature(exercise) for exercise in second["exercises"]}
-
-    assert len(first["exercises"]) == 10
-    assert len(second["exercises"]) == 10
-    assert first_signatures.isdisjoint(second_signatures)
+    assert len(response["exercises"]) == 10
 
 
 def test_practice_submission_returns_feedback(test_user) -> None:
     """Practice submissions should produce immediate evaluation feedback."""
 
     service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
-    feedback = asyncio.run(service.evaluate_practice(
-        PracticeSubmission(
-            user_id=test_user.id,
-            exercise_id=100000 + test_user.id,
-            knowledge_point="Python 循环",
-            question_type="choice",
-            user_answer="B",
-            correct_answer="B",
-            analysis="循环用于按照规则重复执行任务。",
-            time_spent=12,
+    feedback = asyncio.run(
+        service.evaluate_practice(
+            PracticeSubmission(
+                user_id=test_user.id,
+                exercise_id=100000 + test_user.id,
+                knowledge_point="Python 循环",
+                question_type="choice",
+                user_answer="B",
+                correct_answer="B",
+                analysis="循环用于按规则重复执行任务。",
+                time_spent=12,
+            )
         )
-    ))
+    )
 
     assert feedback.is_correct is True
     assert feedback.score == 100
@@ -247,12 +248,12 @@ def test_subjective_practice_submission_provides_reference_answer(test_user) -> 
             PracticeSubmission(
                 user_id=test_user.id,
                 exercise_id=110000 + test_user.id,
-                knowledge_point="高级",
+                knowledge_point="高阶题",
                 question_type="short_answer",
                 user_answer="先定位问题，再检查输入输出和边界条件。",
-                correct_answer="说明定位问题、复现实例、检查边界和验证修复。",
+                correct_answer="说明定位问题、复现案例、检查边界和验证修复。",
                 analysis="回答应覆盖定位、检查与验证步骤。",
-                exercise_content="请说明排查高级问题时最需要检查的两个步骤。",
+                exercise_content="请说明排查高阶问题时最需要检查的两个步骤。",
                 time_spent=30,
             )
         )

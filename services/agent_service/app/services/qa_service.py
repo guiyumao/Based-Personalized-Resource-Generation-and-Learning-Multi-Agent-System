@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Any
@@ -205,17 +206,10 @@ class QAService:
                 generated_exercises=generated_exercises,
                 history=history,
             )
-            if llm_learning_response:
-                student_response = llm_learning_response
-                model_used = "qa_learning_llm"
-            else:
-                student_response = self._build_learning_response(
-                    conversation=conversation,
-                    flags=flags,
-                    generated_resource=generated_resource,
-                    generated_exercises=generated_exercises,
-                )
-                model_used = "qa_orchestrated"
+            if not llm_learning_response:
+                raise ValueError("Learning QA generation returned an empty response.")
+            student_response = llm_learning_response
+            model_used = "qa_learning_llm"
         else:
             student_response, model_used = self._build_general_response(
                 question=conversation["question"],
@@ -223,12 +217,28 @@ class QAService:
                 follow_up=conversation["follow_up"],
                 history=history,
             )
+
+        study_suggestions = (
+            self._generate_study_suggestions_with_llm(
+                request=request,
+                conversation=conversation,
+                flags=flags,
+                context_snippets=context_snippets,
+                student_response=student_response,
+                generated_resource=generated_resource,
+                generated_exercises=generated_exercises,
+                history=history,
+            )
+            if flags["has_learning_context"]
+            else []
+        )
         structured_analysis = self._build_structured_analysis(
             request=request,
             conversation=conversation,
             flags=flags,
             generated_resource=generated_resource,
             generated_exercises=generated_exercises,
+            study_suggestions=study_suggestions,
         )
 
         candidate = {
@@ -762,27 +772,21 @@ class QAService:
 
         knowledge_point = str(conversation["knowledge_point"] or request.subject).strip()
         if not knowledge_point:
-            return None
+            raise ValueError("Resource generation requested without a knowledge point.")
 
-        try:
-            user_id = int(request.student_id)
-        except ValueError:
-            user_id = 0
+        user_id = int(request.student_id)
 
         learner_profile = self._extract_learner_profile(request.learning_history)
-        try:
-            return ResourceGenerationService().generate_courseware_with_plan(
-                ResourceGenerationRequest(
-                    user_id=user_id,
-                    knowledge_point=knowledge_point,
-                    resource_style=self._infer_resource_style(request.question),
-                    resource_type="courseware",
-                    learner_profile=learner_profile,
-                    request_text=conversation["effective_question"],
-                )
+        return ResourceGenerationService().generate_courseware_with_plan(
+            ResourceGenerationRequest(
+                user_id=user_id,
+                knowledge_point=knowledge_point,
+                resource_style=self._infer_resource_style(request.question),
+                resource_type="courseware",
+                learner_profile=learner_profile,
+                request_text=conversation["effective_question"],
             )
-        except Exception:
-            return None
+        )
 
     def _maybe_generate_exercises(
         self,
@@ -796,12 +800,9 @@ class QAService:
 
         knowledge_point = str(conversation["knowledge_point"] or request.subject).strip()
         if not knowledge_point:
-            return None
+            raise ValueError("Exercise generation requested without a knowledge point.")
 
-        try:
-            user_id = int(request.student_id)
-        except ValueError:
-            user_id = 0
+        user_id = int(request.student_id)
 
         learner_profile = self._extract_learner_profile(request.learning_history)
         learner_profile = {
@@ -814,90 +815,18 @@ class QAService:
             or (conversation.get("latest_resource") or {}).get("content")
             or ""
         )
-        try:
-            return ExerciseGenerationService().generate_exercises(
-                ExerciseGenerationRequest(
-                    user_id=user_id,
-                    knowledge_point=knowledge_point,
-                    resource_style=self._infer_resource_style(request.question),
-                    learner_profile=learner_profile,
-                    exercise_count=conversation["exercise_count"],
-                    question_type_counts={},
-                    generation_mode=self._infer_generation_mode(request.question),
-                    courseware_content=courseware_content,
-                )
+        return ExerciseGenerationService().generate_exercises(
+            ExerciseGenerationRequest(
+                user_id=user_id,
+                knowledge_point=knowledge_point,
+                resource_style=self._infer_resource_style(request.question),
+                learner_profile=learner_profile,
+                exercise_count=conversation["exercise_count"],
+                question_type_counts={},
+                generation_mode=self._infer_generation_mode(request.question),
+                courseware_content=courseware_content,
             )
-        except Exception:
-            return None
-
-    def _build_learning_response(
-        self,
-        *,
-        conversation: dict[str, Any],
-        flags: dict[str, Any],
-        generated_resource: dict[str, Any] | None,
-        generated_exercises: dict[str, Any] | None,
-    ) -> str:
-        article: KnowledgeArticle | None = conversation.get("article")
-        knowledge_point = str(conversation["knowledge_point"] or "当前知识点").strip()
-        lines: list[str] = []
-
-        if conversation["follow_up"]:
-            lines.append(f"我们接着上文继续，当前还是围绕“{knowledge_point}”。")
-        else:
-            lines.append(f"这次我们先围绕“{knowledge_point}”来处理你的需求。")
-
-        if flags["wants_explanation"] and article is not None:
-            lines.append("")
-            lines.append("知识点补充：")
-            lines.extend(f"1. {item}" for item in self._select_focus_points(conversation, article))
-
-            if article.examples:
-                lines.append("")
-                lines.append("理解抓手：")
-                lines.append(article.examples[0])
-
-            if article.mistakes:
-                lines.append("")
-                lines.append("容易出错的地方：")
-                lines.extend(f"- {item}" for item in article.mistakes[:2])
-        elif flags["wants_explanation"]:
-            lines.append("")
-            lines.append("我先根据当前上下文继续讲解；如果你愿意，也可以再补一句更具体的知识点名称，我能讲得更聚焦。")
-
-        if generated_resource is not None:
-            lines.append("")
-            title = str(
-                generated_resource.get("generation_plan", {}).get("title_suggestion")
-                or generated_resource.get("knowledge_point")
-                or "课件"
-            )
-            lines.append(f"已根据当前上下文生成课件：{title}。你可以直接看下方课件卡片。")
-
-        if generated_exercises is not None:
-            lines.append("")
-            summary = str(generated_exercises.get("summary") or "").strip()
-            count = len(generated_exercises.get("exercises") or [])
-            lines.append(f"已生成 {count} 道配套习题。{summary}".strip())
-
-        if flags["needs_resource_generation"] and generated_resource is None:
-            lines.append("")
-            lines.append("我识别到你这轮想生成课件，但这次没有成功返回课件结果。你可以直接重试一次，我会继续沿用当前知识点。")
-
-        if flags["needs_exercise_generation"] and generated_exercises is None:
-            lines.append("")
-            lines.append("我识别到你这轮想生成配套习题，但这次没有成功返回习题结果。你可以直接重试一次，我会继续沿用当前知识点。")
-
-        if (
-            generated_resource is None
-            and generated_exercises is None
-            and not flags["needs_resource_generation"]
-            and not flags["needs_exercise_generation"]
-        ):
-            lines.append("")
-            lines.append("如果你愿意，我下一轮可以继续为这个知识点生成课件、配套习题，或者只展开某一部分。")
-
-        return "\n".join(lines).strip()
+        )
 
     def _build_general_response(
         self,
@@ -916,17 +845,9 @@ class QAService:
             history=history,
             follow_up=follow_up,
         )
-        if llm_response:
-            return llm_response, "qa_general_llm"
-
-        if context_snippets:
-            intro = "我先基于当前检索到的信息回答：" if not follow_up else "我接着上文补充回答："
-            return "\n".join([intro, question, "", *[f"- {item}" for item in context_snippets[:4]]]), "qa_general_grounded"
-        return (
-            f"我理解你的问题是：{question}\n\n"
-            "当前我还缺少足够可靠的上下文来给出更确定的回答。"
-            "如果你补充具体对象、时间、范围，或者说明这是哪门课里的内容，我可以继续细化。"
-        ), "qa_general_fallback"
+        if not llm_response:
+            raise ValueError("General QA generation returned an empty response.")
+        return llm_response, "qa_general_llm"
 
     def _build_current_time_response(self, question: str) -> str | None:
         if not any(token in question for token in self.CURRENT_TIME_HINTS):
@@ -988,7 +909,113 @@ class QAService:
             cleaned = str(response).strip()
             return cleaned or None
         except Exception:
-            return None
+            raise
+
+    def _generate_study_suggestions_with_llm(
+        self,
+        *,
+        request: QARequest,
+        conversation: dict[str, Any],
+        flags: dict[str, Any],
+        context_snippets: list[str],
+        student_response: str,
+        generated_resource: dict[str, Any] | None,
+        generated_exercises: dict[str, Any] | None,
+        history: list[dict[str, Any]],
+    ) -> list[str]:
+        try:
+            from langchain_core.output_parsers import StrOutputParser
+            from langchain_core.prompts import ChatPromptTemplate
+
+            llm = self.llm_factory.build_chat_model(temperature=0.25)
+            knowledge_point = str(conversation.get("knowledge_point") or conversation.get("subject") or "当前主题")
+            article: KnowledgeArticle | None = conversation.get("article")
+            article_notes: list[str] = []
+            if article is not None:
+                article_notes.append(f"知识点摘要：{article.summary}")
+                article_notes.extend(f"核心概念：{item}" for item in article.concepts[:3])
+                article_notes.extend(f"易错点：{item}" for item in article.mistakes[:2])
+                article_notes.extend(f"检查问题：{item}" for item in article.checks[:2])
+
+            generated_notes: list[str] = []
+            if generated_resource is not None:
+                title = str(
+                    generated_resource.get("generation_plan", {}).get("title_suggestion")
+                    or generated_resource.get("knowledge_point")
+                    or "课件"
+                )
+                generated_notes.append(f"本轮已生成课件：{title}")
+            if generated_exercises is not None:
+                generated_notes.append(f"本轮已生成习题：{len(generated_exercises.get('exercises') or [])} 道")
+
+            system_prompt = (
+                "你是学习系统里的实时学习反馈生成器。\n"
+                "请根据本轮对话和已生成内容，生成 1 到 4 条面向学生的学习建议。\n"
+                "要求：\n"
+                "1. 建议必须具体对应本轮问题、知识点、回答内容或已生成课件/习题。\n"
+                "2. 不要使用固定兜底话术，也不要把“请学生补充主题”当作默认建议。\n"
+                "3. 每条建议不超过 45 个汉字，语气自然、可执行。\n"
+                "4. 只输出 JSON 字符串数组，例如 [\"建议一\", \"建议二\"]。"
+            )
+            messages: list[tuple[str, str]] = [("system", system_prompt)]
+            for msg in history[-4:]:
+                role = str(msg.get("role") or "")
+                content = str(msg.get("content") or "").strip()
+                if role in {"user", "assistant"} and content:
+                    messages.append((role, content))
+
+            user_prompt = (
+                f"学生问题：{conversation['question']}\n"
+                f"当前知识点：{knowledge_point}\n"
+                f"学科：{request.subject or conversation.get('subject') or ''}\n"
+                f"年级：{request.grade}\n"
+                f"是否追问：{'是' if conversation['follow_up'] else '否'}\n"
+                f"是否需要讲解：{'是' if flags['wants_explanation'] else '否'}\n"
+                f"是否需要课件：{'是' if flags['needs_resource_generation'] else '否'}\n"
+                f"是否需要习题：{'是' if flags['needs_exercise_generation'] else '否'}\n"
+                f"本轮回答：{student_response[:1200]}\n"
+                "知识库参考：\n"
+                + ("\n".join(f"- {item}" for item in article_notes) if article_notes else "- 无")
+                + "\n上下文片段：\n"
+                + ("\n".join(f"- {item}" for item in context_snippets[:4]) if context_snippets else "- 无")
+                + "\n生成结果：\n"
+                + ("\n".join(f"- {item}" for item in generated_notes) if generated_notes else "- 无")
+            )
+            if messages:
+                history_text = "\n".join(f"{role}: {content}" for role, content in messages[1:])
+                user_prompt = f"最近对话：\n{history_text}\n\n{user_prompt}"
+
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    ("system", system_prompt),
+                    ("user", "{feedback_context}"),
+                ]
+            )
+            chain = prompt | llm | StrOutputParser()
+            response = chain.invoke({"feedback_context": user_prompt})
+            suggestions = self._parse_llm_suggestions(str(response))
+            if not suggestions:
+                raise ValueError("Learning analysis LLM returned no study suggestions.")
+            return suggestions
+        except Exception:
+            raise
+
+    def _parse_llm_suggestions(self, response: str) -> list[str]:
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+        parsed = json.loads(cleaned)
+        if not isinstance(parsed, list):
+            raise ValueError("Learning analysis LLM response must be a JSON array.")
+
+        suggestions: list[str] = []
+        for item in parsed:
+            text = re.sub(r"\s+", " ", str(item)).strip()
+            if text and text not in suggestions:
+                suggestions.append(text[:80])
+        return suggestions[:4]
 
     def _generate_learning_response_with_llm(
         self,
@@ -1056,19 +1083,7 @@ class QAService:
             cleaned = str(response).strip()
             return cleaned or None
         except Exception:
-            return None
-
-    def _select_focus_points(self, conversation: dict[str, Any], article: KnowledgeArticle) -> list[str]:
-        question = str(conversation["question"])
-        if "应用" in question or "例题" in question:
-            items = [*article.applications[:2], *article.concepts[:2]]
-        elif "易错" in question or "错误" in question:
-            items = [*article.mistakes[:3], *article.concepts[:1]]
-        elif "知识点" in question or "概念" in question or "补充" in question:
-            items = [*article.concepts[:4]]
-        else:
-            items = [*article.concepts[:3], *article.checks[:1]]
-        return [item for item in items if str(item).strip()][:4]
+            raise
 
     def _build_structured_analysis(
         self,
@@ -1078,6 +1093,7 @@ class QAService:
         flags: dict[str, Any],
         generated_resource: dict[str, Any] | None,
         generated_exercises: dict[str, Any] | None,
+        study_suggestions: list[str],
     ) -> dict[str, Any]:
         knowledge_point = str(conversation["knowledge_point"] or request.subject or "当前主题").strip()
         article: KnowledgeArticle | None = conversation.get("article")
@@ -1153,7 +1169,7 @@ class QAService:
                 }
             ],
             "resource_recommendations": recommendations,
-            "study_suggestions": self._build_study_suggestions(article, generated_resource, generated_exercises),
+            "study_suggestions": study_suggestions,
             "mistake_book_update": {
                 "should_add": bool(request.student_answer.strip() or request.wrong_answer.strip()),
                 "question_summary": request.question[:120],
@@ -1189,25 +1205,6 @@ class QAService:
         if flags["needs_exercise_generation"]:
             actions.append("配套生成习题")
         return "，再".join(actions) if actions else "继续围绕当前问题追问"
-
-    def _build_study_suggestions(
-        self,
-        article: KnowledgeArticle | None,
-        generated_resource: dict[str, Any] | None,
-        generated_exercises: dict[str, Any] | None,
-    ) -> list[str]:
-        suggestions: list[str] = []
-        if article is not None:
-            suggestions.append("先把核心概念和易错点对照看一遍，再继续做题。")
-            if article.checks:
-                suggestions.append(f"试着用自己的话回答：{article.checks[0]}")
-        if generated_resource is not None:
-            suggestions.append("先看课件里的概念和例子，再去做后面的习题。")
-        if generated_exercises is not None:
-            suggestions.append("做完习题后，把错题按概念错误、步骤错误、审题错误分类。")
-        if not suggestions:
-            suggestions.append("补充更具体的知识点名称后，我可以把建议细化到更可执行。")
-        return suggestions[:4]
 
     def _infer_resource_style(self, question: str) -> str:
         if any(token in question for token in ("提纲", "简洁", "速记", "总结")):
@@ -1254,36 +1251,4 @@ class QAService:
         request: QARequest,
         history: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        try:
-            return QAResponse(**candidate).model_dump()
-        except Exception:
-            fallback = {
-                "student_id": request.student_id,
-                "subject": request.subject,
-                "grade": request.grade,
-                "session_id": request.session_id,
-                "session_title": request.session_title,
-                "student_response": f"我已经收到你的问题：{request.question}",
-                "structured_analysis": {
-                    "identified_knowledge_gaps": request.current_knowledge_points[:1],
-                    "misconceptions": [],
-                    "difficulty_level": "foundation",
-                    "learning_state": "已返回保底答复",
-                    "recommended_next_knowledge_points": [],
-                    "learning_route_updates": [],
-                    "resource_recommendations": [],
-                    "study_suggestions": ["可以继续补充更具体的知识点或要求，我会接着当前对话继续。"],
-                    "mistake_book_update": {
-                        "should_add": False,
-                        "question_summary": request.question[:120],
-                        "wrong_reason": "",
-                        "correct_approach": "",
-                    },
-                },
-                "message_history": history,
-                "context_snippets": [],
-                "confidence": 0.3,
-                "generated_exercises": None,
-                "generated_resource": None,
-            }
-            return QAResponse(**fallback).model_dump()
+        return QAResponse(**candidate).model_dump()

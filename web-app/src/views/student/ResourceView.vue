@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   agentApi,
   resourceApi,
@@ -37,18 +37,18 @@ const currentArticleDownloaded = computed(() => {
 })
 const isLoading = computed(() => knowledgeLoading.value || resourceLoading.value)
 
-const typeLabel: Record<string, string> = { courseware: '课件', exercise: '练习', notes: '笔记', exam: '试卷' }
-const statusLabel: Record<string, string> = { draft: '草稿', ready: '就绪', archived: '归档' }
+const typeLabel: Record<string, string> = { courseware: 'è¯¾ä»¶', exercise: 'ç»ä¹ ', notes: 'ç¬è®°', exam: 'è¯å·' }
+const statusLabel: Record<string, string> = { draft: 'èç¨¿', ready: 'å°±ç»ª', archived: 'å½æ¡£' }
 const statusNext: Record<string, 'draft' | 'ready' | 'archived'> = { draft: 'ready', ready: 'archived', archived: 'draft' }
-const sourceLabel: Record<string, string> = { generated: '系统生成', external_import: '官方课件' }
+const sourceLabel: Record<string, string> = { generated: 'ç³»ç»çæ', external_import: 'å®æ¹è¯¾ä»¶' }
 const kindLabel: Record<string, string> = {
-  mooc_course: 'MOOC 课程',
-  textbook: 'MOOC 课程',
-  lecture_notes: 'MOOC 课程',
-  course: 'MOOC 课程',
-  video: 'MOOC 课程',
-  interactive: 'MOOC 课程',
-  practice: 'MOOC 课程',
+  mooc_course: 'MOOC è¯¾ç¨',
+  textbook: 'ææèµæ',
+  lecture_notes: 'è®²ä¹ç¬è®°',
+  course: 'è¯¾ç¨èµæº',
+  video: 'è§é¢è¯¾ç¨',
+  interactive: 'äºå¨èµæº',
+  practice: 'ä¹ é¢ç»ä¹ ',
 }
 
 onMounted(() => {
@@ -70,10 +70,10 @@ async function fetchKnowledgeBase(subject = '') {
     articles.value = data.items
     selectedArticle.value = data.items[0] ?? null
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
     articles.value = []
     selectedArticle.value = null
-    error.value = `加载大学知识库失败：${detail}`
+    error.value = `å è½½å¤§å­¦ç¥è¯åºå¤±è´¥ï¼${detail}`
   } finally {
     knowledgeLoading.value = false
   }
@@ -85,9 +85,9 @@ async function fetchResources() {
     const { data } = await resourceApi.get<ApiEnvelope<ManagedResourceItem[]>>('/resources')
     resources.value = data.data ?? []
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
     resources.value = []
-    error.value = error.value || `加载已下载课件失败：${detail}`
+    error.value = error.value || `å è½½å·²ä¿å­èµæºå¤±è´¥ï¼${detail}`
   } finally {
     resourceLoading.value = false
   }
@@ -110,8 +110,8 @@ async function searchKnowledgeBase() {
       : data.items
     selectedArticle.value = articles.value[0] ?? null
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
-    error.value = `搜索大学知识库失败：${detail}`
+    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
+    error.value = `æç´¢å¤§å­¦ç¥è¯åºå¤±è´¥ï¼${detail}`
   } finally {
     knowledgeLoading.value = false
   }
@@ -170,10 +170,10 @@ async function importResource(resource: KnowledgeBaseArticle['external_resources
     if (imported?.download_url) {
       window.open(`${serviceEndpoints.resource}${imported.download_url}`, '_blank', 'noreferrer')
     }
-    ElMessage.success('课件已下载并保存到资源库')
+    ElMessage.success('è¯¾ä»¶å·²ä¸è½½å¹¶ä¿å­å°èµæºåº')
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
-    ElMessage.error(`下载课件失败：${detail}`)
+    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
+    ElMessage.error(`ä¸è½½è¯¾ä»¶å¤±è´¥ï¼${detail}`)
   } finally {
     importingUrl.value = ''
   }
@@ -182,9 +182,9 @@ async function importResource(resource: KnowledgeBaseArticle['external_resources
 async function exportResource(item: ManagedResourceItem, format: 'pdf' | 'word') {
   try {
     await resourceApi.post(`/resources/${item.id}/export`, { export_format: format })
-    ElMessage.success(`已发起 ${format.toUpperCase()} 导出`)
+    ElMessage.success(`å·²åèµ· ${format.toUpperCase()} å¯¼åº`)
   } catch {
-    ElMessage.error('导出失败')
+    ElMessage.error('å¯¼åºå¤±è´¥')
   }
 }
 
@@ -192,9 +192,73 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
   try {
     await resourceApi.patch(`/resources/${item.id}/status`, { status })
     item.status = status
-    ElMessage.success('状态已更新')
+    ElMessage.success('ç¶æå·²æ´æ°')
   } catch {
-    ElMessage.error('状态更新失败')
+    ElMessage.error('ç¶ææ´æ°å¤±è´¥')
+  }
+}
+
+async function deleteSelectedResource() {
+  const item = selectedResource.value
+  if (!item) {
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `å é¤åï¼â${item.title}âå°ä»èµæºåºç§»é¤${item.is_downloadable ? 'ï¼æ¬å°ä¸è½½æä»¶ä¹ä¼ä¸å¹¶å é¤' : ''}ã`,
+      'å é¤èµæº',
+      {
+        confirmButtonText: 'ç¡®è®¤å é¤',
+        cancelButtonText: 'åæ¶',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  try {
+    await resourceApi.delete(`/resources/${item.id}`)
+    selectedResource.value = null
+    showDetail.value = false
+    await fetchResources()
+    ElMessage.success('èµæºå·²å é¤')
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
+    ElMessage.error(`å é¤èµæºå¤±è´¥ï¼${detail}`)
+  }
+}
+
+async function deleteAllResources() {
+  if (!resources.value.length) {
+    ElMessage.warning('å½åæ²¡æå¯å é¤çèµæº')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `ç¡®è®¤ä¸é®å é¤å¨é¨ ${resources.value.length} é¡¹å·²ä¿å­èµæºåï¼å·²ä¸è½½çæ¬å°æä»¶ä¹ä¼ä¸å¹¶å é¤ã`,
+      'ä¸é®å é¤å¨é¨èµæº',
+      {
+        confirmButtonText: 'ç¡®è®¤å é¤',
+        cancelButtonText: 'åæ¶',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  try {
+    const { data } = await resourceApi.delete<ApiEnvelope<{ deleted_count: number }>>('/resources')
+    selectedResource.value = null
+    showDetail.value = false
+    await fetchResources()
+    ElMessage.success(`å·²å é¤ ${data.data?.deleted_count ?? 0} é¡¹èµæº`)
+  } catch (err: any) {
+    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
+    ElMessage.error(`ä¸é®å é¤å¤±è´¥ï¼${detail}`)
   }
 }
 </script>
@@ -204,29 +268,34 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
     <header class="resource-header">
       <div>
         <div class="panel-kicker">University Courseware</div>
-        <h2>大学知识库与课件下载</h2>
-        <p>大学知识库和学习资源已合并。选择知识点后，可直接下载关联课件；已下载文件会保存在下方资源库中。</p>
+        <h2>å¤§å­¦ç¥è¯åºä¸è¯¾ä»¶ä¸è½½</h2>
+        <p>å¤§å­¦ç¥è¯åºåå­¦ä¹ èµæºå·²åå¹¶ãéæ©ç¥è¯ç¹åï¼å¯ç´æ¥ä¸è½½å³èè¯¾ä»¶ï¼å·²ä¸è½½æä»¶ä¼ä¿å­å¨ä¸æ¹èµæºåºä¸­ã</p>
       </div>
-      <button :disabled="isLoading" class="secondary-button" @click="refreshPage">
-        {{ isLoading ? '刷新中...' : '刷新资源' }}
-      </button>
+      <div class="header-actions">
+        <button :disabled="isLoading" class="secondary-button" @click="refreshPage">
+          {{ isLoading ? 'å·æ°ä¸­...' : 'å·æ°èµæº' }}
+        </button>
+        <button :disabled="resourceLoading || !resources.length" class="danger-button" @click="deleteAllResources">
+          ä¸é®å é¤
+        </button>
+      </div>
     </header>
 
     <section class="resource-summary">
       <article>
-        <span>知识库专题</span>
+        <span>ç¥è¯åºä¸é¢</span>
         <strong>{{ articles.length }}</strong>
       </article>
       <article>
-        <span>可下载官方课件</span>
+        <span>å¯ä¸è½½å®æ¹è¯¾ä»¶</span>
         <strong>{{ selectedArticle?.external_resources.length ?? 0 }}</strong>
       </article>
       <article>
-        <span>已保存课件</span>
+        <span>å·²ä¿å­è¯¾ä»¶</span>
         <strong>{{ importedResources.length }}</strong>
       </article>
       <article>
-        <span>系统生成资源</span>
+        <span>ç³»ç»çæèµæº</span>
         <strong>{{ generatedResources.length }}</strong>
       </article>
     </section>
@@ -237,10 +306,10 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
       <div class="resource-search">
         <input
           v-model="searchText"
-          placeholder="搜索课程、概念或关键词，例如：事务、递归、TCP、矩阵"
+          placeholder="æç´¢è¯¾ç¨ãæ¦å¿µæå³é®è¯ï¼ä¾å¦ï¼äºå¡ãéå½ãTCPãç©éµ"
           @keyup.enter="searchKnowledgeBase"
         />
-        <button :disabled="knowledgeLoading" @click="searchKnowledgeBase">搜索</button>
+        <button :disabled="knowledgeLoading" @click="searchKnowledgeBase">æç´¢</button>
       </div>
       <div class="subject-row">
         <button
@@ -271,7 +340,7 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
           <p>{{ article.summary }}</p>
         </article>
         <div v-if="!knowledgeLoading && !articles.length" class="empty-state">
-          暂无匹配的大学知识库内容。
+          ææ å¹éçå¤§å­¦ç¥è¯åºåå®¹ã
         </div>
       </aside>
 
@@ -290,8 +359,8 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
 
           <section class="download-section">
             <div class="section-title">
-              <h3>下载课件</h3>
-              <p>这里显示当前知识点关联的官方课件、讲义、教材和下载包。</p>
+              <h3>ä¸è½½è¯¾ä»¶</h3>
+              <p>è¿éæ¾ç¤ºå½åç¥è¯ç¹å³èçå®æ¹è¯¾ä»¶ãè®²ä¹ãææåä¸è½½åã</p>
             </div>
 
             <div v-if="selectedArticle.external_resources.length" class="download-grid">
@@ -307,26 +376,26 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
                 <h4>{{ resource.title }}</h4>
                 <p>{{ resource.notes }}</p>
                 <div class="download-actions">
-                  <a :href="resource.url" target="_blank" rel="noreferrer">打开原站</a>
+                  <a :href="resource.url" target="_blank" rel="noreferrer">æå¼åç«</a>
                   <button :disabled="importingUrl === resource.url" @click="importResource(resource)">
                     {{
                       importingUrl === resource.url
-                        ? '下载中...'
+                        ? 'ä¸è½½ä¸­...'
                         : findDownloadedResource(resource)
-                          ? '下载已保存文件'
-                          : '下载课件'
+                          ? 'æå¼å·²ä¿å­æä»¶'
+                          : 'ä¸è½½è¯¾ä»¶'
                     }}
                   </button>
                 </div>
               </article>
             </div>
-            <div v-else class="empty-state">当前知识点暂无可下载课件。</div>
+            <div v-else class="empty-state">å½åç¥è¯ç¹ææ å¯ä¸è½½è¯¾ä»¶ã</div>
           </section>
 
           <section class="downloaded-section">
             <div class="section-title">
-              <h3>当前知识点已下载</h3>
-              <p>已下载课件会落盘保存，可重复打开或下载。</p>
+              <h3>å½åç¥è¯ç¹å·²ä¸è½½</h3>
+              <p>å·²ä¸è½½è¯¾ä»¶ä¼è½çä¿å­ï¼å¯éå¤æå¼æä¸è½½ã</p>
             </div>
             <div v-if="currentArticleDownloaded.length" class="saved-grid">
               <button
@@ -336,20 +405,20 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
                 @click="openDetail(item)"
               >
                 <strong>{{ item.title }}</strong>
-                <span>{{ item.provider }} · {{ item.format }}</span>
+                <span>{{ item.provider }} / {{ item.format }}</span>
               </button>
             </div>
-            <div v-else class="empty-state compact">还没有下载当前知识点的课件。</div>
+            <div v-else class="empty-state compact">è¿æ²¡æä¸è½½å½åç¥è¯ç¹çè¯¾ä»¶ã</div>
           </section>
         </template>
-        <div v-else class="empty-state panel-empty">请选择一个知识库专题。</div>
+        <div v-else class="empty-state panel-empty">è¯·éæ©ä¸ä¸ªç¥è¯åºä¸é¢ã</div>
       </main>
     </section>
 
     <section class="library-section">
       <div class="section-title">
-        <h3>全部已保存资源</h3>
-        <p>包含从大学知识库下载的官方课件，以及系统生成的个性化学习资源。</p>
+        <h3>å¨é¨å·²ä¿å­èµæº</h3>
+        <p>åå«ä»å¤§å­¦ç¥è¯åºä¸è½½çå®æ¹è¯¾ä»¶ï¼ä»¥åç³»ç»çæçä¸ªæ§åå­¦ä¹ èµæºã</p>
       </div>
 
       <div v-if="resources.length" class="library-grid">
@@ -362,12 +431,12 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
             <span class="status-badge">{{ statusLabel[item.status] ?? item.status }}</span>
           </div>
           <h4>{{ item.title }}</h4>
-          <p>知识点：{{ item.knowledge_point }}</p>
-          <p>格式：{{ item.format }}<template v-if="item.provider"> · {{ item.provider }}</template></p>
+          <p>ç¥è¯ç¹ï¼{{ item.knowledge_point }}</p>
+          <p>æ ¼å¼ï¼{{ item.format }}<template v-if="item.provider"> / {{ item.provider }}</template></p>
         </article>
       </div>
       <div v-else-if="!resourceLoading" class="empty-state">
-        暂无已保存资源。先在上方选择知识点并下载课件。
+        ææ å·²ä¿å­èµæºãåå¨ä¸æ¹éæ©ç¥è¯ç¹å¹¶ä¸è½½è¯¾ä»¶ã
       </div>
     </section>
 
@@ -383,14 +452,14 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
 
         <h3>{{ selectedResource.title }}</h3>
         <div class="modal-info">
-          <div>知识点：{{ selectedResource.knowledge_point }}</div>
-          <div>状态：{{ statusLabel[selectedResource.status] ?? selectedResource.status }}</div>
-          <div>格式：{{ selectedResource.format }}</div>
-          <div v-if="selectedResource.provider">提供方：{{ selectedResource.provider }}</div>
-          <div v-if="selectedResource.source_kind">资源类型：{{ kindLabel[selectedResource.source_kind] ?? selectedResource.source_kind }}</div>
-          <div v-if="selectedResource.file_name">文件名：{{ selectedResource.file_name }}</div>
+          <div>ç¥è¯ç¹ï¼{{ selectedResource.knowledge_point }}</div>
+          <div>ç¶æï¼{{ statusLabel[selectedResource.status] ?? selectedResource.status }}</div>
+          <div>æ ¼å¼ï¼{{ selectedResource.format }}</div>
+          <div v-if="selectedResource.provider">æä¾æ¹ï¼{{ selectedResource.provider }}</div>
+          <div v-if="selectedResource.source_kind">èµæºç±»åï¼{{ kindLabel[selectedResource.source_kind] ?? selectedResource.source_kind }}</div>
+          <div v-if="selectedResource.file_name">æä»¶åï¼{{ selectedResource.file_name }}</div>
           <a v-if="selectedResource.external_url" :href="selectedResource.external_url" target="_blank" rel="noreferrer">
-            查看原始来源
+            æ¥çåå§æ¥æº
           </a>
           <div v-if="selectedResource.notes">{{ selectedResource.notes }}</div>
         </div>
@@ -403,16 +472,19 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
             rel="noreferrer"
             class="primary-link"
           >
-            下载课件文件
+            ä¸è½½è¯¾ä»¶æä»¶
           </a>
           <button v-if="selectedResource.source_type === 'generated'" @click="exportResource(selectedResource, 'pdf')">
-            导出 PDF
+            å¯¼åº PDF
           </button>
           <button v-if="selectedResource.source_type === 'generated'" @click="exportResource(selectedResource, 'word')">
-            导出 Word
+            å¯¼åº Word
           </button>
           <button @click="updateStatus(selectedResource, statusNext[selectedResource.status])">
-            切换为 {{ statusLabel[statusNext[selectedResource.status]] }}
+            åæ¢ä¸º {{ statusLabel[statusNext[selectedResource.status]] }}
+          </button>
+          <button class="danger-button" @click="deleteSelectedResource">
+            å é¤èµæº
           </button>
         </div>
       </div>
@@ -441,6 +513,12 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
   align-items: flex-start;
   gap: 18px;
   padding: 24px;
+}
+
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .resource-header h2 {
@@ -480,6 +558,12 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
   border: none;
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   color: #fff;
+}
+
+.danger-button {
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red);
 }
 
 .resource-summary {
@@ -757,6 +841,7 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
   }
 
   .resource-header,
+  .header-actions,
   .resource-search,
   .saved-item {
     flex-direction: column;

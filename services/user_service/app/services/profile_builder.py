@@ -827,23 +827,6 @@ class ProfileBuilderService:
             return 1
         return 0
 
-    def _build_fallback_reply(self, existing_dimensions: dict[str, str], updates: dict[str, str]) -> str:
-        merged = {**existing_dimensions, **updates}
-        missing = [key for key in PROFILE_DIMENSION_KEYS if not merged.get(key)]
-        if updates:
-            captured = "；".join(
-                f"{PROFILE_DIMENSION_LABELS.get(key, key)}：{value}"
-                for key, value in updates.items()
-            )
-            if not missing:
-                return f"我已分析并记录：{captured}。当前画像已经比较完整，可以开始进入学习路径和资源生成了。"
-            next_key = missing[0]
-            return f"我已分析并记录：{captured}。接下来想继续了解一下，{PROFILE_QUESTION_BANK[next_key]}"
-
-        if not missing:
-            return "你的学习画像已经比较完整了，如果愿意，我们可以直接开始生成学习路径、课件或练习。"
-        return f"我还想再多了解你一些，{PROFILE_QUESTION_BANK[missing[0]]}"
-
     def _build_agent_feedback_reply(
         self,
         *,
@@ -862,10 +845,8 @@ class ProfileBuilderService:
             reply = model_reply.strip()
             if captured and captured not in reply:
                 reply = f"我已记录这些信息：{captured}。{reply}"
-        elif updates:
-            reply = self._build_fallback_reply(existing_dimensions, updates)
         else:
-            reply = self._build_fallback_reply(existing_dimensions, updates)
+            raise ValueError("Profile agent returned an empty reply.")
 
         if not missing:
             if "完成，进入学习" not in reply and "完成" not in reply:

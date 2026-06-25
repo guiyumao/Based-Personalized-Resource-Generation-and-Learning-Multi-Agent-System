@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, TypedDict
 
 from sqlalchemy.orm import Session
@@ -27,6 +28,8 @@ from services.agent_service.app.services.resource_generation import (
     ResourceGenerationService,
 )
 from services.evaluation_service.app.services.report_service import ReportService
+
+logger = logging.getLogger(__name__)
 
 
 class CoordinatorState(TypedDict, total=False):
@@ -264,6 +267,11 @@ class CoordinatorWorkflow:
                     learner_profile=learner_profile,
                     context=context,
                 )
+                if knowledge_point and resource_result:
+                    try:
+                        KnowledgeGraphRepository().sync_courseware_to_graph(knowledge_point)
+                    except Exception as exc:
+                        logger.warning("Graph sync after resource generation failed: %s", exc)
                 plan_parts.append("课件资源")
 
             if "exercise_generation_agent" in selected or context.get("include_exercises"):
@@ -290,6 +298,9 @@ class CoordinatorWorkflow:
                 outputs["evaluation_feedback_agent"] = self._run_evaluation_agent(
                     payload=payload,
                     context=context,
+                    learner_profile=learner_profile,
+                    all_outputs=outputs,
+                    knowledge_point=knowledge_point,
                 )
                 plan_parts.append("evaluation")
 
@@ -318,6 +329,13 @@ class CoordinatorWorkflow:
     def _run_graph_agent(self, knowledge_point: str, context: dict[str, Any]) -> dict[str, Any]:
         repository = KnowledgeGraphRepository()
         try:
+            # 1. Sync any existing courseware content into graph relations
+            try:
+                repository.sync_courseware_to_graph(knowledge_point)
+            except Exception as exc:
+                logger.warning("sync_courseware_to_graph failed: %s", exc)
+
+            # 2. Query the graph
             max_depth = int(context.get("max_depth") or 3)
             return {
                 "status": "completed",
@@ -461,31 +479,66 @@ class CoordinatorWorkflow:
         *,
         payload: CoordinationRequest,
         context: dict[str, Any],
+        learner_profile: dict[str, Any],
+        all_outputs: dict[str, Any],
+        knowledge_point: str,
     ) -> dict[str, Any]:
+        """Run evaluation data collection + LLM cross-agent feedback synthesis.
+
+        Phase 1: Gather raw evaluation data from ReportService (data-only).
+        Phase 2: Invoke FeedbackSynthesisService to produce a unified,
+        LLM-generated feedback that cross-references all upstream agent outputs.
+        On LLM failure, gracefully degrade to data-driven feedback.
+        """
+        from services.agent_service.app.services.feedback_synthesis import (
+            FeedbackSynthesisService,
+        )
+
         service = ReportService()
+        synthesis_service = FeedbackSynthesisService()
+
+        evaluation_data: dict[str, Any] = {
+            "suggestions": self._to_plain_data(
+                self._run_async(service.generate_learning_suggestions(payload.user_id))
+            ),
+            "profile_snapshot": self._to_plain_data(
+                self._run_async(service.generate_profile_snapshot(payload.user_id))
+            ),
+            "mistake_statistics": self._to_plain_data(
+                self._run_async(service.get_mistake_statistics(payload.user_id))
+            ),
+        }
+        if context.get("include_stage_report"):
+            evaluation_data["stage_report"] = self._to_plain_data(
+                self._run_async(service.generate_stage_report_detail(payload.user_id))
+            )
+        if context.get("include_comprehensive_report"):
+            evaluation_data["comprehensive_report"] = self._to_plain_data(
+                self._run_async(service.generate_comprehensive_report_detail(payload.user_id))
+            )
+
         try:
-            evaluation: dict[str, Any] = {
-                "suggestions": self._to_plain_data(
-                    self._run_async(service.generate_learning_suggestions(payload.user_id))
-                ),
-                "profile_snapshot": self._to_plain_data(
-                    self._run_async(service.generate_profile_snapshot(payload.user_id))
-                ),
-                "mistake_statistics": self._to_plain_data(
-                    self._run_async(service.get_mistake_statistics(payload.user_id))
-                ),
-            }
-            if context.get("include_stage_report"):
-                evaluation["stage_report"] = self._to_plain_data(
-                    self._run_async(service.generate_stage_report_detail(payload.user_id))
-                )
-            if context.get("include_comprehensive_report"):
-                evaluation["comprehensive_report"] = self._to_plain_data(
-                    self._run_async(service.generate_comprehensive_report_detail(payload.user_id))
-                )
-            return {"status": "completed", "evaluation": evaluation}
+            synthesis = synthesis_service.synthesize_from_agents(
+                knowledge_point=knowledge_point,
+                learner_profile=learner_profile,
+                all_agent_outputs=all_outputs,
+                evaluation_data=evaluation_data,
+            )
         except Exception as exc:
-            return {"status": "failed", "error": str(exc)}
+            logger.exception("Feedback synthesis failed, falling back to data-driven feedback")
+            synthesis = synthesis_service.build_fallback(
+                knowledge_point=knowledge_point,
+                evaluation_data=evaluation_data,
+                error_message=str(exc),
+            )
+
+        return {
+            "status": "completed",
+            "evaluation": {
+                **evaluation_data,
+                "synthesis": synthesis,
+            },
+        }
 
     def _run_async(self, coroutine: Any) -> Any:
         """Run an async evaluation-service method from the sync coordinator path."""

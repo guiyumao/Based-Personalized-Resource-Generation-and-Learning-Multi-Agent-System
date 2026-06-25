@@ -1,8 +1,30 @@
 """Unit tests for tutoring QA enhancements."""
 
+import pytest
+
 from common.schemas.agent import QARequest
 from services.agent_service.app.services import qa_service as qa_service_module
 from services.agent_service.app.services.qa_service import QAService
+
+
+@pytest.fixture(autouse=True)
+def stub_realtime_qa_llm(monkeypatch):
+    """Keep unit tests deterministic while production still calls the configured LLM."""
+
+    def fake_learning_response(self, *, conversation, generated_resource, generated_exercises, **kwargs):
+        knowledge_point = str(conversation.get("knowledge_point") or conversation.get("subject") or "当前知识点")
+        parts = [f"已围绕{knowledge_point}生成实时学习回答。"]
+        if generated_resource is not None:
+            parts.append("已生成课件。")
+        if generated_exercises is not None:
+            parts.append("已生成习题。")
+        return "\n".join(parts)
+
+    def fake_study_suggestions(self, **kwargs):
+        return ["模型生成：先复盘本轮关键概念。", "模型生成：再用练习检验理解。"]
+
+    monkeypatch.setattr(QAService, "_generate_learning_response_with_llm", fake_learning_response)
+    monkeypatch.setattr(QAService, "_generate_study_suggestions_with_llm", fake_study_suggestions)
 
 
 def test_qa_fallback_includes_context_snippets_and_confidence() -> None:
@@ -22,6 +44,8 @@ def test_qa_fallback_includes_context_snippets_and_confidence() -> None:
     assert response["confidence"] is not None
     assert 0 <= response["confidence"] <= 1
     assert "structured_analysis" in response
+    assert response["structured_analysis"]["study_suggestions"][0].startswith("模型生成")
+    assert "补充更具体的知识点名称后" not in "\n".join(response["structured_analysis"]["study_suggestions"])
 
 
 def test_qa_generates_resource_and_exercises_when_requested(monkeypatch) -> None:
@@ -141,6 +165,7 @@ def test_qa_recognizes_generate_practice_wording(monkeypatch) -> None:
     assert response["generated_exercises"] is not None
     assert "已生成" in response["student_response"]
     assert "已生成习题" in response["structured_analysis"]["learning_state"]
+    assert response["structured_analysis"]["study_suggestions"][0].startswith("模型生成")
     assert "知识点补充" not in response["student_response"]
 
 

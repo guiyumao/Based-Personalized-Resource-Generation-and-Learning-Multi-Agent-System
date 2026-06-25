@@ -120,6 +120,56 @@ class ResourceManager:
         self._status_overrides[resource_id] = status
         return self.get_resource(resource_id)
 
+    def delete_resource(self, resource_id: int) -> bool:
+        """Delete one managed resource and its downloaded file when present."""
+
+        resource = self.db.query(Resource).filter(Resource.id == resource_id).first()
+        if resource is None:
+            return False
+
+        metadata = self._parse_external_metadata(resource)
+        if metadata is not None:
+            relative_path = str(metadata.get("local_path") or "").strip()
+            if relative_path:
+                absolute_path = (self._repo_root / relative_path).resolve()
+                try:
+                    if absolute_path.is_file():
+                        absolute_path.unlink()
+                except OSError:
+                    pass
+
+        self._status_overrides.pop(resource_id, None)
+        self.db.delete(resource)
+        self.db.commit()
+        return True
+
+    def delete_all_resources(self) -> int:
+        """Delete all managed resources and their downloaded files."""
+
+        rows = self.db.query(Resource).all()
+        if not rows:
+            return 0
+
+        deleted_count = 0
+        for resource in rows:
+            metadata = self._parse_external_metadata(resource)
+            if metadata is not None:
+                relative_path = str(metadata.get("local_path") or "").strip()
+                if relative_path:
+                    absolute_path = (self._repo_root / relative_path).resolve()
+                    try:
+                        if absolute_path.is_file():
+                            absolute_path.unlink()
+                    except OSError:
+                        pass
+
+            self._status_overrides.pop(resource.id, None)
+            self.db.delete(resource)
+            deleted_count += 1
+
+        self.db.commit()
+        return deleted_count
+
     def _to_item(self, resource: Resource, knowledge_point: KnowledgePoint | None) -> ResourceItem:
         metadata = self._parse_external_metadata(resource)
         point_name = knowledge_point.name if knowledge_point is not None else "未关联知识点"

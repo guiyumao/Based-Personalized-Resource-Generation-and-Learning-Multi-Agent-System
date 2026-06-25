@@ -345,3 +345,41 @@ class ChatResponse(BaseModel):
     model_used: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str
+
+
+class FeedbackImprovementArea(BaseModel):
+    """One specific improvement area identified by the Feedback Synthesis Agent."""
+
+    area: str
+    severity: Literal["high", "medium", "low"]
+    evidence_from: str
+    suggestion: str
+
+
+class RecommendedResource(BaseModel):
+    """A resource recommended by the Feedback Synthesis Agent."""
+
+    type: Literal["courseware", "exercise", "review", "graph"]
+    title: str
+    reason: str
+
+
+class NextStepPlan(BaseModel):
+    """Concrete next-step actions from synthesis."""
+
+    immediate_actions: list[str] = Field(default_factory=list)
+    this_week_focus: list[str] = Field(default_factory=list)
+    recommended_resources: list[RecommendedResource] = Field(default_factory=list)
+
+
+class FeedbackSynthesisOutput(BaseModel):
+    """Structured output from the Feedback Synthesis Agent."""
+
+    overall_assessment: str
+    core_strengths: list[str] = Field(default_factory=list)
+    improvement_areas: list[FeedbackImprovementArea] = Field(default_factory=list)
+    personalized_feedback: str
+    next_step_plan: NextStepPlan
+    agent_synthesis_summary: str
+    learning_insight: str
+    generated_at: str

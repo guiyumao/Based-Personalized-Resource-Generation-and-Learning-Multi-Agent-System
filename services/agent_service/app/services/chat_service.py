@@ -241,48 +241,36 @@ class ChatService:
         kb_result: dict[str, Any],
     ) -> tuple[str, str]:
         """Generate answer using small model based on knowledge base."""
-        try:
-            from langchain_core.output_parsers import StrOutputParser
-            from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.output_parsers import StrOutputParser
+        from langchain_core.prompts import ChatPromptTemplate
 
-            # Use Haiku or smaller model
-            llm = self.llm_factory.build_chat_model(temperature=0.2, model_name="haiku")
+        llm = self.llm_factory.build_chat_model(temperature=0.2, model_name="haiku")
+        kb_context = "\n\n".join(kb_result.get("snippets", []))
 
-            kb_context = "\n\n".join(kb_result.get("snippets", []))
+        system_prompt = (
+            "You are a learning assistant answering with knowledge-base grounding.\n"
+            "Requirements:\n"
+            "1. Answer directly and clearly.\n"
+            "2. Prefer the provided knowledge-base context.\n"
+            "3. If context is insufficient, say so explicitly.\n"
+            "4. Keep a supportive tone.\n"
+        )
 
-            system_prompt = (
-                "你是一个智能学习助手。基于提供的知识库内容回答学生问题。\n"
-                "要求：\n"
-                "1. 直接回答问题，语言简洁清晰\n"
-                "2. 优先使用知识库内容，不要编造信息\n"
-                "3. 如果知识库内容不足，明确说明并建议学生提供更多上下文\n"
-                "4. 保持友好和鼓励的语气\n"
-            )
+        messages = [("system", system_prompt)]
+        for msg in history[-6:]:
+            messages.append((msg["role"], msg["content"]))
 
-            messages = [("system", system_prompt)]
+        current_prompt = (
+            f"Knowledge base context:\n{kb_context}\n\n"
+            f"Student question: {question}\n\n"
+            "Answer based on the knowledge-base context."
+        )
+        messages.append(("user", current_prompt))
 
-            # Add conversation history
-            for msg in history[-6:]:  # Last 3 rounds
-                messages.append((msg["role"], msg["content"]))
-
-            # Add current question with KB context
-            current_prompt = f"知识库参考：\n{kb_context}\n\n学生问题：{question}\n\n请基于知识库内容回答问题。"
-            messages.append(("user", current_prompt))
-
-            prompt = ChatPromptTemplate.from_messages(messages)
-            chain = prompt | llm | StrOutputParser()
-
-            response = chain.invoke({})
-            return response.strip(), "small_model"
-
-        except Exception as e:
-            # Fallback to simple KB summary
-            if kb_result["found"]:
-                content = f"根据知识库内容，关于「{question}」：\n\n"
-                content += "\n\n".join(kb_result["snippets"])
-                content += "\n\n需要更详细的解释吗？"
-                return (content, "fallback")
-            return "抱歉，我在知识库中没有找到相关内容。请提供更多上下文，或者换个方式提问。", "fallback"
+        prompt = ChatPromptTemplate.from_messages(messages)
+        chain = prompt | llm | StrOutputParser()
+        response = chain.invoke({})
+        return response.strip(), "small_model"
 
     def _generate_with_large_model(
         self,
@@ -292,51 +280,38 @@ class ChatService:
         context: dict[str, Any],
     ) -> tuple[str, str]:
         """Generate comprehensive answer using large model."""
-        try:
-            from langchain_core.output_parsers import StrOutputParser
-            from langchain_core.prompts import ChatPromptTemplate
+        from langchain_core.output_parsers import StrOutputParser
+        from langchain_core.prompts import ChatPromptTemplate
 
-            # Use Sonnet or Opus
-            llm = self.llm_factory.build_chat_model(temperature=0.3)
+        llm = self.llm_factory.build_chat_model(temperature=0.3)
+        kb_context = "\n\n".join(kb_result.get("snippets", [])) if kb_result["found"] else "No knowledge-base context available."
 
-            kb_context = "\n\n".join(kb_result.get("snippets", [])) if kb_result["found"] else "无相关知识库内容"
+        system_prompt = (
+            "You are a learning assistant for deeper explanation and analysis.\n"
+            "Requirements:\n"
+            "1. Provide a comprehensive answer.\n"
+            "2. Use the knowledge-base context when available.\n"
+            "3. Use examples or analogies when helpful.\n"
+            "4. Point out common misconceptions.\n"
+            "5. Suggest next learning steps.\n"
+            "6. Keep a supportive tone.\n"
+        )
 
-            system_prompt = (
-                "你是一个智能学习助手，擅长深入讲解和分析。\n"
-                "要求：\n"
-                "1. 提供全面、深入的回答\n"
-                "2. 结合知识库内容（如有）和你的知识\n"
-                "3. 使用例子、类比帮助理解\n"
-                "4. 指出常见误区和易错点\n"
-                "5. 提供学习建议和下一步方向\n"
-                "6. 保持友好、鼓励的语气\n"
-            )
+        messages = [("system", system_prompt)]
+        for msg in history[-8:]:
+            messages.append((msg["role"], msg["content"]))
 
-            messages = [("system", system_prompt)]
+        current_prompt = (
+            f"Knowledge base context:\n{kb_context}\n\n"
+            f"Student question: {question}\n\n"
+            "Provide a detailed explanation and analysis."
+        )
+        messages.append(("user", current_prompt))
 
-            # Add conversation history
-            for msg in history[-8:]:  # Last 4 rounds
-                messages.append((msg["role"], msg["content"]))
-
-            # Add current question with context
-            current_prompt = f"知识库参考：\n{kb_context}\n\n学生问题：{question}\n\n请提供详细的讲解和分析。"
-            messages.append(("user", current_prompt))
-
-            prompt = ChatPromptTemplate.from_messages(messages)
-            chain = prompt | llm | StrOutputParser()
-
-            response = chain.invoke({})
-            return response.strip(), "large_model"
-
-        except Exception:
-            # Fallback
-            content = f"关于「{question}」，这是一个需要深入分析的问题。\n\n"
-            content += "请允许我从以下几个方面来解答：\n"
-            content += "1. 核心概念和原理\n"
-            content += "2. 实际应用和例子\n"
-            content += "3. 常见误区\n\n"
-            content += "由于系统原因，完整回答暂时无法生成。请稍后重试或分解问题提问。"
-            return (content, "fallback")
+        prompt = ChatPromptTemplate.from_messages(messages)
+        chain = prompt | llm | StrOutputParser()
+        response = chain.invoke({})
+        return response.strip(), "large_model"
 
     def _analyze_with_small_model(self, question: str, response: str) -> dict[str, Any]:
         """Use small model to analyze the large model's response."""

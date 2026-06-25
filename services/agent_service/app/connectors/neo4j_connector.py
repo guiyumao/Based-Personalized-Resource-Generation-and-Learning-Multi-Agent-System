@@ -1,28 +1,65 @@
-"""Neo4j connector and commonly used graph queries."""
+"""Neo4j connector and graph-building helpers for knowledge visualization."""
 
 from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from typing import Any
+
+from sqlalchemy import or_
 
 from common.config import get_settings
 from common.db.session import SessionLocal
-from common.models.learning import KnowledgePoint, Resource
-from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
+from common.models.learning import KnowledgePoint, KnowledgeRelation, Resource
+from services.agent_service.app.services.knowledge_base import KnowledgeArticle, KnowledgeBaseService
 
 logger = logging.getLogger(__name__)
 
 
 class KnowledgeGraphRepository:
-    """Repository encapsulating common Neo4j knowledge graph operations."""
+    """Repository encapsulating knowledge graph queries across multiple data sources."""
+
+    _SECTION_ALIASES = {
+        "prerequisite": ("前置知识", "前置基础", "基础知识", "预备知识"),
+        "recommended": ("后续模块", "进阶内容", "拓展学习", "延伸学习", "相关知识"),
+        "resource": ("学习资源", "关联资源", "推荐资源", "练习建议"),
+    }
+
+    _STOP_LABELS = {
+        "以",
+        "它",
+        "概念",
+        "主题",
+        "摘要",
+        "再看例子",
+        "最后完成自测",
+        "阅读方式",
+        "学习顺序",
+        "理解",
+        "运用",
+        "区分",
+        "准确说出",
+        "准确区分",
+        "独立推导",
+        "识别并避免",
+        "分析",
+        "核心概念",
+        "学习目标",
+        "知识讲解",
+        "课程导入",
+        "你的当前学习情况",
+        "重点难点突破",
+        "典型例题",
+        "课堂小结",
+    }
 
     def __init__(self) -> None:
         settings = get_settings()
         self.knowledge_base = KnowledgeBaseService()
         self._driver = None
         if not settings.neo4j_enabled:
-            logger.info("Neo4j disabled; using knowledge graph fallback.")
+            logger.info("Neo4j disabled.")
             return
         try:
             from neo4j import GraphDatabase
@@ -32,7 +69,7 @@ class KnowledgeGraphRepository:
                 auth=(settings.neo4j_username, settings.neo4j_password),
             )
         except Exception:
-            logger.warning("Neo4j driver unavailable; using knowledge graph fallback.")
+            logger.warning("Neo4j driver unavailable.")
 
     def close(self) -> None:
         """Close the underlying Neo4j driver."""
@@ -40,243 +77,10 @@ class KnowledgeGraphRepository:
         if self._driver is not None:
             self._driver.close()
 
-    def _fallback_graph_seed(self, knowledge_point: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        article = self.knowledge_base.get_article(knowledge_point)
-        if article is None:
-            matches = self.knowledge_base.search_by_keywords(knowledge_point, top_k=1)
-            article = matches[0] if matches else None
-        if article is None:
-            blueprint = self._fallback_topic_blueprint(knowledge_point)
-            if blueprint is not None:
-                return blueprint["nodes"], blueprint["edges"]
-
-        current_label = article.title if article is not None else knowledge_point
-        nodes = [{"id": current_label, "label": current_label, "category": "current"}]
-        edges: list[dict[str, Any]] = []
-
-        if article is not None:
-            for prerequisite in self._fallback_prerequisites(article.title):
-                nodes.append({"id": prerequisite, "label": prerequisite, "category": "prerequisite"})
-                edges.append({"source": current_label, "target": prerequisite, "label": "DEPENDS_ON"})
-
-            for concept in article.concepts[:3]:
-                concept_name = concept.split("：", 1)[0].strip("` ").strip()
-                if len(concept_name) < 2:
-                    continue
-                if any(node["id"] == concept_name for node in nodes):
-                    continue
-                nodes.append({"id": concept_name, "label": concept_name, "category": "prerequisite"})
-                edges.append({"source": current_label, "target": concept_name, "label": "RELATED_CONCEPT"})
-
-            for check in article.checks[:2]:
-                check_name = check[:24]
-                nodes.append({"id": check_name, "label": check_name, "category": "recommended"})
-                edges.append({"source": current_label, "target": check_name, "label": "SELF_CHECK"})
-
-        return nodes, edges
-
-    def _fallback_visualization_graph(self, knowledge_point: str) -> dict[str, list[dict[str, Any]]]:
-        """Return a deterministic graph shell when Neo4j is unavailable."""
-
-        nodes, edges = self._fallback_graph_seed(knowledge_point)
-        return self._merge_with_topic_blueprint(
-            knowledge_point,
-            {"nodes": list({node["id"]: node for node in nodes}.values()), "edges": edges},
-        )
-
-    def _merge_with_topic_blueprint(
-        self,
-        knowledge_point: str,
-        graph: dict[str, list[dict[str, Any]]],
-        min_nodes: int = 8,
-        min_edges: int = 6,
-    ) -> dict[str, list[dict[str, Any]]]:
-        """Enrich sparse broad-topic graphs with curated course structure."""
-
-        blueprint = self._fallback_topic_blueprint(knowledge_point)
-        if blueprint is None:
-            return graph
-
-        if len(graph.get("nodes", [])) >= min_nodes and len(graph.get("edges", [])) >= min_edges:
-            return graph
-
-        nodes_by_id: dict[str, dict[str, Any]] = {}
-        for node in blueprint["nodes"] + graph.get("nodes", []):
-            node_id = node.get("id")
-            if node_id:
-                nodes_by_id[str(node_id)] = node
-
-        seen_edges: set[tuple[str, str, str]] = set()
-        merged_edges: list[dict[str, Any]] = []
-        for edge in blueprint["edges"] + graph.get("edges", []):
-            source = edge.get("source")
-            target = edge.get("target")
-            label = edge.get("label", "")
-            if not source or not target:
-                continue
-            signature = (str(source), str(target), str(label))
-            if signature in seen_edges:
-                continue
-            seen_edges.add(signature)
-            merged_edges.append(edge)
-
-        return {"nodes": list(nodes_by_id.values()), "edges": merged_edges}
-
-    def _fallback_dependency_paths(self, knowledge_point: str) -> list[dict[str, Any]]:
-        """Return deterministic dependency paths from curated knowledge content."""
-
-        article = self.knowledge_base.get_article(knowledge_point)
-        if article is None:
-            matches = self.knowledge_base.search_by_keywords(knowledge_point, top_k=1)
-            article = matches[0] if matches else None
-        if article is None:
-            blueprint = self._fallback_topic_blueprint(knowledge_point)
-            if blueprint is None:
-                return []
-            return blueprint["dependencies"]
-
-        paths: list[dict[str, Any]] = []
-        for prerequisite in self._fallback_prerequisites(article.title):
-            paths.append({"path": [prerequisite, article.title]})
-
-        for concept in article.concepts[:3]:
-            concept_name = concept.split("：", 1)[0].strip("` ").strip()
-            if len(concept_name) < 2:
-                continue
-            if any(item["path"][0] == concept_name for item in paths):
-                continue
-            paths.append({"path": [concept_name, article.title]})
-        return paths
-
-    def _fallback_topic_blueprint(self, knowledge_point: str) -> dict[str, list[dict[str, Any]]] | None:
-        """Return a richer course-level graph for broad topics."""
-
-        normalized = re.sub(r"\s+", "", knowledge_point.lower())
-        aliases = {
-            "高数",
-            "高等数学",
-            "大学数学",
-            "微积分",
-            "calculus",
-            "advancedmath",
-            "highermath",
-        }
-        if normalized not in aliases:
-            return None
-
-        current_id = knowledge_point.strip() or "高等数学"
-        nodes: list[dict[str, Any]] = [
-            {"id": current_id, "label": current_id, "category": "current"},
-        ]
-        edges: list[dict[str, Any]] = []
-
-        prerequisites = ["函数与图像", "三角函数", "数列与极限直觉", "解析几何"]
-        core_modules = ["极限与连续", "导数与微分", "微分中值定理", "不定积分", "定积分及应用", "无穷级数"]
-        advanced_modules = ["多元函数微分", "重积分", "微分方程", "线性代数衔接", "概率统计衔接"]
-        resource_nodes = ["微积分公式与例题", "典型错题复盘", "综合应用训练"]
-
-        for item in prerequisites:
-            nodes.append({"id": item, "label": item, "category": "prerequisite"})
-            edges.append({"source": current_id, "target": item, "label": "前置基础"})
-
-        previous = current_id
-        for item in core_modules:
-            nodes.append({"id": item, "label": item, "category": "recommended"})
-            edges.append({"source": previous, "target": item, "label": "核心顺序"})
-            previous = item
-
-        for item in advanced_modules:
-            nodes.append({"id": item, "label": item, "category": "recommended"})
-            edges.append({"source": "定积分及应用", "target": item, "label": "进阶拓展"})
-
-        for item in resource_nodes:
-            nodes.append({"id": item, "label": item, "category": "resource"})
-            edges.append({"source": current_id, "target": item, "label": "学习资源"})
-
-        dependencies = [
-            {"path": ["函数与图像", "极限与连续", "导数与微分"]},
-            {"path": ["三角函数", "极限与连续", "微分中值定理"]},
-            {"path": ["导数与微分", "不定积分", "定积分及应用"]},
-            {"path": ["定积分及应用", "多元函数微分", "重积分"]},
-            {"path": ["导数与微分", "微分方程"]},
-            {"path": ["无穷级数", "概率统计衔接"]},
-        ]
-        return {"nodes": nodes, "edges": edges, "dependencies": dependencies}
-
-    def _fallback_topic_resources(self, knowledge_point: str) -> list[dict[str, Any]]:
-        """Return resources for broad topic blueprints."""
-
-        blueprint = self._fallback_topic_blueprint(knowledge_point)
-        if blueprint is None:
-            return []
-
-        return [
-            {"name": "高等数学知识路线图", "type": "learning-path", "uri": "/student/learning-path"},
-            {"name": "极限、导数、积分重点公式表", "type": "notes", "uri": "/student/courseware"},
-            {"name": "高数典型错题与变式训练", "type": "exercise", "uri": "/student/mistakes"},
-            {"name": "微积分综合应用题训练", "type": "practice", "uri": "/student/exercise"},
-        ]
-
-    def _fallback_prerequisites(self, title: str) -> list[str]:
-        """Return curated prerequisite labels when Neo4j is unavailable."""
-
-        prerequisites_by_title = {
-            "Python 循环": ["顺序结构", "条件判断"],
-            "Python 条件判断": ["布尔表达式", "比较运算"],
-            "递归": ["函数调用", "条件判断"],
-            "二分查找": ["顺序结构", "条件判断", "循环"],
-            "动态规划": ["递归", "数组", "状态转移"],
-        }
-        return prerequisites_by_title.get(title, [])
-
-    def _fallback_related_resources(self, knowledge_point: str) -> list[dict[str, Any]]:
-        """Return related resources from generated resources and curated links."""
-
-        resources: list[dict[str, Any]] = []
-        with SessionLocal() as db:
-            rows = db.query(Resource, KnowledgePoint).outerjoin(
-                KnowledgePoint,
-                Resource.knowledge_point_id == KnowledgePoint.id,
-            ).filter(
-                (KnowledgePoint.name == knowledge_point) if knowledge_point else False
-            ).order_by(Resource.id.desc()).limit(5).all()
-            for resource, kp in rows:
-                title = (resource.content or "").strip().splitlines()
-                heading = title[0][2:].strip() if title and title[0].startswith("# ") else f"{kp.name if kp else knowledge_point}资源"
-                resources.append(
-                    {
-                        "name": heading,
-                        "type": resource.type,
-                        "uri": f"/resources/{resource.id}",
-                    }
-                )
-
-        article = self.knowledge_base.get_article(knowledge_point)
-        if article is not None:
-            for item in self.knowledge_base.article_to_dict(article).get("external_resources", [])[:4]:
-                if not isinstance(item, dict):
-                    continue
-                resources.append(
-                    {
-                        "name": item.get("title") or "参考资源",
-                        "type": item.get("kind") or "resource",
-                        "uri": item.get("url") or "",
-                    }
-                )
-        else:
-            resources.extend(self._fallback_topic_resources(knowledge_point))
-        return resources
-
-    def _fallback_recommendations(self, knowledge_point: str) -> list[dict[str, Any]]:
-        """Return next-point recommendations from checks/applications."""
-
-        article = self.knowledge_base.get_article(knowledge_point)
-        if article is None:
-            return []
-        return [
-            {"name": item[:30], "difficulty": 1, "importance": 1}
-            for item in (article.applications[:2] + article.checks[:2])
-        ]
+    def _require_driver(self):
+        if self._driver is None:
+            raise RuntimeError("Neo4j is not available.")
+        return self._driver
 
     def create_knowledge_point(
         self,
@@ -285,7 +89,7 @@ class KnowledgeGraphRepository:
         difficulty: int,
         importance: int,
     ) -> dict[str, Any]:
-        """Create or update a `KnowledgePoint` node."""
+        """Create or update a `KnowledgePoint` node in Neo4j."""
 
         query = """
         MERGE (kp:KnowledgePoint {name: $name})
@@ -294,14 +98,8 @@ class KnowledgeGraphRepository:
             kp.importance = $importance
         RETURN kp
         """
-        if self._driver is None:
-            return {
-                "name": name,
-                "description": description,
-                "difficulty": difficulty,
-                "importance": importance,
-            }
-        with self._driver.session() as session:
+        driver = self._require_driver()
+        with driver.session() as session:
             record = session.run(
                 query,
                 name=name,
@@ -312,100 +110,782 @@ class KnowledgeGraphRepository:
             return dict(record["kp"])
 
     def find_dependency_path(self, knowledge_point: str, max_depth: int = 3) -> list[dict[str, Any]]:
-        """Find prerequisite paths using `DEPENDS_ON` relationships."""
+        """Find prerequisite paths from Neo4j, SQL relations, or derived content."""
 
-        query = """
-        MATCH path = (kp:KnowledgePoint {name: $knowledge_point})-[:DEPENDS_ON*1..$max_depth]->(dep:KnowledgePoint)
-        RETURN [node IN nodes(path) | node.name] AS dependency_path
-        """
-        if self._driver is None:
-            return self._fallback_dependency_paths(knowledge_point)
-        try:
-            with self._driver.session() as session:
-                result = session.run(query, knowledge_point=knowledge_point, max_depth=max_depth)
-                dependency_paths = [{"path": record["dependency_path"]} for record in result]
-                return dependency_paths or self._fallback_dependency_paths(knowledge_point)
-        except Exception:
-            logger.exception("Knowledge graph dependency query failed, using fallback paths.")
-            return self._fallback_dependency_paths(knowledge_point)
+        results: list[dict[str, Any]] = []
+        if self._driver is not None:
+            try:
+                results.extend(self._find_dependency_path_from_neo4j(knowledge_point, max_depth))
+            except Exception as exc:
+                logger.warning("Neo4j dependency query failed for %s: %s", knowledge_point, exc)
+
+        results.extend(self._find_dependency_path_from_sql(knowledge_point, max_depth))
+        results.extend(self._build_dependency_paths_from_content(knowledge_point))
+
+        unique = self._unique_paths(results)
+        if unique:
+            return unique
+        raise ValueError(f"知识点“{knowledge_point}”没有可用的依赖关系数据。")
 
     def find_related_resources(self, knowledge_point: str) -> list[dict[str, Any]]:
         """Return resource nodes associated with a knowledge point."""
 
+        resources: list[dict[str, Any]] = []
+        if self._driver is not None:
+            try:
+                resources.extend(self._find_related_resources_from_neo4j(knowledge_point))
+            except Exception as exc:
+                logger.warning("Neo4j resource query failed for %s: %s", knowledge_point, exc)
+
+        resources.extend(self._find_related_resources_from_sql(knowledge_point))
+        resources.extend(self._build_related_resources_from_content(knowledge_point))
+
+        unique = self._unique_resources(resources)
+        if unique:
+            return unique
+        raise ValueError(f"知识点“{knowledge_point}”没有可关联的学习资源。")
+
+    def recommend_next_points(self, knowledge_point: str) -> list[dict[str, Any]]:
+        """Recommend next knowledge points via `RECOMMENDS` links or derived content."""
+
+        recommendations: list[dict[str, Any]] = []
+        if self._driver is not None:
+            try:
+                recommendations.extend(self._recommend_next_points_from_neo4j(knowledge_point))
+            except Exception as exc:
+                logger.warning("Neo4j recommendation query failed for %s: %s", knowledge_point, exc)
+
+        recommendations.extend(self._build_recommendations_from_content(knowledge_point))
+        unique = self._unique_recommendations(recommendations)
+        if unique:
+            return unique
+        raise ValueError(f"知识点“{knowledge_point}”没有可推荐的后续知识点。")
+
+    def get_visualization_graph(self, knowledge_point: str, max_depth: int = 2) -> dict[str, list[dict[str, Any]]]:
+        """Return node-edge graph data for frontend visualization."""
+
+        graphs: list[dict[str, list[dict[str, Any]]]] = []
+        if self._driver is not None:
+            try:
+                neo4j_graph = self._get_visualization_graph_from_neo4j(knowledge_point, max_depth)
+                if neo4j_graph["nodes"]:
+                    graphs.append(neo4j_graph)
+            except Exception as exc:
+                logger.warning("Neo4j visualization query failed for %s: %s", knowledge_point, exc)
+
+        sql_graph = self._get_visualization_graph_from_sql(knowledge_point, max_depth)
+        if sql_graph["nodes"]:
+            graphs.append(sql_graph)
+
+        content_graph = self._build_visualization_graph_from_content(knowledge_point)
+        if content_graph["nodes"]:
+            graphs.append(content_graph)
+
+        merged = self._merge_graphs(graphs)
+        if merged["nodes"] and merged["edges"]:
+            return merged
+        raise ValueError(f"知识点“{knowledge_point}”没有可视化图谱内容。")
+
+    def _find_dependency_path_from_neo4j(self, knowledge_point: str, max_depth: int) -> list[dict[str, Any]]:
+        query = """
+        MATCH path = (kp:KnowledgePoint {name: $knowledge_point})-[:DEPENDS_ON*1..$max_depth]->(dep:KnowledgePoint)
+        RETURN [node IN nodes(path) | node.name] AS dependency_path
+        """
+        driver = self._require_driver()
+        with driver.session() as session:
+            result = session.run(query, knowledge_point=knowledge_point, max_depth=max_depth)
+            return [{"path": record["dependency_path"]} for record in result if record["dependency_path"]]
+
+    def _find_related_resources_from_neo4j(self, knowledge_point: str) -> list[dict[str, Any]]:
         query = """
         MATCH (kp:KnowledgePoint {name: $knowledge_point})-[:ASSOCIATED_WITH]-(resource:Resource)
         RETURN resource.name AS name, resource.type AS type, resource.uri AS uri
         """
-        if self._driver is None:
-            return self._fallback_related_resources(knowledge_point)
-        try:
-            with self._driver.session() as session:
-                result = session.run(query, knowledge_point=knowledge_point)
-                resources = [record.data() for record in result]
-                return resources or self._fallback_related_resources(knowledge_point)
-        except Exception:
-            logger.exception("Knowledge graph resource query failed, using fallback resources.")
-            return self._fallback_related_resources(knowledge_point)
+        driver = self._require_driver()
+        with driver.session() as session:
+            result = session.run(query, knowledge_point=knowledge_point)
+            return [record.data() for record in result]
 
-    def recommend_next_points(self, knowledge_point: str) -> list[dict[str, Any]]:
-        """Recommend next knowledge points via `RECOMMENDS` links."""
-
+    def _recommend_next_points_from_neo4j(self, knowledge_point: str) -> list[dict[str, Any]]:
         query = """
         MATCH (kp:KnowledgePoint {name: $knowledge_point})-[:RECOMMENDS]->(next:KnowledgePoint)
         RETURN next.name AS name, next.difficulty AS difficulty, next.importance AS importance
         ORDER BY next.importance DESC, next.difficulty ASC
         """
-        if self._driver is None:
-            return self._fallback_recommendations(knowledge_point)
-        try:
-            with self._driver.session() as session:
-                result = session.run(query, knowledge_point=knowledge_point)
-                recommendations = [record.data() for record in result]
-                return recommendations or self._fallback_recommendations(knowledge_point)
-        except Exception:
-            logger.exception("Knowledge graph recommendation query failed, using fallback recommendations.")
-            return self._fallback_recommendations(knowledge_point)
+        driver = self._require_driver()
+        with driver.session() as session:
+            result = session.run(query, knowledge_point=knowledge_point)
+            return [record.data() for record in result]
 
-    def get_visualization_graph(self, knowledge_point: str, max_depth: int = 2) -> dict[str, list[dict[str, Any]]]:
-        """Return node-edge graph data for frontend visualization."""
-
-        if self._driver is None:
-            return self._fallback_visualization_graph(knowledge_point)
-
+    def _get_visualization_graph_from_neo4j(
+        self,
+        knowledge_point: str,
+        max_depth: int,
+    ) -> dict[str, list[dict[str, Any]]]:
+        driver = self._require_driver()
         query = """
         MATCH (kp:KnowledgePoint {name: $knowledge_point})
         OPTIONAL MATCH (kp)-[:DEPENDS_ON*1..$max_depth]->(dep:KnowledgePoint)
         OPTIONAL MATCH (kp)-[:RECOMMENDS]->(next:KnowledgePoint)
         RETURN kp, collect(DISTINCT dep) AS deps, collect(DISTINCT next) AS nexts
         """
-        try:
-            with self._driver.session() as session:
-                record = session.run(query, knowledge_point=knowledge_point, max_depth=max_depth).single()
-                if record is None:
-                    return self._fallback_visualization_graph(knowledge_point)
+        with driver.session() as session:
+            record = session.run(query, knowledge_point=knowledge_point, max_depth=max_depth).single()
+            if record is None:
+                return {"nodes": [], "edges": []}
 
-                nodes = [{"id": knowledge_point, "label": knowledge_point, "category": "current"}]
-                edges: list[dict[str, Any]] = []
+            nodes = [{"id": knowledge_point, "label": knowledge_point, "category": "current"}]
+            edges: list[dict[str, Any]] = []
 
-                for dep in record["deps"]:
-                    if dep is None:
-                        continue
-                    dep_name = dep.get("name")
-                    nodes.append({"id": dep_name, "label": dep_name, "category": "prerequisite"})
-                    edges.append({"source": knowledge_point, "target": dep_name, "label": "DEPENDS_ON"})
+            for dep in record["deps"]:
+                if dep is None:
+                    continue
+                dep_name = dep.get("name")
+                if not dep_name:
+                    continue
+                nodes.append({"id": dep_name, "label": dep_name, "category": "prerequisite"})
+                edges.append({"source": knowledge_point, "target": dep_name, "label": "DEPENDS_ON"})
 
-                for nxt in record["nexts"]:
-                    if nxt is None:
-                        continue
-                    next_name = nxt.get("name")
-                    nodes.append({"id": next_name, "label": next_name, "category": "recommended"})
-                    edges.append({"source": knowledge_point, "target": next_name, "label": "RECOMMENDS"})
+            for nxt in record["nexts"]:
+                if nxt is None:
+                    continue
+                next_name = nxt.get("name")
+                if not next_name:
+                    continue
+                nodes.append({"id": next_name, "label": next_name, "category": "recommended"})
+                edges.append({"source": knowledge_point, "target": next_name, "label": "RECOMMENDS"})
 
-                unique_nodes = list({node["id"]: node for node in nodes}.values())
-                return self._merge_with_topic_blueprint(
-                    knowledge_point,
-                    {"nodes": unique_nodes, "edges": edges},
+            return self._merge_graphs([{"nodes": nodes, "edges": edges}])
+
+    def _find_dependency_path_from_sql(self, knowledge_point: str, max_depth: int) -> list[dict[str, Any]]:
+        with SessionLocal() as db:
+            current = db.query(KnowledgePoint).filter(KnowledgePoint.name == knowledge_point).first()
+            if current is None:
+                return []
+
+            outgoing = (
+                db.query(KnowledgeRelation, KnowledgePoint)
+                .join(KnowledgePoint, KnowledgeRelation.to_id == KnowledgePoint.id)
+                .filter(
+                    KnowledgeRelation.from_id == current.id,
+                    KnowledgeRelation.relation_type.in_(["DEPENDS_ON", "前置基础"]),
                 )
-        except Exception:
-            logger.exception("Knowledge graph visualization query failed, using fallback graph.")
-            return self._fallback_visualization_graph(knowledge_point)
+                .limit(max_depth * 3)
+                .all()
+            )
+            incoming = (
+                db.query(KnowledgeRelation, KnowledgePoint)
+                .join(KnowledgePoint, KnowledgeRelation.from_id == KnowledgePoint.id)
+                .filter(
+                    KnowledgeRelation.to_id == current.id,
+                    KnowledgeRelation.relation_type.in_(["DEPENDS_ON", "前置基础"]),
+                )
+                .limit(max_depth * 3)
+                .all()
+            )
+
+            paths = [{"path": [item.name, knowledge_point]} for _, item in outgoing]
+            paths.extend({"path": [item.name, knowledge_point]} for _, item in incoming)
+            return paths
+
+    def _get_visualization_graph_from_sql(
+        self,
+        knowledge_point: str,
+        max_depth: int,
+    ) -> dict[str, list[dict[str, Any]]]:
+        with SessionLocal() as db:
+            current = db.query(KnowledgePoint).filter(KnowledgePoint.name == knowledge_point).first()
+            if current is None:
+                return {"nodes": [], "edges": []}
+
+            nodes = [{"id": current.name, "label": current.name, "category": "current"}]
+            edges: list[dict[str, Any]] = []
+
+            outgoing = (
+                db.query(KnowledgeRelation, KnowledgePoint)
+                .join(KnowledgePoint, KnowledgeRelation.to_id == KnowledgePoint.id)
+                .filter(KnowledgeRelation.from_id == current.id)
+                .limit(max_depth * 4)
+                .all()
+            )
+            incoming = (
+                db.query(KnowledgeRelation, KnowledgePoint)
+                .join(KnowledgePoint, KnowledgeRelation.from_id == KnowledgePoint.id)
+                .filter(KnowledgeRelation.to_id == current.id)
+                .limit(max_depth * 4)
+                .all()
+            )
+
+            for relation, target in outgoing:
+                category = "recommended" if relation.relation_type in {"RECOMMENDS", "后续模块"} else "prerequisite"
+                nodes.append({"id": target.name, "label": target.name, "category": category})
+                edges.append({"source": current.name, "target": target.name, "label": relation.relation_type})
+
+            for relation, source in incoming:
+                category = "prerequisite" if relation.relation_type in {"DEPENDS_ON", "前置基础"} else "recommended"
+                nodes.append({"id": source.name, "label": source.name, "category": category})
+                edges.append({"source": current.name, "target": source.name, "label": relation.relation_type})
+
+            return self._merge_graphs([{"nodes": nodes, "edges": edges}])
+
+    def _build_visualization_graph_from_content(self, knowledge_point: str) -> dict[str, list[dict[str, Any]]]:
+        article = self._get_article_for_graph(knowledge_point)
+        nodes = [{"id": knowledge_point, "label": knowledge_point, "category": "current"}]
+        edges: list[dict[str, Any]] = []
+
+        for prerequisite in self._derive_prerequisites(knowledge_point, article):
+            nodes.append({"id": prerequisite, "label": prerequisite, "category": "prerequisite"})
+            edges.append({"source": knowledge_point, "target": prerequisite, "label": "前置基础"})
+
+        for recommended in self._derive_recommendations(knowledge_point, article):
+            nodes.append({"id": recommended, "label": recommended, "category": "recommended"})
+            edges.append({"source": knowledge_point, "target": recommended, "label": "后续模块"})
+
+        for resource in self._derive_resource_nodes(knowledge_point, article):
+            nodes.append({"id": resource, "label": resource, "category": "resource"})
+            edges.append({"source": knowledge_point, "target": resource, "label": "关联资源"})
+
+        graph = self._merge_graphs([{"nodes": nodes, "edges": edges}])
+        if len(graph["nodes"]) <= 1 or not graph["edges"]:
+            return {"nodes": [], "edges": []}
+        return graph
+
+    def _build_dependency_paths_from_content(self, knowledge_point: str) -> list[dict[str, Any]]:
+        article = self._get_article_for_graph(knowledge_point)
+        return [{"path": [item, knowledge_point]} for item in self._derive_prerequisites(knowledge_point, article)]
+
+    def _build_related_resources_from_content(self, knowledge_point: str) -> list[dict[str, Any]]:
+        resources: list[dict[str, Any]] = []
+        article = self._get_article_for_graph(knowledge_point)
+        if article is not None:
+            for item in self.knowledge_base.article_to_dict(article).get("external_resources", [])[:6]:
+                if not isinstance(item, dict):
+                    continue
+                resources.append(
+                    {
+                        "name": str(item.get("title") or "关联资源"),
+                        "type": str(item.get("kind") or "resource"),
+                        "uri": str(item.get("url") or ""),
+                    }
+                )
+        return resources
+
+    def _build_recommendations_from_content(self, knowledge_point: str) -> list[dict[str, Any]]:
+        article = self._get_article_for_graph(knowledge_point)
+        return [
+            {"name": item, "difficulty": 1, "importance": 1}
+            for item in self._derive_recommendations(knowledge_point, article)
+        ]
+
+    def _find_related_resources_from_sql(self, knowledge_point: str) -> list[dict[str, Any]]:
+        resources: list[dict[str, Any]] = []
+        for resource, kp in self._matching_resource_rows(knowledge_point, limit=8):
+            title = self._extract_title_from_content(resource.content) or f"{(kp.name if kp else knowledge_point)}资源"
+            resources.append(
+                {
+                    "name": title,
+                    "type": resource.type,
+                    "uri": f"/resources/{resource.id}",
+                }
+            )
+        return resources
+
+    def _get_article_for_graph(self, knowledge_point: str) -> KnowledgeArticle | None:
+        return self.knowledge_base.get_article(knowledge_point)
+
+    def _derive_prerequisites(self, knowledge_point: str, article: KnowledgeArticle | None) -> list[str]:
+        labels: list[str] = []
+        labels.extend(self._prerequisites_from_article(article) if article is not None else [])
+        labels.extend(self._extract_section_items(knowledge_point, "prerequisite"))
+        labels.extend(self._extract_introductory_concepts(knowledge_point))
+        labels.extend(self._match_existing_points(knowledge_point, relation="prerequisite"))
+        return self._finalize_labels(knowledge_point, labels)
+
+    def _derive_recommendations(self, knowledge_point: str, article: KnowledgeArticle | None) -> list[str]:
+        labels: list[str] = []
+        labels.extend(self._recommendations_from_article(article) if article is not None else [])
+        labels.extend(self._extract_section_items(knowledge_point, "recommended"))
+        labels.extend(self._extract_learning_objective_targets(knowledge_point))
+        labels.extend(self._match_existing_points(knowledge_point, relation="recommended"))
+        return self._finalize_labels(knowledge_point, labels)
+
+    def _derive_resource_nodes(self, knowledge_point: str, article: KnowledgeArticle | None) -> list[str]:
+        labels: list[str] = []
+        if article is not None:
+            labels.extend(
+                str(item.get("title") or "")
+                for item in self.knowledge_base.article_to_dict(article).get("external_resources", [])[:4]
+                if isinstance(item, dict)
+            )
+        labels.extend(self._extract_section_items(knowledge_point, "resource"))
+        labels.extend(self._resource_titles_from_sql(knowledge_point))
+        return self._finalize_labels(knowledge_point, labels, limit=6)
+
+    def _prerequisites_from_article(self, article: KnowledgeArticle) -> list[str]:
+        labels = list(self._fallback_prerequisites(article.title))
+        labels.extend(self._short_concept_label(item) for item in article.concepts[:4])
+        return [item for item in labels if item]
+
+    def _recommendations_from_article(self, article: KnowledgeArticle) -> list[str]:
+        labels = [self._clean_text_label(item, max_len=20) for item in article.checks[:2]]
+        labels.extend(self._clean_text_label(item, max_len=18) for item in article.applications[:2])
+        return [item for item in labels if item]
+
+    def _extract_section_items(self, knowledge_point: str, section_kind: str) -> list[str]:
+        content = self._combined_resource_text(knowledge_point)
+        if not content:
+            return []
+
+        aliases = self._SECTION_ALIASES[section_kind]
+        items: list[str] = []
+        for alias in aliases:
+            pattern = re.compile(rf"##+\s*{re.escape(alias)}\s*\n(?P<body>.*?)(?:\n##|\Z)", re.S)
+            match = pattern.search(content)
+            if not match:
+                continue
+            body = match.group("body")
+            items.extend(self._extract_bullets_from_text(body))
+        return items
+
+    def _extract_introductory_concepts(self, knowledge_point: str) -> list[str]:
+        content = self._combined_resource_text(knowledge_point)
+        if not content:
+            return []
+
+        concepts: list[str] = []
+        for heading in ("学习目标", "知识讲解", "核心概念"):
+            pattern = re.compile(rf"##+\s*{re.escape(heading)}\s*\n(?P<body>.*?)(?:\n##|\Z)", re.S)
+            match = pattern.search(content)
+            if not match:
+                continue
+            body = match.group("body")
+            for line in body.splitlines():
+                concepts.extend(self._extract_phrases_from_line(line))
+        return concepts[:8]
+
+    def _extract_learning_objective_targets(self, knowledge_point: str) -> list[str]:
+        content = self._combined_resource_text(knowledge_point)
+        if not content:
+            return []
+
+        match = re.search(r"##+\s*学习目标\s*\n(?P<body>.*?)(?:\n##|\Z)", content, re.S)
+        if not match:
+            return []
+
+        labels: list[str] = []
+        for line in match.group("body").splitlines():
+            if any(token in line for token in ("运用", "解释", "推导", "识别", "区分", "分析")):
+                labels.extend(self._extract_phrases_from_line(line))
+        return labels
+
+    def _match_existing_points(self, knowledge_point: str, relation: str) -> list[str]:
+        current_tokens = set(self._tokenize(knowledge_point))
+        if not current_tokens:
+            return []
+
+        with SessionLocal() as db:
+            names = [str(item[0]) for item in db.query(KnowledgePoint.name).all() if str(item[0]).strip()]
+
+        scored: list[tuple[int, str]] = []
+        current_lower = knowledge_point.lower()
+        for candidate in names:
+            if candidate == knowledge_point:
+                continue
+            candidate_tokens = set(self._tokenize(candidate))
+            overlap = len(current_tokens & candidate_tokens)
+            if overlap <= 0:
+                continue
+            score = overlap * 10
+            if relation == "recommended" and candidate.lower() > current_lower:
+                score += 1
+            scored.append((score, candidate))
+
+        scored.sort(key=lambda item: (-item[0], len(item[1]), item[1]))
+        return [item[1] for item in scored[:4]]
+
+    def _resource_titles_from_sql(self, knowledge_point: str) -> list[str]:
+        titles: list[str] = []
+        for resource, _ in self._matching_resource_rows(knowledge_point, limit=4):
+            title = self._extract_title_from_content(resource.content)
+            if title:
+                titles.append(title)
+        return titles
+
+    def _combined_resource_text(self, knowledge_point: str) -> str:
+        chunks: list[str] = []
+        for resource, _ in self._matching_resource_rows(knowledge_point, limit=4):
+            chunks.append(resource.content or "")
+        return "\n".join(chunks)
+
+    def _matching_resource_rows(self, knowledge_point: str, limit: int) -> list[tuple[Resource, KnowledgePoint | None]]:
+        with SessionLocal() as db:
+            exact_rows = (
+                db.query(Resource, KnowledgePoint)
+                .outerjoin(KnowledgePoint, Resource.knowledge_point_id == KnowledgePoint.id)
+                .filter(KnowledgePoint.name == knowledge_point)
+                .order_by(Resource.id.desc())
+                .limit(limit)
+                .all()
+            )
+            if exact_rows:
+                return exact_rows
+
+            return (
+                db.query(Resource, KnowledgePoint)
+                .outerjoin(KnowledgePoint, Resource.knowledge_point_id == KnowledgePoint.id)
+                .filter(Resource.content.contains(knowledge_point))
+                .order_by(Resource.id.desc())
+                .limit(limit)
+                .all()
+            )
+
+    def _extract_bullets_from_text(self, text: str) -> list[str]:
+        labels: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(("- ", "* ", "1.", "2.", "3.", "4.", "5.")):
+                labels.extend(self._extract_phrases_from_line(stripped))
+        return labels
+
+    def _merge_graphs(self, graphs: list[dict[str, list[dict[str, Any]]]]) -> dict[str, list[dict[str, Any]]]:
+        nodes_by_id: dict[str, dict[str, Any]] = {}
+        edges: list[dict[str, Any]] = []
+        edge_keys: set[tuple[str, str, str]] = set()
+
+        for graph in graphs:
+            for node in graph.get("nodes", []):
+                node_id = str(node.get("id") or "").strip()
+                if not node_id:
+                    continue
+                nodes_by_id[node_id] = {
+                    "id": node_id,
+                    "label": str(node.get("label") or node_id),
+                    "category": str(node.get("category") or "resource"),
+                }
+            for edge in graph.get("edges", []):
+                source = str(edge.get("source") or "").strip()
+                target = str(edge.get("target") or "").strip()
+                label = str(edge.get("label") or "").strip()
+                if not source or not target:
+                    continue
+                key = (source, target, label)
+                if key in edge_keys:
+                    continue
+                edge_keys.add(key)
+                edges.append({"source": source, "target": target, "label": label})
+
+        return {"nodes": list(nodes_by_id.values()), "edges": edges}
+
+    def _unique_paths(self, paths: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        unique: list[dict[str, Any]] = []
+        seen: set[tuple[str, ...]] = set()
+        for item in paths:
+            raw_path = item.get("path")
+            if not isinstance(raw_path, list):
+                continue
+            normalized = tuple(str(node).strip() for node in raw_path if str(node).strip())
+            if len(normalized) < 2 or normalized in seen:
+                continue
+            seen.add(normalized)
+            unique.append({"path": list(normalized)})
+        return unique
+
+    def _unique_resources(self, resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        unique: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in resources:
+            name = str(item.get("name") or item.get("title") or "").strip()
+            uri = str(item.get("uri") or "").strip()
+            if not name:
+                continue
+            key = (name, uri)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(
+                {
+                    "name": name,
+                    "type": str(item.get("type") or item.get("kind") or "resource"),
+                    "uri": uri,
+                }
+            )
+        return unique
+
+    def _unique_recommendations(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        unique: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            name = str(item.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            unique.append(
+                {
+                    "name": name,
+                    "difficulty": int(item.get("difficulty") or 1),
+                    "importance": int(item.get("importance") or 1),
+                }
+            )
+        return unique
+
+    def _normalize_labels(self, labels: list[str], limit: int = 5) -> list[str]:
+        cleaned = [self._clean_text_label(item) for item in labels if isinstance(item, str) and item.strip()]
+        cleaned = [item for item in cleaned if item]
+        counts = Counter(cleaned)
+        ordered = sorted(counts, key=lambda item: (-counts[item], len(item), item))
+        return ordered[:limit]
+
+    def _finalize_labels(self, knowledge_point: str, labels: list[str], limit: int = 5) -> list[str]:
+        normalized = self._normalize_labels(labels, limit=limit * 3)
+        results: list[str] = []
+        normalized_point = self._clean_text_label(knowledge_point, max_len=40)
+        for label in normalized:
+            if not label:
+                continue
+            if label == normalized_point:
+                continue
+            if "个性化课件" in label or "学习课件" in label:
+                continue
+            if label.startswith(("主题 ", "摘要 ", "阅读方式 ", "学习顺序 ")):
+                continue
+            results.append(label)
+            if len(results) >= limit:
+                break
+        return results
+
+    def _clean_text_label(self, value: str, max_len: int = 18) -> str:
+        label = re.sub(r"^[\-\*\d\.\s]+", "", value).strip()
+        label = re.sub(r"[`#>\[\]\(\)（）]", " ", label)
+        label = re.sub(r"[“”\"'‘’]", "", label)
+        label = re.sub(r"\*\*|__|[:：；;，,。！？!?]", " ", label)
+        label = re.sub(r"\s+", " ", label).strip()
+        for token in ("你应该能够", "学完这节课后", "根据系统记录", "重点提醒", "这节课围绕", "当前掌握度约"):
+            label = label.replace(token, "").strip()
+        for prefix in ("主题 ", "摘要 ", "阅读方式 ", "学习顺序 ", "核心主题 "):
+            if label.startswith(prefix):
+                label = label[len(prefix) :].strip()
+        label = re.sub(r"^(以及|以及它和|以及它|以及|关于|其中|一个|一种)\s*", "", label).strip()
+        label = re.sub(r"\s*(是什么|的内容|的关系|时运动状态的区别)$", "", label).strip()
+        if label in self._STOP_LABELS or len(label) < 2:
+            return ""
+        if len(label) > max_len:
+            label = label[:max_len].strip()
+        return label
+
+    def _short_concept_label(self, concept: str) -> str:
+        text = concept.split("：", 1)[0].split(":", 1)[0].strip("` ").strip()
+        return self._clean_text_label(text)
+
+    def _line_to_label(self, line: str) -> str:
+        return self._clean_text_label(re.sub(r"^\d+\.\s*", "", line.strip()))
+
+    def _extract_phrases_from_line(self, line: str) -> list[str]:
+        stripped = line.strip()
+        if not stripped:
+            return []
+
+        candidates: list[str] = []
+        candidates.extend(re.findall(r"\*\*(.+?)\*\*", stripped))
+        candidates.extend(re.findall(r"[“\"]([^”\"]{2,20})[”\"]", stripped))
+
+        for token in ("理解", "掌握", "区分", "运用", "解释", "推导", "识别", "分析", "准确说出", "准确区分", "独立推导", "识别并避免"):
+            if token in stripped:
+                remainder = stripped.split(token, 1)[1]
+                candidates.extend(self._split_labels(remainder))
+
+        if not candidates:
+            candidates.append(stripped)
+
+        cleaned = [self._line_to_label(item) for item in candidates]
+        return [item for item in cleaned if item and item not in self._STOP_LABELS]
+
+    def _extract_title_from_content(self, content: str) -> str:
+        for line in (content or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# "):
+                return stripped[2:].strip()
+            if stripped.startswith("## "):
+                return stripped[3:].strip()
+        return ""
+
+    def _tokenize(self, text: str) -> list[str]:
+        if not text.strip():
+            return []
+        chinese_chunks = re.findall(r"[\u4e00-\u9fff]{2,}", text)
+        latin_chunks = re.findall(r"[A-Za-z]{3,}", text.lower())
+        tokens: list[str] = list(latin_chunks)
+        for chunk in chinese_chunks:
+            tokens.append(chunk)
+            max_window = min(4, len(chunk))
+            for size in range(2, max_window + 1):
+                for start in range(0, len(chunk) - size + 1):
+                    tokens.append(chunk[start : start + size])
+        return tokens
+
+    def _split_labels(self, text: str) -> list[str]:
+        return [
+            self._clean_text_label(item)
+            for item in re.split(r"(?:、|，|,|；|;|和|与|以及|及其|及|/)\s*", text)
+            if self._clean_text_label(item)
+        ]
+
+    def _fallback_prerequisites(self, title: str) -> list[str]:
+        prerequisites_by_title = {
+            "Python 循环": ["顺序结构", "条件判断"],
+            "Python 条件判断": ["布尔表达式", "比较运算"],
+            "递归": ["函数调用", "条件判断"],
+            "二分查找": ["顺序结构", "条件判断", "循环"],
+            "动态规划": ["递归", "数组", "状态转移"],
+        }
+        return prerequisites_by_title.get(title, [])
+
+    # ------------------------------------------------------------------
+    # Courseware → graph synchronization
+    # ------------------------------------------------------------------
+
+    def sync_courseware_to_graph(self, knowledge_point: str) -> dict[str, Any]:
+        """Parse courseware content into graph relations and persist them.
+
+        Scans all Resource rows matching *knowledge_point*, extracts
+        prerequisite and recommended topic names from their Markdown
+        content, then writes them as:
+
+        * SQL ``KnowledgeRelation`` rows (``DEPENDS_ON`` / ``RECOMMENDS``)
+        * Neo4j ``DEPENDS_ON`` / ``RECOMMENDS`` edges (when Neo4j is enabled)
+
+        Returns a dict with counts of newly-created relations and nodes.
+        """
+        prerequisites = self._derive_prerequisites(knowledge_point, None)
+        recommendations = self._derive_recommendations(knowledge_point, None)
+
+        result: dict[str, Any] = {
+            "knowledge_point": knowledge_point,
+            "prerequisites_extracted": prerequisites,
+            "recommendations_extracted": recommendations,
+            "sql_knowledge_points_created": 0,
+            "sql_relations_created": 0,
+            "neo4j_relations_created": 0,
+        }
+
+        if not prerequisites and not recommendations:
+            return result
+
+        with SessionLocal() as db:
+            # ensure the current knowledge point exists in SQL
+            current_kp = self._get_or_create_sql_knowledge_point(
+                db, knowledge_point
+            )
+
+            # persist prerequisite relations
+            for prereq_name in prerequisites:
+                prereq_kp = self._get_or_create_sql_knowledge_point(db, prereq_name)
+                if self._create_sql_relation_if_absent(
+                    db, prereq_kp.id, current_kp.id, "DEPENDS_ON"
+                ):
+                    result["sql_relations_created"] += 1
+
+            # persist recommendation relations
+            for rec_name in recommendations:
+                rec_kp = self._get_or_create_sql_knowledge_point(db, rec_name)
+                if self._create_sql_relation_if_absent(
+                    db, current_kp.id, rec_kp.id, "RECOMMENDS"
+                ):
+                    result["sql_relations_created"] += 1
+
+            db.commit()
+
+        # mirror to Neo4j when available
+        neo4j_count = self._sync_relations_to_neo4j(
+            knowledge_point, prerequisites, "DEPENDS_ON"
+        ) + self._sync_relations_to_neo4j(
+            knowledge_point, recommendations, "RECOMMENDS"
+        )
+        result["neo4j_relations_created"] = neo4j_count
+
+        logger.info(
+            "sync_courseware_to_graph: kp=%s prereq=%d rec=%d sql_rel=%d neo4j_rel=%d",
+            knowledge_point,
+            len(prerequisites),
+            len(recommendations),
+            result["sql_relations_created"],
+            neo4j_count,
+        )
+        return result
+
+    def _get_or_create_sql_knowledge_point(
+        self, db: Any, name: str
+    ) -> KnowledgePoint:
+        existing = (
+            db.query(KnowledgePoint).filter(KnowledgePoint.name == name).first()
+        )
+        if existing is not None:
+            return existing
+        kp = KnowledgePoint(
+            name=name,
+            description=f"从课件内容自动提取 {name}",
+            difficulty=2,
+            importance=2,
+        )
+        db.add(kp)
+        db.flush()
+        return kp
+
+    def _create_sql_relation_if_absent(
+        self, db: Any, from_id: int, to_id: int, relation_type: str
+    ) -> bool:
+        existing = (
+            db.query(KnowledgeRelation)
+            .filter(
+                KnowledgeRelation.from_id == from_id,
+                KnowledgeRelation.to_id == to_id,
+                KnowledgeRelation.relation_type == relation_type,
+            )
+            .first()
+        )
+        if existing is not None:
+            return False
+        db.add(
+            KnowledgeRelation(
+                from_id=from_id,
+                to_id=to_id,
+                relation_type=relation_type,
+            )
+        )
+        return True
+
+    def _sync_relations_to_neo4j(
+        self,
+        knowledge_point: str,
+        targets: list[str],
+        relation_type: str,
+    ) -> int:
+        if self._driver is None:
+            return 0
+        count = 0
+        try:
+            driver = self._require_driver()
+            with driver.session() as session:
+                for target in targets:
+                    query = """
+                    MERGE (kp:KnowledgePoint {name: $knowledge_point})
+                    MERGE (target:KnowledgePoint {name: $target})
+                    MERGE (kp)-[r:RELATION {type: $relation_type}]->(target)
+                    SET r.label = $relation_type
+                    """
+                    session.run(
+                        query,
+                        knowledge_point=knowledge_point,
+                        target=target,
+                        relation_type=relation_type,
+                    )
+                    count += 1
+        except Exception as exc:
+            logger.warning(
+                "Neo4j relation sync failed for %s (%s): %s",
+                knowledge_point,
+                relation_type,
+                exc,
+            )
+        return count

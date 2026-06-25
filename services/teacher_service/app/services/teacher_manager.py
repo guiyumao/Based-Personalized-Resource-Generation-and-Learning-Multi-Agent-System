@@ -149,10 +149,6 @@ class TeacherManager:
         if insight is None:
             raise ValueError(f"Student {user_id} not found in class {class_id}.")
 
-        stage_fallback = self._build_empty_report("stage", insight)
-        comprehensive_fallback = self._build_empty_report("comprehensive", insight)
-        mistakes_fallback: list[MistakeNotebookItem] = []
-
         endpoints = {
             "stage": f"{self._settings.evaluation_service_url}/evaluation/reports/stage/{user_id}/detail",
             "comprehensive": (
@@ -161,33 +157,16 @@ class TeacherManager:
             "mistakes": f"{self._settings.evaluation_service_url}/evaluation/mistakes/{user_id}/teacher-detail",
         }
 
-        try:
-            async with httpx.AsyncClient(timeout=6.0) as client:
-                stage_response, comprehensive_response, mistakes_response = await asyncio.gather(
-                    client.get(endpoints["stage"]),
-                    client.get(endpoints["comprehensive"]),
-                    client.get(endpoints["mistakes"]),
-                )
-        except httpx.HTTPError as exc:
-            logger.warning("teacher detail aggregation fallback triggered: %s", exc)
-            return StudentLearningDetail(
-                **self._to_dict(insight),
-                mistake_notebook=mistakes_fallback,
-                stage_report=stage_fallback,
-                comprehensive_report=comprehensive_fallback,
-            )
-        except Exception as exc:
-            logger.warning("teacher detail aggregation unexpected fallback triggered: %s", exc)
-            return StudentLearningDetail(
-                **self._to_dict(insight),
-                mistake_notebook=mistakes_fallback,
-                stage_report=stage_fallback,
-                comprehensive_report=comprehensive_fallback,
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            stage_response, comprehensive_response, mistakes_response = await asyncio.gather(
+                client.get(endpoints["stage"]),
+                client.get(endpoints["comprehensive"]),
+                client.get(endpoints["mistakes"]),
             )
 
-        stage_report = self._parse_report_response(stage_response, stage_fallback)
-        comprehensive_report = self._parse_report_response(comprehensive_response, comprehensive_fallback)
-        mistake_notebook = self._parse_mistake_response(mistakes_response, mistakes_fallback)
+        stage_report = self._parse_report_response(stage_response)
+        comprehensive_report = self._parse_report_response(comprehensive_response)
+        mistake_notebook = self._parse_mistake_response(mistakes_response)
 
         return StudentLearningDetail(
             **self._to_dict(insight),
@@ -470,45 +449,22 @@ class TeacherManager:
     def _parse_report_response(
         self,
         response: httpx.Response,
-        fallback: TeacherReportDetail,
     ) -> TeacherReportDetail:
-        """Safely normalize a report-service response."""
+        """Normalize a report-service response."""
 
-        try:
-            response.raise_for_status()
-            payload = response.json()
-            data = payload.get("data", {})
-            return TeacherReportDetail(**data)
-        except (httpx.HTTPError, ValueError, TypeError) as exc:
-            logger.warning("teacher report parse fallback triggered: %s", exc)
-            return fallback
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data", {})
+        return TeacherReportDetail(**data)
 
     def _parse_mistake_response(
         self,
         response: httpx.Response,
-        fallback: list[MistakeNotebookItem],
     ) -> list[MistakeNotebookItem]:
-        """Safely normalize a mistake notebook response."""
+        """Normalize a mistake notebook response."""
 
-        try:
-            response.raise_for_status()
-            payload = response.json()
-            data = payload.get("data", {})
-            items = data.get("items", [])
-            return [MistakeNotebookItem(**item) for item in items]
-        except (httpx.HTTPError, ValueError, TypeError) as exc:
-            logger.warning("teacher mistake parse fallback triggered: %s", exc)
-            return fallback
-
-    def _build_empty_report(self, report_type: str, insight: StudentInsight) -> TeacherReportDetail:
-        """Create an empty report placeholder when evaluation-service has no real data."""
-
-        return TeacherReportDetail(
-            report_type=report_type,
-            user_id=insight.user_id,
-            title="暂无报告",
-            summary="暂无真实报告数据。",
-            strengths=[],
-            weaknesses=[],
-            next_actions=[],
-        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data", {})
+        items = data.get("items", [])
+        return [MistakeNotebookItem(**item) for item in items]

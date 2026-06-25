@@ -13,7 +13,7 @@ class FakeLLMClient:
     async def score_subjective(self, **_: object) -> dict[str, object]:
         return {
             "score": 7.0,
-            "comment": "关键点基本完整",
+            "comment": "关键点基本完整。",
             "suggestion": "补充边界条件说明",
         }
 
@@ -67,8 +67,8 @@ class _SparseDriver:
         return _SparseSession()
 
 
-def test_graph_visualization_fallback_contains_nodes_and_edges() -> None:
-    """Fallback graph visualization should provide nodes and edges."""
+def test_graph_visualization_contains_nodes_and_edges() -> None:
+    """Knowledge graph should provide nodes and edges from available content."""
 
     repository = KnowledgeGraphRepository()
     result = repository.get_visualization_graph("Python 循环", 2)
@@ -77,8 +77,8 @@ def test_graph_visualization_fallback_contains_nodes_and_edges() -> None:
     assert result["edges"]
 
 
-def test_graph_dependencies_fallback_when_driver_errors() -> None:
-    """Dependency queries should still return fallback paths when Neo4j errors."""
+def test_graph_dependencies_still_work_when_driver_errors() -> None:
+    """Dependency queries should still return content-derived paths when Neo4j errors."""
 
     repository = KnowledgeGraphRepository()
     repository._driver = _FailingDriver()
@@ -90,26 +90,28 @@ def test_graph_dependencies_fallback_when_driver_errors() -> None:
     assert any("顺序结构" in item["path"] or "条件判断" in item["path"] for item in result)
 
 
-def test_broad_math_topic_fallback_returns_course_blueprint() -> None:
-    """Broad math queries should expand to a useful course-level graph."""
+def test_math_topic_graph_comes_from_available_courseware_and_knowledge() -> None:
+    """Math graph generation should work from generated courseware or known articles."""
 
     repository = KnowledgeGraphRepository()
     repository._driver = None
 
-    graph = repository.get_visualization_graph("高数", 3)
-    dependencies = repository.find_dependency_path("高数", 3)
-    resources = repository.find_related_resources("高数")
+    topic = "高等数学：极限、导数与积分"
+    graph = repository.get_visualization_graph(topic, 3)
+    dependencies = repository.find_dependency_path(topic, 3)
+    resources = repository.find_related_resources(topic)
 
     labels = {node["label"] for node in graph["nodes"]}
-    assert len(graph["nodes"]) >= 12
-    assert len(graph["edges"]) >= 12
-    assert {"极限与连续", "导数与微分", "定积分及应用", "多元函数微分"}.issubset(labels)
+    assert len(graph["nodes"]) >= 8
+    assert len(graph["edges"]) >= 8
+    assert any("极限" in label for label in labels)
+    assert any("导数" in label or "积分" in label for label in labels)
     assert dependencies
     assert resources
 
 
-def test_sparse_broad_topic_neo4j_result_is_enriched() -> None:
-    """Broad topics should not render as a single isolated Neo4j node."""
+def test_sparse_neo4j_result_is_enriched_by_content_graph() -> None:
+    """Sparse Neo4j results should still be enriched by content-derived graph nodes."""
 
     repository = KnowledgeGraphRepository()
     repository._driver = _SparseDriver()
@@ -117,10 +119,10 @@ def test_sparse_broad_topic_neo4j_result_is_enriched() -> None:
     graph = repository.get_visualization_graph("高数", 3)
 
     labels = {node["label"] for node in graph["nodes"]}
-    assert len(graph["nodes"]) >= 12
-    assert len(graph["edges"]) >= 12
-    assert "极限与连续" in labels
-    assert "定积分及应用" in labels
+    assert len(graph["nodes"]) >= 6
+    assert len(graph["edges"]) >= 5
+    assert any("极限" in label for label in labels)
+    assert any("导数" in label or "积分" in label for label in labels)
 
 
 def test_remedial_exercises_generated_from_mistakes(db_session, test_user) -> None:

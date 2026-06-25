@@ -100,13 +100,9 @@ function formatModelUsed(modelUsed?: string) {
   const labelMap: Record<string, string> = {
     qa_learning_llm: '学习助教',
     qa_general_llm: '通用助手',
-    qa_general_grounded: '检索辅助',
-    qa_general_fallback: '基础回答',
     qa_realtime: '实时信息',
-    qa_orchestrated: '学习助教',
     large_model: '深度回答',
     small_model: '快速回答',
-    fallback: '基础回答',
   }
   return labelMap[normalized] ?? 'AI 助手'
 }
