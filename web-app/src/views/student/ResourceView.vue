@@ -70,10 +70,10 @@ async function fetchKnowledgeBase(subject = '') {
     articles.value = data.items
     selectedArticle.value = data.items[0] ?? null
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
     articles.value = []
     selectedArticle.value = null
-    error.value = `å è½½å¤§å­¦ç¥è¯åºå¤±è´¥ï¼${detail}`
+    error.value = `加载大学知识库失败：${detail}`
   } finally {
     knowledgeLoading.value = false
   }
@@ -85,9 +85,9 @@ async function fetchResources() {
     const { data } = await resourceApi.get<ApiEnvelope<ManagedResourceItem[]>>('/resources')
     resources.value = data.data ?? []
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
     resources.value = []
-    error.value = error.value || `å è½½å·²ä¿å­èµæºå¤±è´¥ï¼${detail}`
+    error.value = error.value || `加载已保存资源失败：${detail}`
   } finally {
     resourceLoading.value = false
   }
@@ -110,8 +110,8 @@ async function searchKnowledgeBase() {
       : data.items
     selectedArticle.value = articles.value[0] ?? null
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
-    error.value = `æç´¢å¤§å­¦ç¥è¯åºå¤±è´¥ï¼${detail}`
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    error.value = `搜索大学知识库失败：${detail}`
   } finally {
     knowledgeLoading.value = false
   }
@@ -170,10 +170,10 @@ async function importResource(resource: KnowledgeBaseArticle['external_resources
     if (imported?.download_url) {
       window.open(`${serviceEndpoints.resource}${imported.download_url}`, '_blank', 'noreferrer')
     }
-    ElMessage.success('è¯¾ä»¶å·²ä¸è½½å¹¶ä¿å­å°èµæºåº')
+    ElMessage.success('课件已下载并保存到资源库')
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
-    ElMessage.error(`ä¸è½½è¯¾ä»¶å¤±è´¥ï¼${detail}`)
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    ElMessage.error(`下载课件失败：${detail}`)
   } finally {
     importingUrl.value = ''
   }
@@ -182,9 +182,9 @@ async function importResource(resource: KnowledgeBaseArticle['external_resources
 async function exportResource(item: ManagedResourceItem, format: 'pdf' | 'word') {
   try {
     await resourceApi.post(`/resources/${item.id}/export`, { export_format: format })
-    ElMessage.success(`å·²åèµ· ${format.toUpperCase()} å¯¼åº`)
+    ElMessage.success(`已发起 ${format.toUpperCase()} 导出`)
   } catch {
-    ElMessage.error('å¯¼åºå¤±è´¥')
+    ElMessage.error('导出失败')
   }
 }
 
@@ -192,9 +192,9 @@ async function updateStatus(item: ManagedResourceItem, status: 'draft' | 'ready'
   try {
     await resourceApi.patch(`/resources/${item.id}/status`, { status })
     item.status = status
-    ElMessage.success('ç¶æå·²æ´æ°')
+    ElMessage.success('状态已更新')
   } catch {
-    ElMessage.error('ç¶ææ´æ°å¤±è´¥')
+    ElMessage.error('状态更新失败')
   }
 }
 
@@ -206,11 +206,11 @@ async function deleteSelectedResource() {
 
   try {
     await ElMessageBox.confirm(
-      `å é¤åï¼â${item.title}âå°ä»èµæºåºç§»é¤${item.is_downloadable ? 'ï¼æ¬å°ä¸è½½æä»¶ä¹ä¼ä¸å¹¶å é¤' : ''}ã`,
-      'å é¤èµæº',
+      `删除后，“${item.title}”将从资源库移除${item.is_downloadable ? '，本地下载文件也会一并删除' : ''}。`,
+      '删除资源',
       {
-        confirmButtonText: 'ç¡®è®¤å é¤',
-        cancelButtonText: 'åæ¶',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
         type: 'warning',
       },
     )
@@ -223,26 +223,26 @@ async function deleteSelectedResource() {
     selectedResource.value = null
     showDetail.value = false
     await fetchResources()
-    ElMessage.success('èµæºå·²å é¤')
+    ElMessage.success('资源已删除')
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
-    ElMessage.error(`å é¤èµæºå¤±è´¥ï¼${detail}`)
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    ElMessage.error(`删除资源失败：${detail}`)
   }
 }
 
 async function deleteAllResources() {
   if (!resources.value.length) {
-    ElMessage.warning('å½åæ²¡æå¯å é¤çèµæº')
+    ElMessage.warning('当前没有可删除的资源')
     return
   }
 
   try {
     await ElMessageBox.confirm(
-      `ç¡®è®¤ä¸é®å é¤å¨é¨ ${resources.value.length} é¡¹å·²ä¿å­èµæºåï¼å·²ä¸è½½çæ¬å°æä»¶ä¹ä¼ä¸å¹¶å é¤ã`,
-      'ä¸é®å é¤å¨é¨èµæº',
+      `确认一键删除全部 ${resources.value.length} 项已保存资源吗？已下载的本地文件也会一并删除。`,
+      '一键删除全部资源',
       {
-        confirmButtonText: 'ç¡®è®¤å é¤',
-        cancelButtonText: 'åæ¶',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
         type: 'warning',
       },
     )
@@ -255,10 +255,10 @@ async function deleteAllResources() {
     selectedResource.value = null
     showDetail.value = false
     await fetchResources()
-    ElMessage.success(`å·²å é¤ ${data.data?.deleted_count ?? 0} é¡¹èµæº`)
+    ElMessage.success(`已删除 ${data.data?.deleted_count ?? 0} 项资源`)
   } catch (err: any) {
-    const detail = err?.response?.data?.detail ?? err?.message ?? 'æªç¥éè¯¯'
-    ElMessage.error(`ä¸é®å é¤å¤±è´¥ï¼${detail}`)
+    const detail = err?.response?.data?.detail ?? err?.message ?? '未知错误'
+    ElMessage.error(`一键删除失败：${detail}`)
   }
 }
 </script>
@@ -273,29 +273,29 @@ async function deleteAllResources() {
       </div>
       <div class="header-actions">
         <button :disabled="isLoading" class="secondary-button" @click="refreshPage">
-          {{ isLoading ? 'å·æ°ä¸­...' : 'å·æ°èµæº' }}
+          {{ isLoading ? '刷新中...' : '刷新资源' }}
         </button>
         <button :disabled="resourceLoading || !resources.length" class="danger-button" @click="deleteAllResources">
-          ä¸é®å é¤
+          一键删除
         </button>
       </div>
     </header>
 
     <section class="resource-summary">
       <article>
-        <span>ç¥è¯åºä¸é¢</span>
+        <span>知识库专题</span>
         <strong>{{ articles.length }}</strong>
       </article>
       <article>
-        <span>å¯ä¸è½½å®æ¹è¯¾ä»¶</span>
+        <span>可下载官方课件</span>
         <strong>{{ selectedArticle?.external_resources.length ?? 0 }}</strong>
       </article>
       <article>
-        <span>å·²ä¿å­è¯¾ä»¶</span>
+        <span>已保存课件</span>
         <strong>{{ importedResources.length }}</strong>
       </article>
       <article>
-        <span>ç³»ç»çæèµæº</span>
+        <span>系统生成资源</span>
         <strong>{{ generatedResources.length }}</strong>
       </article>
     </section>
@@ -306,10 +306,10 @@ async function deleteAllResources() {
       <div class="resource-search">
         <input
           v-model="searchText"
-          placeholder="æç´¢è¯¾ç¨ãæ¦å¿µæå³é®è¯ï¼ä¾å¦ï¼äºå¡ãéå½ãTCPãç©éµ"
+          placeholder="搜索课程、概念或关键词，例如：事务、递归、TCP、矩阵"
           @keyup.enter="searchKnowledgeBase"
         />
-        <button :disabled="knowledgeLoading" @click="searchKnowledgeBase">æç´¢</button>
+        <button :disabled="knowledgeLoading" @click="searchKnowledgeBase">搜索</button>
       </div>
       <div class="subject-row">
         <button
@@ -340,7 +340,7 @@ async function deleteAllResources() {
           <p>{{ article.summary }}</p>
         </article>
         <div v-if="!knowledgeLoading && !articles.length" class="empty-state">
-          ææ å¹éçå¤§å­¦ç¥è¯åºåå®¹ã
+          暂无匹配的大学知识库内容。
         </div>
       </aside>
 
@@ -359,8 +359,8 @@ async function deleteAllResources() {
 
           <section class="download-section">
             <div class="section-title">
-              <h3>ä¸è½½è¯¾ä»¶</h3>
-              <p>è¿éæ¾ç¤ºå½åç¥è¯ç¹å³èçå®æ¹è¯¾ä»¶ãè®²ä¹ãææåä¸è½½åã</p>
+              <h3>下载课件</h3>
+              <p>这里显示当前知识点关联的官方课件、讲义、教材和下载包。</p>
             </div>
 
             <div v-if="selectedArticle.external_resources.length" class="download-grid">
@@ -376,26 +376,26 @@ async function deleteAllResources() {
                 <h4>{{ resource.title }}</h4>
                 <p>{{ resource.notes }}</p>
                 <div class="download-actions">
-                  <a :href="resource.url" target="_blank" rel="noreferrer">æå¼åç«</a>
+                  <a :href="resource.url" target="_blank" rel="noreferrer">打开原站</a>
                   <button :disabled="importingUrl === resource.url" @click="importResource(resource)">
                     {{
                       importingUrl === resource.url
-                        ? 'ä¸è½½ä¸­...'
+                        ? '下载中...'
                         : findDownloadedResource(resource)
-                          ? 'æå¼å·²ä¿å­æä»¶'
-                          : 'ä¸è½½è¯¾ä»¶'
+                          ? '打开已保存文件'
+                          : '下载课件'
                     }}
                   </button>
                 </div>
               </article>
             </div>
-            <div v-else class="empty-state">å½åç¥è¯ç¹ææ å¯ä¸è½½è¯¾ä»¶ã</div>
+            <div v-else class="empty-state">当前知识点暂无可下载课件。</div>
           </section>
 
           <section class="downloaded-section">
             <div class="section-title">
-              <h3>å½åç¥è¯ç¹å·²ä¸è½½</h3>
-              <p>å·²ä¸è½½è¯¾ä»¶ä¼è½çä¿å­ï¼å¯éå¤æå¼æä¸è½½ã</p>
+              <h3>当前知识点已下载</h3>
+              <p>已下载课件会落盘保存，可重复打开或下载。</p>
             </div>
             <div v-if="currentArticleDownloaded.length" class="saved-grid">
               <button
@@ -408,17 +408,17 @@ async function deleteAllResources() {
                 <span>{{ item.provider }} / {{ item.format }}</span>
               </button>
             </div>
-            <div v-else class="empty-state compact">è¿æ²¡æä¸è½½å½åç¥è¯ç¹çè¯¾ä»¶ã</div>
+            <div v-else class="empty-state compact">还没有下载当前知识点的课件。</div>
           </section>
         </template>
-        <div v-else class="empty-state panel-empty">è¯·éæ©ä¸ä¸ªç¥è¯åºä¸é¢ã</div>
+        <div v-else class="empty-state panel-empty">请选择一个知识库专题。</div>
       </main>
     </section>
 
     <section class="library-section">
       <div class="section-title">
-        <h3>å¨é¨å·²ä¿å­èµæº</h3>
-        <p>åå«ä»å¤§å­¦ç¥è¯åºä¸è½½çå®æ¹è¯¾ä»¶ï¼ä»¥åç³»ç»çæçä¸ªæ§åå­¦ä¹ èµæºã</p>
+        <h3>全部已保存资源</h3>
+        <p>包含从大学知识库下载的官方课件，以及系统生成的个性化学习资源。</p>
       </div>
 
       <div v-if="resources.length" class="library-grid">
@@ -431,12 +431,12 @@ async function deleteAllResources() {
             <span class="status-badge">{{ statusLabel[item.status] ?? item.status }}</span>
           </div>
           <h4>{{ item.title }}</h4>
-          <p>ç¥è¯ç¹ï¼{{ item.knowledge_point }}</p>
-          <p>æ ¼å¼ï¼{{ item.format }}<template v-if="item.provider"> / {{ item.provider }}</template></p>
+          <p>知识点：{{ item.knowledge_point }}</p>
+          <p>格式：{{ item.format }}<template v-if="item.provider"> / {{ item.provider }}</template></p>
         </article>
       </div>
       <div v-else-if="!resourceLoading" class="empty-state">
-        ææ å·²ä¿å­èµæºãåå¨ä¸æ¹éæ©ç¥è¯ç¹å¹¶ä¸è½½è¯¾ä»¶ã
+        暂无已保存资源。先在上方选择知识点并下载课件。
       </div>
     </section>
 
@@ -452,14 +452,14 @@ async function deleteAllResources() {
 
         <h3>{{ selectedResource.title }}</h3>
         <div class="modal-info">
-          <div>ç¥è¯ç¹ï¼{{ selectedResource.knowledge_point }}</div>
-          <div>ç¶æï¼{{ statusLabel[selectedResource.status] ?? selectedResource.status }}</div>
-          <div>æ ¼å¼ï¼{{ selectedResource.format }}</div>
-          <div v-if="selectedResource.provider">æä¾æ¹ï¼{{ selectedResource.provider }}</div>
-          <div v-if="selectedResource.source_kind">èµæºç±»åï¼{{ kindLabel[selectedResource.source_kind] ?? selectedResource.source_kind }}</div>
-          <div v-if="selectedResource.file_name">æä»¶åï¼{{ selectedResource.file_name }}</div>
+          <div>知识点：{{ selectedResource.knowledge_point }}</div>
+          <div>状态：{{ statusLabel[selectedResource.status] ?? selectedResource.status }}</div>
+          <div>格式：{{ selectedResource.format }}</div>
+          <div v-if="selectedResource.provider">提供方：{{ selectedResource.provider }}</div>
+          <div v-if="selectedResource.source_kind">资源类型：{{ kindLabel[selectedResource.source_kind] ?? selectedResource.source_kind }}</div>
+          <div v-if="selectedResource.file_name">文件名：{{ selectedResource.file_name }}</div>
           <a v-if="selectedResource.external_url" :href="selectedResource.external_url" target="_blank" rel="noreferrer">
-            æ¥çåå§æ¥æº
+            查看原始来源
           </a>
           <div v-if="selectedResource.notes">{{ selectedResource.notes }}</div>
         </div>
@@ -472,19 +472,19 @@ async function deleteAllResources() {
             rel="noreferrer"
             class="primary-link"
           >
-            ä¸è½½è¯¾ä»¶æä»¶
+            下载课件文件
           </a>
           <button v-if="selectedResource.source_type === 'generated'" @click="exportResource(selectedResource, 'pdf')">
-            å¯¼åº PDF
+            导出 PDF
           </button>
           <button v-if="selectedResource.source_type === 'generated'" @click="exportResource(selectedResource, 'word')">
-            å¯¼åº Word
+            导出 Word
           </button>
           <button @click="updateStatus(selectedResource, statusNext[selectedResource.status])">
-            åæ¢ä¸º {{ statusLabel[statusNext[selectedResource.status]] }}
+            切换为 {{ statusLabel[statusNext[selectedResource.status]] }}
           </button>
           <button class="danger-button" @click="deleteSelectedResource">
-            å é¤èµæº
+            删除资源
           </button>
         </div>
       </div>
