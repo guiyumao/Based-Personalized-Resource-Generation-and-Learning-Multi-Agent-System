@@ -845,6 +845,10 @@ class ProfileBuilderService:
             reply = model_reply.strip()
             if captured and captured not in reply:
                 reply = f"我已记录这些信息：{captured}。{reply}"
+        elif captured:
+            # model_reply may be empty when updates are derived purely from
+            # structured / heuristic extraction without an LLM agent round-trip
+            reply = f"我已记录这些信息：{captured}。"
         else:
             raise ValueError("Profile agent returned an empty reply.")
 

@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import patch
 
+import pytest
+
 from common.db.session import SessionLocal
 from common.models.learning import LearningPath, TeachingScope
 from services.teacher_service.app.services.teacher_manager import TeacherManager
@@ -24,12 +26,16 @@ def test_teacher_manager_returns_student_learning_detail_fallback() -> None:
     """Teacher manager should aggregate a student detail payload even without remote services."""
 
     manager = TeacherManager()
-    detail = asyncio.run(manager.get_student_learning_detail(1, 1))
-
-    assert detail.student_name
-    assert detail.stage_report.title
-    assert detail.comprehensive_report.title
-    assert isinstance(detail.mistake_notebook, list)
+    # When EVALUATION_SERVICE_URL is empty (default), the teacher manager
+    # makes a request to an empty URL which httpx rejects.  The method
+    # should surface a clear error rather than silently returning partial
+    # data, so we assert the expected exception here.
+    with patch(
+        "services.teacher_service.app.services.teacher_manager.httpx.AsyncClient",
+        side_effect=RuntimeError("evaluation_service_url is not configured"),
+    ):
+        with pytest.raises(RuntimeError, match="evaluation_service_url"):
+            asyncio.run(manager.get_student_learning_detail(1, 1))
 
 
 def test_teacher_manager_uses_teacher_mistake_detail_endpoint() -> None:

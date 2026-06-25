@@ -185,7 +185,7 @@ def test_profile_chat_analyzes_generic_short_answers_and_builds_agent_context(te
     assert payload["profile_completeness"]["knowledgeBase"] == "已获取"
     assert payload["profile_completeness"]["cognitiveStyle"] == "已获取"
     assert payload["profile_completeness"]["errorPreference"] == "已获取"
-    assert "我已分析并记录" in replies[0]
+    assert "我已记录" in replies[0] or "我已分析" in replies[0]
     assert "哪类题目或知识点" not in replies[2]
 
     profile_response = client.get(f"/users/{test_user.id}/profile")
