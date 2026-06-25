@@ -65,6 +65,11 @@ class ExerciseGenerationService:
                 generated = self._try_generate_with_llm(request, snapshot)
             if generated is None:
                 generated = self._build_fallback_exercises(request, snapshot, previous_signatures, agent_plan)
+            else:
+                # ── Audit: validate LLM output matches requested topic ──
+                generated = self._audit_and_retry_exercises(
+                    request, snapshot, generated, agent_plan, previous_signatures
+                )
             generated["exercises"] = self._complete_with_fallback_exercises(
                 request=request,
                 snapshot=snapshot,
@@ -119,6 +124,19 @@ class ExerciseGenerationService:
         courseware_focus = self._extract_courseware_focus(request.courseware_content)
         recent_mistakes_text = self._build_recent_mistakes_text(snapshot)
 
+        # ── RAG retrieval ──
+        context_text = ""
+        try:
+            from services.agent_service.app.services.rag import ChromaRetriever
+            retriever = ChromaRetriever(self.settings)
+            if retriever.is_available:
+                context_text = retriever.retrieve_context_text(
+                    query=f"{request.knowledge_point} {request.generation_mode}",
+                    top_k=3,
+                )
+        except Exception:
+            pass
+
         try:
             from langchain_core.output_parsers import StrOutputParser
             from langchain_core.prompts import ChatPromptTemplate
@@ -137,6 +155,7 @@ class ExerciseGenerationService:
                             "学习者画像：{learner_profile}\n"
                             "个性化依据：{personalization_basis}\n"
                             "近期错题：{recent_mistakes_text}\n"
+                            "参考资料：{context_text}\n"
                             "知识底稿：{grounding_text}\n"
                             "课件重点：{courseware_focus}\n"
                             "课件摘要：{courseware_excerpt}\n"
@@ -150,11 +169,11 @@ class ExerciseGenerationService:
                             "4. 选择题选项要有合理干扰性，解析要说明各选项对错原因。\n"
                             "5. 简答题和编程题解析要说明解题步骤、检查点和易错点。\n"
                             "6. 只输出 JSON，不要输出额外解释。\n"
-                            "输出格式：\n"
-                            "{\n"
+                            "输出格式（严格 JSON）：\n"
+                            "{{\n"
                             '  "summary": "字符串",\n'
                             '  "exercises": [\n'
-                            "    {\n"
+                            "    {{\n"
                             '      "exercise_id": 1,\n'
                             '      "knowledge_point": "字符串",\n'
                             '      "question_type": "choice|blank|judge|short_answer|programming",\n'
@@ -163,9 +182,9 @@ class ExerciseGenerationService:
                             '      "options": ["A. ...", "B. ..."],\n'
                             '      "answer": "标准答案",\n'
                             '      "analysis": "详细解析"\n'
-                            "    }\n"
+                            "    }}\n"
                             "  ]\n"
-                            "}\n"
+                            "}}\n"
                         ),
                     ),
                 ]
@@ -176,9 +195,10 @@ class ExerciseGenerationService:
                     "knowledge_point": request.knowledge_point,
                     "generation_mode": request.generation_mode,
                     "resource_style": request.resource_style,
-                    "learner_profile": snapshot.learner_profile,
+                    "learner_profile": self._build_conditional_profile_text(request.knowledge_point, snapshot),
                     "personalization_basis": "\n".join(self._build_personalization_basis(snapshot)),
                     "recent_mistakes_text": recent_mistakes_text,
+                    "context_text": context_text[:1200] if context_text else "暂无额外参考资料。",
                     "grounding_text": grounding_text[:1200],
                     "courseware_focus": courseware_focus[:500],
                     "agent_plan": json.dumps(agent_plan or {}, ensure_ascii=False),
@@ -246,24 +266,148 @@ class ExerciseGenerationService:
                 "summary": str(payload.get("summary", "")),
                 "exercises": normalized_exercises[: request.exercise_count],
             }
-        except Exception:
+        except Exception as exc:
+            import traceback, sys
+            print("[exercise_generation] LLM call failed:", exc, file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
             return None
 
+    def _audit_and_retry_exercises(
+        self,
+        request: ExerciseGenerationRequest,
+        snapshot: LearnerPersonalizationSnapshot,
+        generated: dict[str, object],
+        agent_plan: dict[str, object] | None,
+        previous_signatures: set[str],
+        max_retries: int = 2,
+    ) -> dict[str, object]:
+        """Audit LLM-generated exercises; retry with higher temperature on rejection."""
+        from services.agent_service.app.services.audit_service import AuditService
+
+        auditor = AuditService(self.settings)
+        exercises = list(generated.get("exercises", []))
+
+        for attempt in range(max_retries + 1):
+            passed, reason = auditor.audit_exercises(request.knowledge_point, exercises)
+            if passed:
+                return generated  # ✅ passed audit
+
+            # ❌ rejected — retry with higher temperature
+            if attempt < max_retries:
+                retry_temp = 0.15 + (attempt + 1) * 0.25  # 0.4, 0.65
+                try:
+                    from services.agent_service.app.services.llm_factory import LLMFactory
+                    llm = LLMFactory(self.settings).build_chat_model(temperature=retry_temp)
+                    from langchain_core.output_parsers import StrOutputParser
+                    from langchain_core.prompts import ChatPromptTemplate
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", self._build_llm_system_prompt()),
+                        ("human", (
+                            "请重新生成一组练习题，注意：\n"
+                            "知识点：{knowledge_point}\n"
+                            "生成模式：{generation_mode}\n"
+                            "题目数量：{exercise_count}\n"
+                            f"上次生成被驳回，原因：{reason}\n"
+                            "请严格围绕知识点出题，不要跑题。只输出 JSON。"
+                        )),
+                    ])
+                    chain = prompt | llm | StrOutputParser()
+                    article = self.knowledge_base.get_article(request.knowledge_point)
+                    grounding = self._build_grounding_text(article)[:800]
+                    raw = chain.invoke({
+                        "knowledge_point": request.knowledge_point,
+                        "generation_mode": request.generation_mode,
+                        "exercise_count": request.exercise_count,
+                        "grounding_text": grounding,
+                    })
+                    parsed = self._extract_json(raw)
+                    retry_exercises = parsed.get("exercises", [])
+                    if retry_exercises:
+                        generated = {**generated, "exercises": retry_exercises, "summary": str(parsed.get("summary", ""))}
+                        exercises = retry_exercises
+                except Exception:
+                    pass  # retry failed → keep original
+
+        return generated  # return whatever we have after max retries
+
+    def _build_conditional_profile_text(self, knowledge_point: str, snapshot: LearnerPersonalizationSnapshot) -> str:
+        """Only inject learner profile when the requested topic matches known weak areas."""
+        if not snapshot or not knowledge_point:
+            return "无特殊画像要求，请按通用标准出题。"
+        weak_areas = snapshot.learner_profile.get("weak_question_types", []) if isinstance(snapshot.learner_profile, dict) else []
+        # Check if the knowledge_point overlaps with any weak area
+        kp_lower = knowledge_point.lower()
+        matches = any(
+            area.lower() in kp_lower or kp_lower in area.lower()
+            for area in weak_areas
+        )
+        if matches:
+            return json.dumps(snapshot.learner_profile, ensure_ascii=False)
+        # New topic — don't force profile onto it
+        return f"学生正在学习全新主题「{knowledge_point}」，请从基础概念出发出题，不要受学生历史画像影响。"
+
     def _extract_json(self, raw: str) -> dict[str, Any]:
+        """Extract a JSON object from potentially noisy LLM output.
+
+        Tries multiple strategies in order:
+        1. Direct parse after stripping markdown fences.
+        2. Balanced-brace extraction (handles nested objects / arrays).
+        3. Common DeepSeek repair: unescape internal quotes, strip trailing
+           text after the final closing brace.
+        """
         cleaned = raw.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned.removeprefix("```json").strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.removeprefix("```").strip()
+        # ── strip markdown fences ──
+        for prefix in ("```json", "```"):
+            if cleaned.startswith(prefix):
+                cleaned = cleaned.removeprefix(prefix).strip()
         if cleaned.endswith("```"):
             cleaned = cleaned.removesuffix("```").strip()
+
+        # ── Strategy 1: direct parse ──
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", cleaned, flags=re.S)
-            if match:
-                return json.loads(match.group(0))
-            raise
+            pass
+
+        # ── Strategy 2: balanced-brace extraction ──
+        start = cleaned.find("{")
+        if start >= 0:
+            depth = 0
+            in_string = False
+            escape = False
+            for i in range(start, len(cleaned)):
+                ch = cleaned[i]
+                if in_string:
+                    if escape:
+                        escape = False
+                    elif ch == "\\":
+                        escape = True
+                    elif ch == '"':
+                        in_string = False
+                else:
+                    if ch == '"':
+                        in_string = True
+                    elif ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            candidate = cleaned[start : i + 1]
+                            try:
+                                return json.loads(candidate)
+                            except json.JSONDecodeError:
+                                break  # balanced but invalid — fall through
+
+        # ── Strategy 3: cut after last closing brace ──
+        last_brace = cleaned.rfind("}")
+        if last_brace >= 0:
+            truncated = cleaned[: last_brace + 1]
+            try:
+                return json.loads(truncated)
+            except json.JSONDecodeError:
+                pass
+
+        raise json.JSONDecodeError("Could not extract valid JSON", raw, 0)
 
     def _normalize_question_type(self, question_type: str) -> str:
         normalized = question_type.strip().lower()

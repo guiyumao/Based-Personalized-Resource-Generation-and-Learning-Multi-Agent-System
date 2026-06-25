@@ -5,6 +5,17 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Promotion } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
+const selectedMistake = ref<any>(null)
+const showMistakeDialog = computed({
+  get: () => selectedMistake.value !== null,
+  set: (v) => { if (!v) selectedMistake.value = null },
+})
+
+function parseOptions(raw: string): string[] {
+  if (!raw) return []
+  try { return JSON.parse(raw) } catch { return raw.split('|') }
+}
+
 import {
   evaluationApi,
   type ApiEnvelope,
@@ -546,23 +557,55 @@ onUnmounted(() => {
                 v-for="(item, index) in mistakeNotebook?.items"
                 :key="`${item.exercise_id}-${index}`"
                 class="reference-card"
+                style="padding:14px;margin-bottom:10px;cursor:pointer;transition:all .2s"
+                @click="selectedMistake = item"
+                @mouseenter="(e:any)=>{e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.transform='translateY(-2px)'}"
+                @mouseleave="(e:any)=>{e.currentTarget.style.borderColor='var(--line)';e.currentTarget.style.transform=''}"
               >
-                <strong>{{ item.knowledge_point }} / {{ formatQuestionTypeLabel(item.question_type) }}</strong>
-                <p>你的答案：{{ item.user_answer }}</p>
-                <p>标准答案：{{ item.correct_answer }}</p>
-                <p>解析：{{ item.analysis }}</p>
-                <p>建议：{{ item.suggested_action }}</p>
-                <div class="action-row">
-                  <el-button
-                    size="small"
-                    type="warning"
-                    :loading="loadingRemedial && focusedKnowledgePoint === item.knowledge_point"
-                    @click="generateRemedialExercises(item.knowledge_point)"
-                  >
-                    生成同类重练题
-                  </el-button>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <div>
+                    <strong style="color:var(--accent)">{{ item.knowledge_point }}</strong>
+                    <span style="font-size:12px;color:var(--muted);margin-left:8px">{{ formatQuestionTypeLabel(item.question_type) }} #{{ index+1 }}</span>
+                  </div>
+                  <span style="font-size:12px;color:var(--muted)">点击查看详情 →</span>
                 </div>
+                <p style="font-size:13px;color:var(--muted);margin:6px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ (item.prompt || item.user_answer || '(无内容)').slice(0, 80) }}</p>
               </article>
+
+              <!-- ── Popup Dialog ── -->
+              <el-dialog v-model="showMistakeDialog" title="错题详情" width="min(92vw,700px)" :close-on-click-modal="true" destroy-on-close>
+                <template v-if="selectedMistake">
+                  <!-- 原题 -->
+                  <div style="padding:14px 18px;border-radius:14px;background:color-mix(in srgb,var(--accent) 6%,transparent);border:1px solid var(--line);margin-bottom:16px">
+                    <div style="font-size:12px;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">📝 原题</div>
+                    <div style="font-size:16px;line-height:1.8;white-space:pre-wrap;font-weight:550">{{ selectedMistake.prompt }}</div>
+                    <!-- Options for choice questions -->
+                    <div v-if="selectedMistake.question_type==='choice' && selectedMistake.options" style="margin-top:12px;display:grid;gap:8px">
+                      <div v-for="opt in parseOptions(selectedMistake.options)" :key="opt" style="padding:10px 14px;border-radius:10px;border:1px solid var(--line);font-size:15px"
+                        :style="opt.startsWith(selectedMistake.correct_answer) ? {background:'color-mix(in srgb,var(--green) 10%,transparent)',borderColor:'var(--green)'} : opt.startsWith(selectedMistake.user_answer) ? {background:'color-mix(in srgb,var(--red) 10%,transparent)',borderColor:'var(--red)'} : {}">
+                        {{ opt }}
+                      </div>
+                    </div>
+                  </div>
+                  <!-- 答案对比 -->
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+                    <div style="padding:12px 16px;border-radius:12px;background:color-mix(in srgb,var(--red) 8%,transparent);border:1px solid var(--red)">
+                      <div style="font-size:12px;color:var(--red);margin-bottom:4px">❌ 你的答案</div>
+                      <div style="font-size:16px;font-weight:550">{{ selectedMistake.user_answer || '(未作答)' }}</div>
+                    </div>
+                    <div style="padding:12px 16px;border-radius:12px;background:color-mix(in srgb,var(--green) 8%,transparent);border:1px solid var(--green)">
+                      <div style="font-size:12px;color:var(--green);margin-bottom:4px">✅ 正确答案</div>
+                      <div style="font-size:16px;font-weight:550">{{ selectedMistake.correct_answer }}</div>
+                    </div>
+                  </div>
+                  <!-- AI 解析 -->
+                  <div v-if="selectedMistake.analysis" style="padding:14px 18px;border-radius:12px;background:color-mix(in srgb,var(--accent) 5%,transparent);border:1px solid var(--line);margin-bottom:12px">
+                    <div style="font-size:12px;letter-spacing:.06em;color:var(--accent);margin-bottom:6px">🤖 AI 解析</div>
+                    <div style="font-size:15px;color:var(--muted);line-height:1.8;white-space:pre-wrap">{{ selectedMistake.analysis }}</div>
+                  </div>
+                  <div v-if="selectedMistake.suggested_action" style="font-size:14px;color:var(--muted)">💡 {{ selectedMistake.suggested_action }}</div>
+                </template>
+              </el-dialog>
             </div>
           </article>
           <div v-else class="empty-state mistake-page-empty">当前还没有错题记录，继续保持。</div>

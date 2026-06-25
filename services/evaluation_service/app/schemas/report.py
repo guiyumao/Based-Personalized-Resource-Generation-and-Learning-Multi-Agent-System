@@ -235,6 +235,8 @@ class MistakeItem(BaseModel):
     exercise_id: int
     knowledge_point: str
     question_type: str
+    prompt: str = ""
+    options: str = ""
     user_answer: str
     correct_answer: str
     analysis: str

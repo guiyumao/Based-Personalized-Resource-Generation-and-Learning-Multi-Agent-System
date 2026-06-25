@@ -176,6 +176,8 @@ class AnswerTrace:
     error_pattern: str
     suggestion: str
     comment: str
+    prompt: str
+    options: str
     created_at: datetime
 
 
@@ -491,6 +493,7 @@ class ReportService:
             exercise_id=payload.exercise_id,
             knowledge_point=payload.knowledge_point,
             question_type=compatibility_question_type(normalize_exercise_type(payload.question_type)),
+            prompt=payload.question or "",
             user_answer=payload.wrong_answer,
             correct_answer=payload.correct_answer,
             analysis=payload.analysis,
@@ -605,6 +608,8 @@ class ReportService:
                 exercise_id=item.exercise_id,
                 knowledge_point=item.knowledge_point_ids[0] if item.knowledge_point_ids else "unknown",
                 question_type=compatibility_question_type(item.question_type),
+                prompt=getattr(item, "prompt", "") or "",
+                options=getattr(item, "options", "") or "",
                 user_answer=item.user_answer,
                 correct_answer=item.correct_answer,
                 analysis=item.explanation,
@@ -625,6 +630,8 @@ class ReportService:
                 exercise_id=item.exercise_id,
                 knowledge_point=item.knowledge_point_ids[0] if item.knowledge_point_ids else "unknown",
                 question_type=compatibility_question_type(item.question_type),
+                prompt=getattr(item, "prompt", "") or "",
+                options=getattr(item, "options", "") or "",
                 user_answer=item.user_answer,
                 correct_answer=item.correct_answer,
                 analysis=item.explanation,
@@ -1047,6 +1054,8 @@ class ReportService:
                     difficulty=difficulty,
                     chapter_id=self._string_or_none(metadata.get("chapter_id") or content.get("chapter_id")),
                     chapter_name=self._string_or_none(metadata.get("chapter_name") or content.get("chapter_name")),
+                    prompt=str(metadata.get("exercise_content") or content.get("exercise_content") or ""),
+                    options=str(metadata.get("options") or content.get("options") or ""),
                     user_answer=answer_record.user_answer,
                     correct_answer=str(metadata.get("standard_answer") or exercise.answer),
                     reference_answer=self._string_or_none(metadata.get("reference_answer") or content.get("reference_answer")),

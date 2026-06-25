@@ -90,11 +90,18 @@ class Resource(TimestampMixin, Base):
     __tablename__ = "resources"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     type: Mapped[str] = mapped_column(String(30), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     format: Mapped[str] = mapped_column(String(20), default="markdown")
     knowledge_point_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_points.id"))
     generated_for_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    local_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    crawl_status: Mapped[str | None] = mapped_column(String(20), nullable=True, default="pending")
+    language: Mapped[str | None] = mapped_column(String(10), nullable=True, default="zh")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class LearningPath(TimestampMixin, Base):

@@ -460,105 +460,121 @@ class ProfileBuilderService:
         history: list[ProfileConversation] | None = None,
         existing_dimensions: dict[str, str] | None = None,
     ) -> dict[str, str]:
+        """Extract profile dimensions from the FULL user message (no sentence splitting).
+
+        The parser/analysis/output agent pipeline handles complex multi-dimensional
+        input.  The heuristic extraction below provides a fast keyword-based
+        fallback that operates on the entire message at once, without splitting
+        on commas or other punctuation.
+        """
         updates: dict[str, str] = self._extract_structured_dimension_updates(message)
         history = history or []
         existing_dimensions = existing_dimensions or {}
         expected_key = self._infer_expected_dimension(history, existing_dimensions)
+        normalized = message.strip()
 
-        for sentence in self._split_sentences(message):
-            if not sentence:
-                continue
-            normalized = sentence.strip()
-            if self._looks_like_bulk_profile_dump(normalized):
-                continue
+        negated = any(re.search(pattern, normalized) for pattern in NEGATION_PATTERNS)
+        wants_deeper = any(re.search(pattern, normalized) for pattern in WANTS_DEEPER_PATTERNS)
 
-            negated = any(re.search(pattern, normalized) for pattern in NEGATION_PATTERNS)
-            wants_deeper = any(re.search(pattern, normalized) for pattern in WANTS_DEEPER_PATTERNS)
-
-            if "knowledgeBase" not in updates:
-                if wants_deeper:
-                    updates["knowledgeBase"] = f"wants_deeper: {normalized}"
-                elif negated:
-                    updates["knowledgeBase"] = f"needs_basics: {normalized}"
-                elif expected_key == "knowledgeBase" or any(
-                    token in normalized
-                    for token in ("学过", "掌握", "基础", "了解过", "接触过", "做过", "熟悉", "会写", "熟练")
-                ):
-                    updates["knowledgeBase"] = normalized
-
-            if "cognitiveStyle" not in updates:
-                for tokens, label in COGNITIVE_STYLE_RULES:
-                    if any(token in normalized for token in tokens):
-                        updates["cognitiveStyle"] = label
-                        break
-                if "cognitiveStyle" not in updates and expected_key == "cognitiveStyle":
-                    style = self._infer_cognitive_style_from_short_answer(normalized)
-                    if style:
-                        updates["cognitiveStyle"] = style
-
-            if (
-                "errorPreference" not in updates
-                and (
-                    expected_key == "errorPreference"
-                    or any(
-                        token in normalized
-                        for token in ("不会", "不懂", "不太会", "困难", "难", "容易错", "卡", "薄弱")
-                    )
-                )
+        # ── knowledgeBase ──
+        if "knowledgeBase" not in updates:
+            if wants_deeper:
+                updates["knowledgeBase"] = f"wants_deeper: {normalized}"
+            elif negated:
+                updates["knowledgeBase"] = f"needs_basics: {normalized}"
+            elif expected_key == "knowledgeBase" or any(
+                token in normalized
+                for token in ("学过", "掌握", "基础", "了解过", "接触过", "做过", "熟悉", "会写", "熟练")
             ):
-                updates["errorPreference"] = normalized
+                updates["knowledgeBase"] = normalized
 
-            if "learningSpeed" not in updates:
-                for tokens, label in LEARNING_SPEED_RULES:
-                    if any(token in normalized for token in tokens):
-                        updates["learningSpeed"] = label
-                        break
+        # ── cognitiveStyle ──
+        if "cognitiveStyle" not in updates:
+            for tokens, label in COGNITIVE_STYLE_RULES:
+                if any(token in normalized for token in tokens):
+                    updates["cognitiveStyle"] = label
+                    break
+            if "cognitiveStyle" not in updates and expected_key == "cognitiveStyle":
+                style = self._infer_cognitive_style_from_short_answer(normalized)
+                if style:
+                    updates["cognitiveStyle"] = style
 
-            if (
-                "interestDirection" not in updates
-                and (
-                    expected_key == "interestDirection"
-                    or any(
-                        token in normalized
-                        for token in (
-                            "感兴趣",
-                            "喜欢",
-                            "想学",
-                            "偏向",
-                            "更想",
-                            "后端",
-                            "前端",
-                            "算法",
-                            "数据分析",
-                            "AI",
-                            "人工智能",
-                        )
-                    )
+        # ── errorPreference ──
+        if "errorPreference" not in updates and (
+            expected_key == "errorPreference"
+            or any(
+                token in normalized
+                for token in ("不会", "不懂", "不太会", "困难", "难", "容易错", "卡", "薄弱")
+            )
+        ):
+            updates["errorPreference"] = normalized
+
+        # ── learningSpeed ──
+        if "learningSpeed" not in updates:
+            for tokens, label in LEARNING_SPEED_RULES:
+                if any(token in normalized for token in tokens):
+                    updates["learningSpeed"] = label
+                    break
+
+        # ── interestDirection ──
+        if "interestDirection" not in updates and (
+            expected_key == "interestDirection"
+            or any(
+                token in normalized
+                for token in (
+                    "感兴趣", "喜欢", "想学", "偏向", "更想",
+                    "后端", "前端", "算法", "数据分析", "AI", "人工智能",
                 )
-            ):
-                updates["interestDirection"] = normalized
+            )
+        ):
+            updates["interestDirection"] = normalized
 
-            if (
-                "goalOrientation" not in updates
-                and (
-                    expected_key == "goalOrientation"
-                    or any(
-                        token in normalized
-                        for token in ("目标", "希望", "找工作", "求职", "实习", "考研", "考试", "项目", "面试")
-                    )
-                )
-            ):
-                updates["goalOrientation"] = normalized
+        # ── goalOrientation ──
+        if "goalOrientation" not in updates and (
+            expected_key == "goalOrientation"
+            or any(
+                token in normalized
+                for token in ("目标", "希望", "找工作", "求职", "实习", "考研", "考试", "项目", "面试")
+            )
+        ):
+            updates["goalOrientation"] = normalized
 
         return updates
 
     def _extract_structured_dimension_updates(self, message: str) -> dict[str, str]:
+        """Parse dimension key-value pairs from the full message.
+
+        Supports formats like:
+          - 知识基础：学过Python和Java
+          - 目标导向：找工作，兴趣方向：算法和AI
+          - 认知风格 视觉型 (label-only match)
+        Multi-pair single-line input (separated by ， or ；) is handled by
+        splitting before matching.
+        """
         updates: dict[str, str] = {}
+        # Split single-line multi-pair input on Chinese punctuation separators
+        segments: list[str] = []
         for raw_line in message.splitlines():
             line = raw_line.strip().lstrip("-*• ").strip()
             if not line:
                 continue
-            match = re.match(r"^([^:：]{2,12})[:：]\s*(.+)$", line)
+            # If the line contains multiple dimension labels, split before each label
+            label_positions: list[tuple[int, str]] = []
+            for label in PROFILE_DIMENSION_LABELS.values():
+                idx = line.find(label)
+                if idx >= 0:
+                    label_positions.append((idx, label))
+            if len(label_positions) >= 2:
+                label_positions.sort(key=lambda x: x[0])
+                for i, (pos, label) in enumerate(label_positions):
+                    start = pos
+                    end = label_positions[i + 1][0] if i + 1 < len(label_positions) else len(line)
+                    segments.append(line[start:end].strip().rstrip("，,;；"))
+            else:
+                segments.append(line)
+
+        for segment in segments:
+            match = re.match(r"^([^:：]{1,20})[:：\s]+(.+)$", segment)
             if not match:
                 continue
             raw_label, raw_value = match.groups()
@@ -781,13 +797,17 @@ class ProfileBuilderService:
         return sanitize_profile_dimensions(habits.get("profile_dimensions"))
 
     def _looks_like_bulk_profile_dump(self, value: str) -> bool:
+        """Detect multi-dimension input so the caller can route it to agent parsing.
+
+        Returns True when the input clearly contains 2+ profile dimensions
+        that should be handled by the AI analysis pipeline rather than
+        simple keyword matching.
+        """
         normalized = value.replace("\r\n", "\n").replace("\r", "\n")
         if "我想一次补充画像多维度" in normalized:
             return True
         marker_count = sum(marker in normalized for marker in PROFILE_DIMENSION_LABELS.values())
-        if marker_count >= 2:
-            return True
-        return normalized.count("\n") >= 2 and "：" in normalized
+        return marker_count >= 2
 
     def _build_completeness(self, dimensions: dict[str, str]) -> dict[str, str]:
         return {

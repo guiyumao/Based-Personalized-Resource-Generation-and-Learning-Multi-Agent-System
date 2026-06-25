@@ -595,7 +595,7 @@ class ResourceGenerationService:
             "knowledge_point": request.knowledge_point,
             "resource_type": request.resource_type,
             "resource_style": request.resource_style,
-            "learner_profile": snapshot.learner_profile,
+            "learner_profile": self._build_conditional_profile_text(request.knowledge_point, snapshot),
             "grounding_text": grounding_text[:1800],
             "context_text": context_text[:1400],
             "personalization_basis": personalization["basis"],
@@ -618,6 +618,9 @@ class ResourceGenerationService:
             )
 
         primary = next((item for item in variants if item["is_recommended"]), variants[0])
+
+        # ── Audit: validate content matches requested topic ──
+        primary = self._audit_and_retry_courseware(request, primary, variables)
 
         return {
             "user_id": request.user_id,
@@ -672,7 +675,7 @@ class ResourceGenerationService:
             "request_summary": generation_plan["request_summary"],
             "generation_plan": generation_plan,
             "generation_plan_text": self._build_generation_plan_text(generation_plan),
-            "learner_profile": snapshot.learner_profile,
+            "learner_profile": self._build_conditional_profile_text(request.knowledge_point, snapshot),
             "grounding_text": grounding_text[:1800],
             "context_text": context_text[:1400],
             "personalization_basis": plan_basis,
@@ -710,6 +713,61 @@ class ResourceGenerationService:
             "content": primary["content"],
             "variants": variants,
         }
+
+    def _audit_and_retry_courseware(
+        self,
+        request: ResourceGenerationRequest,
+        primary: dict[str, Any],
+        variables: dict[str, Any],
+        max_retries: int = 2,
+    ) -> dict[str, Any]:
+        """Audit courseware content; retry on rejection."""
+        from services.agent_service.app.services.audit_service import AuditService
+
+        auditor = AuditService(self.settings)
+        content = primary.get("content", "")
+
+        for attempt in range(max_retries + 1):
+            passed, reason = auditor.audit_courseware(
+                request.knowledge_point, content, primary.get("title", "")
+            )
+            if passed:
+                return primary
+
+            if attempt < max_retries:
+                try:
+                    retry_temp = 0.2 + (attempt + 1) * 0.3
+                    llm = self.llm_factory.build_chat_model(temperature=retry_temp)
+                    retry_variables = {
+                        **variables,
+                        "audit_rejection_reason": reason,
+                        "resource_style": "concise",
+                    }
+                    retry_content = self._sanitize_generated_content(
+                        self._invoke_llm(retry_variables)
+                    )
+                    if retry_content and len(retry_content) > 50:
+                        primary = {
+                            **primary,
+                            "content": retry_content,
+                            "title": self._extract_title(retry_content, request.knowledge_point, primary.get("resource_style", "concise")),
+                            "is_recommended": True,
+                        }
+                except Exception:
+                    pass
+        return primary
+
+    def _build_conditional_profile_text(self, knowledge_point: str, snapshot) -> str:
+        """Only inject learner profile when the topic matches known weak areas."""
+        if not snapshot or not knowledge_point:
+            return "无特殊画像要求，请按通用标准生成。"
+        weak_areas = snapshot.learner_profile.get("weak_question_types", []) if isinstance(snapshot.learner_profile, dict) else []
+        kp_lower = knowledge_point.lower()
+        matches = any(area.lower() in kp_lower or kp_lower in area.lower() for area in weak_areas)
+        if matches:
+            import json
+            return json.dumps(snapshot.learner_profile, ensure_ascii=False)
+        return f"学生正在学习全新主题「{knowledge_point}」，请从基础概念出发生成课件，不要受学生历史画像影响。"
 
     def _sanitize_generated_content(self, content: str) -> str:
         sanitized_lines: list[str] = []

@@ -23,17 +23,28 @@ class LearningPathService:
         estimated_days = 3 if daily_minutes >= 45 else 4
         style = str(request.learner_profile.get("learning_style", "visual"))
         teacher_scope = self._extract_teacher_scope(request.learner_profile)
-        profile_summary = self._build_profile_summary(request.learner_profile)
+
+        # Only inject profile summary if the topic matches known weak areas
+        kp = request.knowledge_point.lower()
+        weak_areas = request.learner_profile.get("weak_question_types", [])
+        topic_matches_profile = any(
+            area.lower() in kp or kp in area.lower() for area in (weak_areas if isinstance(weak_areas, list) else [])
+        )
+
+        overview = (
+            f"围绕 {request.knowledge_point} 设计的 {estimated_days} 天学习路径，"
+            f"先理解概念，再完成练习与复盘。"
+        )
+        if topic_matches_profile:
+            overview += f" 优先采用 {style} 风格资源。{self._build_profile_summary(request.learner_profile)}"
+        else:
+            overview += f" 学生正在探索全新领域，请从基础入门角度规划路径。"
 
         payload = {
             "user_id": request.user_id,
             "subject": request.subject,
             "knowledge_point": request.knowledge_point,
-            "overview": (
-                f"围绕 {request.knowledge_point} 设计的 {estimated_days} 天学习路径，"
-                f"优先采用 {style} 风格资源，先理解概念，再完成练习与复盘。"
-                f"{profile_summary}"
-            ),
+            "overview": overview,
             "estimated_days": estimated_days,
             "stages": [
                 {

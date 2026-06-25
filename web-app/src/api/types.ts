@@ -350,6 +350,8 @@ export type MistakeItem = {
   exercise_id: number
   knowledge_point: string
   question_type: 'choice' | 'blank' | 'judge' | 'short_answer' | 'programming'
+  prompt: string
+  options: string
   user_answer: string
   correct_answer: string
   analysis: string
