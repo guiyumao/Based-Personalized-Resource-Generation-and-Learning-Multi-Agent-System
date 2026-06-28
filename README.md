@@ -111,6 +111,7 @@ python -m uvicorn services.system_service.app.main:app --host 127.0.0.1 --port 8
 
 ## 文档
 
+- 系统功能与实现逻辑：[docs/system-full-guide.md](docs/system-full-guide.md)
 - 功能说明：[docs/functionality.md](docs/functionality.md)
 - OpenAPI 草案：[docs/openapi.yaml](docs/openapi.yaml)
 

@@ -19,13 +19,31 @@ from services.agent_service.app.services.web_search_service import WebSearchServ
 
 logger = logging.getLogger(__name__)
 
-_GRAPH_LLM_PROMPT = """你是知识图谱助手。给定知识点名称和搜索结果，输出前置依赖和后续进阶。
+_GRAPH_LLM_PROMPT = """你是知识图谱助手。给定知识点名称和课件全文，提取有意义的前置知识点和后续推荐知识点。
 
-输出JSON(键必须双引号):
-{"prereqs": ["前置1"], "recs": ["进阶1"]}
+**提取规则：**
+- 前置知识（prereqs）：课件中 ## 课程导入、## 你的当前学习情况、## 学习目标 段落暗示的"学生应已掌握"的背景知识。每个必须是 5~25 字完整名词短语，如"变量与数据类型""Python 基础语法""二叉树的定义"。
+- 后续推荐（recs）：课件中 ## 拓展延伸、## 学完后自测 段落指向的下一步学习主题。每个必须是 5~25 字完整名词短语，如"面向对象编程""动态规划算法"。
+- 不要输出课件标题本身。
+- 不要输出"概念""函数""循环""编程"这种 1~3 个字的泛词。
+- 如果确实没有，返回空列表。
 
-知识点: {kp}
-搜索结果: {web}"""
+输出严格 JSON：
+{{"prereqs": ["完整知识点1"], "recs": ["完整知识点2"]}}
+
+知识点名称：{kp}
+课件全文（仅供提取参考）：
+{courseware}"""
+
+
+_CW_EXTRACT_PROMPT = """从下面课件内容提取有意义的前置知识和推荐后续知识。
+
+当前知识点：{kp}
+课件：
+{courseware}
+
+严格 JSON：{{"prereqs": ["前置知识点", ...], "recs": ["推荐知识点", ...]}}
+每个知识点 5~25 字完整名词，没有则空列表。"""
 
 
 class KnowledgeGraphRepository:
@@ -196,27 +214,122 @@ class KnowledgeGraphRepository:
 
     def _get_article_for_graph(self, kp): return self.knowledge_base.get_article(kp)
 
+    # ------------------------------------------------------------------
+    # NEW: LLM-based courseware extraction — the primary extraction path.
+    # Replaces brittle regex heuristics with LLM reading the actual
+    # generated courseware Markdown content.
+    # ------------------------------------------------------------------
+
+    def _extract_kp_labels_via_llm(self, kp: str) -> dict[str, list[str]]:
+        """Ask the LLM to read the stored courseware content and extract
+        meaningful knowledge-point labels for prerequisites and recommendations."""
+        cw_text = self._combined_resource_text(kp)
+        if not cw_text or len(cw_text.strip()) < 80:
+            return {"prereqs": [], "recs": []}
+
+        # Keep a reasonable window for the LLM
+        truncated = cw_text[:2400]
+        try:
+            from langchain_core.messages import HumanMessage
+            from langchain_core.output_parsers import StrOutputParser
+
+            llm = self.llm_factory.build_chat_model(temperature=0.1)
+            prompt = _GRAPH_LLM_PROMPT.replace("{kp}", kp).replace("{courseware}", truncated)
+            chain = llm | StrOutputParser()
+            raw = chain.invoke([HumanMessage(content=prompt)])
+            if not isinstance(raw, str) or not raw.strip():
+                return {"prereqs": [], "recs": []}
+            parsed = self._parse_json_safely(raw)
+            if not isinstance(parsed, dict):
+                return {"prereqs": [], "recs": []}
+            prereqs = parsed.get("prereqs", [])
+            recs = parsed.get("recs", [])
+            return {
+                "prereqs": [str(x).strip() for x in prereqs if str(x).strip()],
+                "recs": [str(x).strip() for x in recs if str(x).strip()],
+            }
+        except Exception as exc:
+            logger.warning("LLM-based KP label extraction failed for '%s': %s", kp, exc)
+            return {"prereqs": [], "recs": []}
+
+    def _parse_json_safely(self, raw: str) -> dict[str, Any] | None:
+        cleaned = raw.strip()
+        # strip markdown fences
+        for prefix in ("```json", "```"):
+            if cleaned.startswith(prefix):
+                cleaned = cleaned.removeprefix(prefix).strip()
+        if cleaned.endswith("```"):
+            cleaned = cleaned.removesuffix("```").strip()
+        # try direct parse
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+        # balanced brace extraction
+        start = cleaned.find("{")
+        if start >= 0:
+            depth = 0; in_string = False; escape = False
+            for i in range(start, len(cleaned)):
+                ch = cleaned[i]
+                if in_string:
+                    if escape: escape = False
+                    elif ch == "\\": escape = True
+                    elif ch == '"': in_string = False
+                else:
+                    if ch == '"': in_string = True
+                    elif ch == "{": depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                return json.loads(cleaned[start:i + 1])
+                            except json.JSONDecodeError:
+                                break
+        return None
+
+    # ------------------------------------------------------------------
+    # Derivation methods — now prefer LLM extraction, fall back to
+    # regex heuristics only when the LLM returns nothing.
+    # ------------------------------------------------------------------
+
     def _derive_prerequisites(self, kp, article):
+        # Step 1: try LLM on courseware content
+        llm_result = self._extract_kp_labels_via_llm(kp)
+        if llm_result["prereqs"]:
+            chosen = [l for l in llm_result["prereqs"] if self._is_meaningful_label(l, kp)]
+            if chosen:
+                return self._finalize_labels(kp, chosen)
+
+        # Step 2: fall back to regex + heuristic extraction
         labels = []
-        if article: labels.extend(self._prerequisites_from_article(article))
+        if article:
+            labels.extend([self._short_concept_label(c) for c in article.concepts[:4]])
         labels.extend(self._extract_section_items(kp, "prerequisite"))
         labels.extend(self._extract_introductory_concepts(kp))
         labels.extend(self._match_existing_points(kp, "prerequisite"))
-        lookup = article.title if article else kp
-        labels.extend(self._fallback_prerequisites(lookup))
-        if not labels: labels.extend(self._derive_topics_from_title(lookup))
+        labels = [l for l in labels if self._is_meaningful_label(l, kp)]
+        if not labels:
+            labels = self._derive_topics_from_title(kp)
         return self._finalize_labels(kp, list(dict.fromkeys(labels)))
 
     def _derive_recommendations(self, kp, article):
+        llm_result = self._extract_kp_labels_via_llm(kp)
+        if llm_result["recs"]:
+            chosen = [l for l in llm_result["recs"] if self._is_meaningful_label(l, kp)]
+            if chosen:
+                return self._finalize_labels(kp, chosen)
+
         labels = []
-        if article: labels.extend(self._recommendations_from_article(article))
+        if article:
+            labels.extend([self._clean_text_label(c, 20) for c in article.checks[:2]])
+            labels.extend([self._clean_text_label(a, 18) for a in article.applications[:2]])
         labels.extend(self._extract_section_items(kp, "recommended"))
         labels.extend(self._extract_extension_targets(kp))
         labels.extend(self._extract_learning_objective_targets(kp))
         labels.extend(self._match_existing_points(kp, "recommended"))
+        labels = [l for l in labels if self._is_meaningful_label(l, kp)]
         if not labels:
-            lookup = article.title if article else kp
-            labels.extend(self._derive_topics_from_title(lookup))
+            labels = self._derive_topics_from_title(kp)
         return self._finalize_labels(kp, labels)
 
     def _derive_resource_nodes(self, kp, article):
@@ -227,11 +340,27 @@ class KnowledgeGraphRepository:
         labels.extend(self._resource_titles_from_sql(kp))
         return self._finalize_labels(kp, labels, limit=6)
 
-    def _prerequisites_from_article(self, article):
-        return [i for i in (list(self._fallback_prerequisites(article.title)) + [self._short_concept_label(c) for c in article.concepts[:4]]) if i]
+    def _is_meaningful_label(self, label: str, kp: str) -> bool:
+        """Reject labels that are too short, too generic, or identical to the current KP."""
+        if not label or len(label) < 3:
+            return False
+        clean = self._clean_text_label(label, 30)
+        if len(clean) < 3:
+            return False
+        if clean == self._clean_text_label(kp, 30):
+            return False
+        generic_tokens = {"概念", "函数", "循环", "方法", "变量", "类型", "对象", "模块",
+                          "语句", "表达式", "算法", "数据", "基础", "编程", "语法", "入门", "概述"}
+        if clean in generic_tokens:
+            return False
+        # also reject labels that are just 1-2 character CJK tokens
+        if len(clean) <= 2 and all("一" <= c <= "鿿" for c in clean):
+            return False
+        return True
 
-    def _recommendations_from_article(self, article):
-        return [i for i in ([self._clean_text_label(c, 20) for c in article.checks[:2]] + [self._clean_text_label(a, 18) for a in article.applications[:2]]) if i]
+    # ------------------------------------------------------------------
+    # Legacy regex-based helpers — kept as fallback
+    # ------------------------------------------------------------------
 
     def _extract_section_items(self, kp, kind):
         content = self._combined_resource_text(kp)
@@ -348,11 +477,11 @@ class KnowledgeGraphRepository:
         return sorted(counts, key=lambda i: (-counts[i], len(i), i))[:limit]
 
     def _finalize_labels(self, kp, labels, limit=5):
-        n = self._normalize_labels(labels, limit * 3)
+        filtr = [l for l in labels if self._is_meaningful_label(l, kp)]
+        n = self._normalize_labels(filtr, limit * 3)
         res = []; nkp = self._clean_text_label(kp, 40)
         for l in n:
-            if not l or l == nkp or "个性化课件" in l or "学习课件" in l: continue
-            if l.startswith(("主题 ", "摘要 ", "阅读方式 ", "学习顺序 ")): continue
+            if not l or l == nkp: continue
             res.append(l)
             if len(res) >= limit: break
         return res
@@ -394,7 +523,7 @@ class KnowledgeGraphRepository:
         if not s: return []
         c = []
         c.extend(re.findall(r"\*\*(.+?)\*\*", s))
-        c.extend(re.findall(r"[“「]([^”」]{2,20})[”」]", s))
+        c.extend(re.findall(r"[「“]([^」”]{2,20})[」”]", s))
         for t in ("理解", "掌握", "区分", "运用", "解释", "推导", "识别", "分析", "准确说出", "准确区分", "独立推导", "识别并避免"):
             if t in s: c.extend(self._split_labels(s.split(t, 1)[1]))
         if not c: c.append(s)
@@ -422,30 +551,36 @@ class KnowledgeGraphRepository:
         return [self._clean_text_label(i) for i in re.split(r"(?:、|，|,|；|;|和|与|以及|及其|及|/)\s*", text) if self._clean_text_label(i)]
 
     def _derive_topics_from_title(self, knowledge_point: str) -> list[str]:
-        """Use LLM + web search to suggest graph nodes for an unknown topic."""
+        """Use LLM + web search to suggest graph nodes for an unknown topic.
+
+        Only used as a last resort when NO courseware content exists.
+        """
         return self._llm_suggest_nodes(knowledge_point)
 
     def _llm_suggest_nodes(self, knowledge_point: str) -> list[str]:
-        """Use LLM + web search to suggest graph nodes."""
+        """Use LLM to suggest graph nodes. No web search — just LLM reasoning."""
         try:
-            import json as _json
-            web_results = self.web_search.search(knowledge_point, max_results=3)
-            web_text = " | ".join(web_results[:3]) if web_results else ""
             from langchain_core.messages import HumanMessage
+            from langchain_core.output_parsers import StrOutputParser
+
             llm = self.llm_factory.build_chat_model(temperature=0.2)
-            prompt = _GRAPH_LLM_PROMPT.replace("{kp}", knowledge_point).replace("{web}", web_text[:2000])
+            prompt = (
+                "你是知识图谱助手。给定知识点名称，请列出它的前置依赖和后续进阶知识点。\n\n"
+                "输出 JSON (键必须双引号):\n"
+                '{{"prereqs": ["前置知识点1", ...], "recs": ["进阶知识点1", ...]}}\n\n'
+                f"知识点: {knowledge_point}\n\n"
+                "注意：每个知识点必须是完整有意义的名词短语（5-25字），不可是1-3字的泛词。没有则返回空列表。"
+            )
             raw = llm.invoke([HumanMessage(content=prompt)]).content
             if not isinstance(raw, str): return []
-            cleaned = raw.strip()
-            payload = _json.loads(cleaned)
-            topics = list(payload.get("prereqs", [])) + list(payload.get("recs", []))
-            return [str(t) for t in topics]
+            parsed = self._parse_json_safely(raw)
+            if not isinstance(parsed, dict):
+                return []
+            topics = list(parsed.get("prereqs", [])) + list(parsed.get("recs", []))
+            return [str(t) for t in topics if str(t).strip()]
         except Exception as exc:
-            logger.warning("LLM graph nodes failed for %s: %s", knowledge_point, exc)
+            logger.warning("LLM graph nodes suggestion failed for %s: %s", knowledge_point, exc)
             return []
-
-    def _fallback_prerequisites(self, title: str) -> list[str]:
-        return []
 
     # ------------------------------------------------------------------
     # Courseware -> graph synchronization
