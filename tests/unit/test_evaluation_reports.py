@@ -7,6 +7,7 @@ import asyncio
 from services.evaluation_service.app.schemas.report import (
     AnswerRecordSubmission,
     PracticeSubmission,
+    QAMistakeSubmission,
 )
 from services.evaluation_service.app.services.report_service import ReportService
 
@@ -62,6 +63,7 @@ def test_objective_submission_creates_mistake_notebook_entry(test_user) -> None:
                 exercise_content="填写 Python 中的循环关键字。",
                 explanation="for 用于确定次数的循环。",
                 chapter_id=f"chapter-{test_user.id}",
+                subject="程序设计",
                 chapter_name="Python 基础",
             )
         )
@@ -69,7 +71,40 @@ def test_objective_submission_creates_mistake_notebook_entry(test_user) -> None:
 
         assert result.is_correct is False
         assert notebook.mistake_count == 1
+        assert notebook.items[0].subject == "程序设计"
         assert notebook.items[0].knowledge_point == f"loop-{test_user.id}"
+
+    asyncio.run(run())
+
+
+def test_qa_mistake_is_persisted_with_subject_and_prompt(test_user) -> None:
+    """QA-derived mistakes should land in the persisted subject notebook."""
+
+    async def run() -> None:
+        service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
+        item = await service.record_qa_mistake(
+            QAMistakeSubmission(
+                user_id=test_user.id,
+                exercise_id=300000 + test_user.id,
+                subject="高等数学",
+                knowledge_point=f"integral-{test_user.id}",
+                question_type="choice",
+                question_summary="定积分换元时上下限是否需要同步变化？",
+                wrong_answer="A",
+                correct_answer="B",
+                analysis="换元后积分上下限需要随变量同步替换。",
+                suggested_action="复盘定积分换元法步骤。",
+                time_spent=0,
+                difficulty="basic",
+            )
+        )
+        notebook = await service.get_mistake_notebook(test_user.id)
+
+        assert item.subject == "高等数学"
+        assert item.prompt == "定积分换元时上下限是否需要同步变化？"
+        assert notebook.mistake_count == 1
+        assert notebook.items[0].subject == "高等数学"
+        assert notebook.items[0].prompt == "定积分换元时上下限是否需要同步变化？"
 
     asyncio.run(run())
 

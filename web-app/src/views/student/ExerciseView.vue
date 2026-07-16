@@ -261,6 +261,18 @@ function applyKnowledgePoint(knowledgePoint: string, source: string) {
   knowledgeSource.value = source
 }
 
+function resolvePracticeSubject() {
+  const workspaceContext = readStudentWorkspaceContext(user.userId)
+  const storedCourseware = readCoursewareSnapshot()
+  return (
+    workspaceContext?.subject?.trim()
+    || storedCourseware?.subject?.trim()
+    || workspaceContext?.topic?.trim()
+    || exerciseSet.value?.knowledge_point?.trim()
+    || exerciseForm.knowledge_point.trim()
+  )
+}
+
 async function generateExercises() {
   if (!exerciseForm.knowledge_point.trim()) {
     await loadExistingKnowledgePoint()
@@ -313,6 +325,7 @@ async function submitAnswer() {
 
   const payload: PracticeSubmissionPayload = {
     user_id: exerciseForm.user_id, exercise_id: ex.exercise_id,
+    subject: resolvePracticeSubject(),
     knowledge_point: ex.knowledge_point, question_type: ex.question_type,
     user_answer: draft, correct_answer: ex.answer, analysis: ex.analysis,
     difficulty: normalizePracticeDifficulty(ex.difficulty),

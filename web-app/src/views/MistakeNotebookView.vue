@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Promotion } from '@element-plus/icons-vue'
@@ -19,11 +19,22 @@ function parseOptions(raw: string): string[] {
 import {
   evaluationApi,
   type ApiEnvelope,
+  type MistakeItem,
   type MistakeNotebook,
   type PracticeFeedback,
   type PracticeSubmissionPayload,
   type RemedialExerciseSet,
 } from '../api'
+
+type MistakeSubjectGroup = {
+  subject: string
+  count: number
+  items: MistakeItem[]
+  knowledgePoints: string[]
+  questionTypeSummary: string
+  leadingKnowledgePoint: string
+  analysis: string
+}
 
 type StoredMistakeSnapshot = {
   userId: number
@@ -70,6 +81,7 @@ const loadingClearMistakes = ref(false)
 const focusedKnowledgePoint = ref('')
 const currentRemedialIndex = ref(0)
 const answerStartAt = ref<number | null>(remedialExerciseSet.value?.exercises.length ? Date.now() : null)
+const activeSubject = ref('')
 const remedialDrafts = reactive<Record<number, string>>({})
 const remedialSubmissions = reactive<Record<number, SubmittedRemedialState>>({})
 let autoAdvanceTimer: ReturnType<typeof setTimeout> | null = null
@@ -78,11 +90,28 @@ const subjectiveTypes = new Set(['short_answer', 'programming'])
 const userId = computed(() => snapshot.value?.userId ?? mistakeNotebook.value?.user_id ?? remedialExerciseSet.value?.user_id ?? currentUserId.value)
 const hasMistakes = computed(() => Boolean(mistakeNotebook.value?.mistake_count))
 const remedialCount = computed(() => remedialExerciseSet.value?.exercises.length ?? 0)
-const mistakePreviewItems = computed(() => mistakeNotebook.value?.items.slice(0, 8) ?? [])
 const remedialPreviewItems = computed(() => remedialExerciseSet.value?.exercises.slice(0, 6) ?? [])
 const knowledgePointTags = computed(() =>
   Array.from(new Set((mistakeNotebook.value?.items ?? []).map((item) => item.knowledge_point))).slice(0, 6),
 )
+const subjectMistakeGroups = computed<MistakeSubjectGroup[]>(() => {
+  const grouped = new Map<string, MistakeItem[]>()
+  for (const item of mistakeNotebook.value?.items ?? []) {
+    const subject = inferMistakeSubject(item)
+    grouped.set(subject, [...(grouped.get(subject) ?? []), item])
+  }
+  return Array.from(grouped.entries())
+    .map(([subject, items]) => buildSubjectMistakeGroup(subject, items))
+    .sort((a, b) => b.count - a.count || a.subject.localeCompare(b.subject, 'zh-CN'))
+})
+const subjectPreviewGroups = computed(() => subjectMistakeGroups.value.slice(0, 8))
+const visibleSubjectMistakeGroups = computed(() => {
+  if (!activeSubject.value) {
+    return subjectMistakeGroups.value
+  }
+  const matchedGroups = subjectMistakeGroups.value.filter((group) => group.subject === activeSubject.value)
+  return matchedGroups.length ? matchedGroups : subjectMistakeGroups.value
+})
 const generatedTimeLabel = computed(() => {
   if (!snapshot.value?.generatedAt) {
     return '刚刚更新'
@@ -231,6 +260,118 @@ function formatQuestionTypeLabel(value?: string) {
     return '未标注题型'
   }
   return questionTypeLabelMap[value] ?? value
+}
+
+function subjectBlockId(subject: string) {
+  return `mistake-subject-${encodeURIComponent(subject)}`
+}
+
+function subjectFirstMistakeId(subject: string) {
+  return `mistake-subject-first-${encodeURIComponent(subject)}`
+}
+
+async function jumpToSubject(subject: string) {
+  activeSubject.value = subject
+  selectedMistake.value = null
+  await nextTick()
+  const target = document.getElementById('mistake-subject-list')
+    ?? document.getElementById(subjectBlockId(subject))
+    ?? document.getElementById(subjectFirstMistakeId(subject))
+  if (!target) {
+    return
+  }
+
+  const viewportAnchor = window.innerWidth <= 960 ? 16 : 24
+  const targetTop = target.getBoundingClientRect().top + window.scrollY - viewportAnchor
+  window.scrollTo({
+    top: Math.max(targetTop, 0),
+    behavior: 'auto',
+  })
+}
+
+async function showAllSubjects() {
+  activeSubject.value = ''
+  selectedMistake.value = null
+  await nextTick()
+  document.getElementById('mistake-subject-list')?.scrollIntoView({ block: 'start' })
+}
+
+function inferMistakeSubject(item: MistakeItem): string {
+  const enriched = item as MistakeItem & { subject?: unknown; course?: unknown }
+  const explicitSubject = String(enriched.subject || enriched.course || '').trim()
+  if (explicitSubject) {
+    return explicitSubject
+  }
+
+  const knowledgePoint = String(item.knowledge_point || '').trim()
+  const prompt = String(item.prompt || '')
+  const sourceText = `${knowledgePoint} ${prompt}`
+  const subjectRules: Array<{ label: string; keywords: string[] }> = [
+    { label: '计算机网络', keywords: ['计算机网络', 'TCP', 'HTTP', 'UDP', 'IP', '网络协议', '分层模型'] },
+    { label: '计算机组成原理', keywords: ['计算机组成', 'CPU', '指令', '寄存器', '总线', '存储器'] },
+    { label: '程序设计', keywords: ['Python', 'Java', '递归', '循环', '数组', '算法', '编程'] },
+    { label: '高等数学', keywords: ['高数', '数学', '函数', '导数', '积分', '极限', '矩阵', '概率'] },
+    { label: '大学物理', keywords: ['牛顿', '力学', '运动', '电路', '电磁', '物理'] },
+    { label: '英语', keywords: ['英语', '单词', '语法', '阅读理解'] },
+  ]
+
+  const matchedRule = subjectRules.find((rule) => rule.keywords.some((keyword) => sourceText.includes(keyword)))
+  if (matchedRule) {
+    return matchedRule.label
+  }
+
+  const [prefix] = knowledgePoint.split(/[：:\/｜|·\-—]/).map((part) => part.trim()).filter(Boolean)
+  return prefix || '未分类科目'
+}
+
+function buildSubjectMistakeGroup(subject: string, items: MistakeItem[]): MistakeSubjectGroup {
+  const knowledgeCounts = countBy(items.map((item) => item.knowledge_point || '未标注知识点'))
+  const questionTypeCounts = countBy(items.map((item) => formatQuestionTypeLabel(item.question_type)))
+  const knowledgePoints = topEntries(knowledgeCounts, 5).map(([label]) => label)
+  const leadingKnowledgePoint = knowledgePoints[0] ?? '未标注知识点'
+  const questionTypeSummary = topEntries(questionTypeCounts, 3)
+    .map(([label, count]) => `${label} ${count} 题`)
+    .join(' / ')
+
+  return {
+    subject,
+    count: items.length,
+    items,
+    knowledgePoints,
+    questionTypeSummary,
+    leadingKnowledgePoint,
+    analysis: buildSubjectMistakeAnalysis(subject, items.length, leadingKnowledgePoint, questionTypeSummary),
+  }
+}
+
+function countBy(values: string[]): Record<string, number> {
+  return values.reduce<Record<string, number>>((acc, value) => {
+    const key = value.trim() || '未标注'
+    acc[key] = (acc[key] ?? 0) + 1
+    return acc
+  }, {})
+}
+
+function topEntries(record: Record<string, number>, limit: number): Array<[string, number]> {
+  return Object.entries(record)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'zh-CN'))
+    .slice(0, limit)
+}
+
+function buildSubjectMistakeAnalysis(
+  subject: string,
+  count: number,
+  leadingKnowledgePoint: string,
+  questionTypeSummary: string,
+): string {
+  const typeText = questionTypeSummary || '题型暂未形成明显集中趋势'
+  return `${subject} 当前累计 ${count} 道错题，主要集中在「${leadingKnowledgePoint}」，题型分布为 ${typeText}。建议先按该科目的核心概念复盘，再针对高频题型做一组小规模重练。`
+}
+
+function resolveRemedialSubject() {
+  const sourceExerciseId = currentRemedialExercise.value?.source_exercise_id
+  const sourceMistake = mistakeNotebook.value?.items.find((item) => item.exercise_id === sourceExerciseId)
+  return sourceMistake ? inferMistakeSubject(sourceMistake) : '未分类科目'
 }
 
 function rememberRemedialSubmission(payload: PracticeSubmissionPayload, feedback: PracticeFeedback) {
@@ -408,6 +549,7 @@ async function submitRemedialAnswer() {
   const payload: PracticeSubmissionPayload = {
     user_id: userId.value,
     exercise_id: currentRemedialExercise.value.exercise_id,
+    subject: resolveRemedialSubject(),
     knowledge_point: currentRemedialExercise.value.knowledge_point,
     question_type: currentRemedialExercise.value.question_type,
     user_answer: answer,
@@ -520,20 +662,30 @@ onUnmounted(() => {
 
       <div class="reader-layout mistake-page-layout">
         <aside class="reader-outline">
-          <div class="insight-label">错题目录预览</div>
+          <div class="insight-label">科目错题目录</div>
           <div class="outline-list">
             <button
-              v-for="(item, index) in mistakePreviewItems"
-              :key="`${item.exercise_id}-${index}`"
               type="button"
-              class="outline-item static"
+              class="outline-item"
+              :class="{ active: !activeSubject }"
+              @click="showAllSubjects()"
             >
-              {{ item.knowledge_point }} / {{ formatQuestionTypeLabel(item.question_type) }}
+              全部科目 / {{ mistakeNotebook?.mistake_count ?? 0 }} 题
+            </button>
+            <button
+              v-for="group in subjectPreviewGroups"
+              :key="group.subject"
+              type="button"
+              class="outline-item"
+              :class="{ active: activeSubject === group.subject }"
+              @click="jumpToSubject(group.subject)"
+            >
+              {{ group.subject }} / {{ group.count }} 题
             </button>
           </div>
         </aside>
 
-        <div class="learning-content reader-content">
+        <div class="learning-content reader-content" :class="{ 'is-subject-filtered': activeSubject }">
           <article class="learning-section courseware-entry-card">
             <h3>本页聚合内容</h3>
             <div class="tag-row">
@@ -550,27 +702,70 @@ onUnmounted(() => {
             </div>
           </article>
 
-          <article v-if="hasMistakes" class="learning-section">
-            <h3>错题列表</h3>
-            <div class="reference-list">
-              <article
-                v-for="(item, index) in mistakeNotebook?.items"
-                :key="`${item.exercise_id}-${index}`"
-                class="reference-card"
-                style="padding:14px;margin-bottom:10px;cursor:pointer;transition:all .2s"
-                @click="selectedMistake = item"
-                @mouseenter="(e:any)=>{e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.transform='translateY(-2px)'}"
-                @mouseleave="(e:any)=>{e.currentTarget.style.borderColor='var(--line)';e.currentTarget.style.transform=''}"
-              >
-                <div style="display:flex;justify-content:space-between;align-items:center">
+          <article v-if="hasMistakes" class="learning-section subject-analysis-section">
+            <div class="panel-heading subtle">
+              <div>
+                <div class="panel-kicker">科目分析</div>
+                <h3>按科目拆解错题分布</h3>
+              </div>
+            </div>
+            <div class="subject-analysis-grid">
+              <article v-for="group in visibleSubjectMistakeGroups" :key="group.subject" class="subject-analysis-card">
+                <div class="subject-card-head">
                   <div>
-                    <strong style="color:var(--accent)">{{ item.knowledge_point }}</strong>
-                    <span style="font-size:12px;color:var(--muted);margin-left:8px">{{ formatQuestionTypeLabel(item.question_type) }} #{{ index+1 }}</span>
+                    <strong>{{ group.subject }}</strong>
+                    <span>{{ group.questionTypeSummary || '暂无题型统计' }}</span>
                   </div>
-                  <span style="font-size:12px;color:var(--muted)">点击查看详情 →</span>
+                  <div class="subject-count">{{ group.count }}</div>
                 </div>
-                <p style="font-size:13px;color:var(--muted);margin:6px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ (item.prompt || item.user_answer || '(无内容)').slice(0, 80) }}</p>
+                <p>{{ group.analysis }}</p>
+                <div class="tag-row">
+                  <span v-for="point in group.knowledgePoints" :key="`${group.subject}-${point}`" class="agent-tag">
+                    {{ point }}
+                  </span>
+                </div>
               </article>
+            </div>
+          </article>
+
+          <article id="mistake-subject-list" v-if="hasMistakes" class="learning-section mistake-list-section">
+            <div class="mistake-list-title">
+              <div>
+                <div class="panel-kicker">错题列表</div>
+                <h3>{{ activeSubject ? `${activeSubject}错题列表` : '全部错题列表' }}</h3>
+              </div>
+              <button v-if="activeSubject" type="button" class="text-action" @click="showAllSubjects()">查看全部</button>
+            </div>
+            <div class="reference-list">
+              <section
+                v-for="group in visibleSubjectMistakeGroups"
+                :id="subjectBlockId(group.subject)"
+                :key="`list-${group.subject}`"
+                class="subject-mistake-block"
+              >
+                <div class="subject-list-heading">
+                  <strong>{{ group.subject }}</strong>
+                  <span>{{ group.count }} 道错题 · 重点：{{ group.leadingKnowledgePoint }}</span>
+                </div>
+                <article
+                  v-for="(item, index) in group.items"
+                  :id="index === 0 ? subjectFirstMistakeId(group.subject) : undefined"
+                  :key="`${group.subject}-${item.exercise_id}-${index}`"
+                  class="reference-card subject-mistake-card"
+                  @click="selectedMistake = item"
+                  @mouseenter="(e:any)=>{e.currentTarget.style.borderColor='var(--accent)';e.currentTarget.style.transform='translateY(-2px)'}"
+                  @mouseleave="(e:any)=>{e.currentTarget.style.borderColor='var(--line)';e.currentTarget.style.transform=''}"
+                >
+                  <div class="mistake-card-head">
+                    <div class="mistake-card-title">
+                      <strong>{{ item.knowledge_point }}</strong>
+                      <span>{{ formatQuestionTypeLabel(item.question_type) }} #{{ index + 1 }}</span>
+                    </div>
+                    <span class="mistake-card-action">点击查看详情 →</span>
+                  </div>
+                  <p class="mistake-card-preview">{{ (item.prompt || item.user_answer || '(无内容)').slice(0, 80) }}</p>
+                </article>
+              </section>
 
               <!-- ── Popup Dialog ── -->
               <el-dialog v-model="showMistakeDialog" title="错题详情" width="min(92vw,700px)" :close-on-click-modal="true" destroy-on-close>
@@ -726,15 +921,16 @@ onUnmounted(() => {
   max-width: 1120px;
   margin: 0 auto;
   color: var(--text);
-  --mistake-surface: var(--panel);
-  --mistake-surface-strong: var(--panel-strong);
-  --mistake-surface-soft: rgba(10, 18, 32, 0.62);
+  --mistake-surface: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  --mistake-surface-strong: color-mix(in srgb, var(--panel-strong) 94%, var(--bg));
+  --mistake-surface-soft: color-mix(in srgb, var(--panel) 78%, var(--bg));
   --mistake-ink: var(--text);
   --mistake-muted: var(--muted);
   --mistake-line: var(--line);
   --mistake-accent: var(--accent);
   --mistake-accent-dark: var(--accent-deep);
   --mistake-glow: color-mix(in srgb, var(--accent) 20%, transparent);
+  --mistake-card-sheen: color-mix(in srgb, var(--panel-strong) 74%, transparent);
 }
 
 .hero-panel,
@@ -754,7 +950,7 @@ onUnmounted(() => {
   background:
     radial-gradient(circle at 16% 0%, var(--mistake-glow), transparent 36%),
     radial-gradient(circle at 84% 16%, color-mix(in srgb, var(--accent-deep) 16%, transparent), transparent 34%),
-    linear-gradient(145deg, rgba(20, 32, 52, 0.96), rgba(8, 14, 26, 0.92));
+    linear-gradient(145deg, var(--mistake-surface-strong), var(--mistake-surface));
 }
 
 .hero-copy {
@@ -802,10 +998,10 @@ onUnmounted(() => {
   border-radius: 20px;
   color: var(--mistake-ink);
   background:
-    linear-gradient(180deg, rgba(20, 32, 52, 0.9), rgba(10, 18, 32, 0.82)),
+    linear-gradient(180deg, var(--mistake-card-sheen), var(--mistake-surface-soft)),
     radial-gradient(circle at 100% 0%, var(--mistake-glow), transparent 48%);
   border: 1px solid var(--mistake-line);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--text) 10%, transparent);
 }
 
 .signal-title,
@@ -894,7 +1090,7 @@ onUnmounted(() => {
 .reader-outline {
   align-self: start;
   position: sticky;
-  top: 0;
+  top: 16px;
   padding: 18px;
   border-radius: 20px;
 }
@@ -913,13 +1109,34 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--mistake-ink);
   text-align: left;
-  cursor: default;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.outline-item:hover,
+.outline-item.active {
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--mistake-accent);
+  transform: translateX(2px);
 }
 
 .learning-content {
   display: grid;
   gap: 18px;
   min-width: 0;
+}
+
+.learning-content.is-subject-filtered .mistake-list-section {
+  order: -3;
+}
+
+.learning-content.is-subject-filtered .courseware-entry-card {
+  order: -2;
+}
+
+.learning-content.is-subject-filtered .subject-analysis-section {
+  order: -1;
 }
 
 .learning-section {
@@ -955,6 +1172,164 @@ onUnmounted(() => {
 .reference-list {
   display: grid;
   gap: 14px;
+  padding-bottom: 0;
+}
+
+.subject-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  align-items: stretch;
+  gap: 14px;
+}
+
+.subject-analysis-card,
+.subject-mistake-block {
+  border: 1px solid var(--mistake-line);
+  border-radius: 16px;
+  background: var(--mistake-surface-soft);
+}
+
+.subject-analysis-card {
+  padding: 16px;
+  min-height: 188px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.subject-card-head,
+.subject-list-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  min-width: 0;
+}
+
+.subject-card-head {
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.subject-card-head > div:first-child,
+.subject-list-heading > div:first-child,
+.mistake-card-title {
+  min-width: 0;
+}
+
+.subject-card-head strong,
+.subject-list-heading strong {
+  display: block;
+  color: var(--mistake-ink);
+}
+
+.subject-card-head span,
+.subject-list-heading span,
+.subject-analysis-card p {
+  color: var(--mistake-muted);
+  line-height: 1.65;
+}
+
+.subject-count {
+  min-width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--mistake-accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-size: 24px;
+  font-weight: 850;
+}
+
+.subject-mistake-block {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  scroll-margin-top: 24px;
+}
+
+.subject-list-heading {
+  align-items: center;
+  padding-bottom: 2px;
+}
+
+.subject-list-heading span {
+  text-align: right;
+}
+
+.subject-mistake-card {
+  cursor: pointer;
+  margin-bottom: 0;
+  padding: 14px;
+  min-height: 96px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.mistake-list-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.text-action {
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--mistake-accent);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.text-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 52%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.mistake-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mistake-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+}
+
+.mistake-card-title strong {
+  color: var(--mistake-accent);
+}
+
+.mistake-card-title span,
+.mistake-card-action,
+.mistake-card-preview {
+  color: var(--mistake-muted);
+  font-size: 12px;
+}
+
+.mistake-card-action {
+  flex: 0 0 auto;
+}
+
+.mistake-card-preview {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.6;
 }
 
 .reference-card {
@@ -1052,7 +1427,7 @@ onUnmounted(() => {
 }
 
 :deep(.el-button) {
-  --el-button-bg-color: rgba(16, 26, 44, 0.78);
+  --el-button-bg-color: var(--mistake-surface);
   --el-button-border-color: var(--line);
   --el-button-hover-bg-color: color-mix(in srgb, var(--accent) 12%, var(--panel));
   --el-button-hover-border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
@@ -1069,19 +1444,19 @@ onUnmounted(() => {
 }
 
 :deep(.el-button--danger) {
-  --el-button-bg-color: color-mix(in srgb, var(--red) 72%, #111827);
-  --el-button-border-color: color-mix(in srgb, var(--red) 72%, #111827);
+  --el-button-bg-color: color-mix(in srgb, var(--red) 72%, var(--panel-strong));
+  --el-button-border-color: color-mix(in srgb, var(--red) 72%, var(--panel-strong));
   --el-button-hover-bg-color: var(--red);
   --el-button-hover-border-color: var(--red);
   --el-button-text-color: #ffffff;
 }
 
 :deep(.el-button.is-plain) {
-  background: rgba(16, 26, 44, 0.62);
+  background: var(--mistake-surface-soft);
 }
 
 :deep(.el-textarea__inner) {
-  background: rgba(8, 14, 26, 0.72);
+  background: var(--mistake-surface-soft);
   color: var(--mistake-ink);
   border-color: var(--mistake-line);
   box-shadow: none;
@@ -1097,8 +1472,27 @@ onUnmounted(() => {
     grid-template-columns: 1fr;
   }
 
+  .subject-analysis-grid {
+    grid-template-columns: 1fr;
+  }
+
   .reader-outline {
     position: static;
+  }
+
+  .subject-card-head,
+  .subject-list-heading,
+  .mistake-list-title,
+  .mistake-card-head {
+    flex-wrap: wrap;
+  }
+
+  .subject-list-heading span {
+    text-align: left;
+  }
+
+  .mistake-card-action {
+    flex-basis: 100%;
   }
 }
 </style>

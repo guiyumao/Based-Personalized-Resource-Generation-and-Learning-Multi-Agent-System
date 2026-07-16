@@ -4,18 +4,22 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import {
+  evaluationApi,
   createChatSession,
   deleteChatSession,
   getChatSession,
   listChatSessions,
   qaApi,
+  type ApiEnvelope,
   type ChatMessageItem,
   type ChatSessionDetail,
   type ChatSessionSummary,
   type ExerciseGenerationResponse,
+  type MistakeItem,
   type QAAnalysisPayload,
   type QARequestPayload,
   type QAResponsePayload,
+  type QAMistakeSubmissionPayload,
   type ResourceResult,
 } from '../../api'
 import {
@@ -514,6 +518,89 @@ function resourcePreview(content: string, maxLength = 320) {
   return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}...` : trimmed
 }
 
+function buildQaMistakeExerciseId(sessionId: number | null | undefined) {
+  const seed = sessionId ? sessionId * 100000 : Date.now()
+  return 700000000 + (seed % 100000000)
+}
+
+function resolveQaSubject(data: QAResponsePayload) {
+  return (
+    data.subject?.trim()
+    || qaForm.subject.trim()
+    || workspaceContext.value?.subject?.trim()
+    || workspaceContext.value?.topic?.trim()
+    || '未分类科目'
+  )
+}
+
+function resolveQaKnowledgePoint(data: QAResponsePayload) {
+  return (
+    data.structured_analysis.identified_knowledge_gaps?.find((item) => item.trim())?.trim()
+    || qaForm.current_knowledge_points?.find((item) => item.trim())?.trim()
+    || workspaceContext.value?.topic?.trim()
+    || resolveQaSubject(data)
+  )
+}
+
+function buildQaMistakePayload(data: QAResponsePayload, question: string): QAMistakeSubmissionPayload | null {
+  const update = data.structured_analysis.mistake_book_update
+  const hasQaMistakeSignal = Boolean(
+    update?.should_add
+    || update?.wrong_reason?.trim()
+    || data.structured_analysis.misconceptions.some((item) => item.trim())
+    || data.structured_analysis.identified_knowledge_gaps.some((item) => item.trim()),
+  )
+  if (!hasQaMistakeSignal) {
+    return null
+  }
+
+  const wrongAnswer = (
+    qaForm.wrong_answer.trim()
+    || qaForm.student_answer.trim()
+    || update?.wrong_reason?.trim()
+    || `本轮问答暴露的疑问：${question}`
+  )
+  if (!wrongAnswer) {
+    return null
+  }
+
+  const correctApproach = update?.correct_approach?.trim() || data.student_response.trim()
+  const analysis = [
+    update?.wrong_reason?.trim() ?? '',
+    ...data.structured_analysis.misconceptions.filter((item) => item.trim()),
+    correctApproach ? `订正思路：${correctApproach}` : '',
+  ].filter(Boolean).join('\n')
+
+  return {
+    user_id: user.userId,
+    exercise_id: buildQaMistakeExerciseId(data.session_id ?? qaForm.session_id),
+    subject: resolveQaSubject(data),
+    knowledge_point: resolveQaKnowledgePoint(data),
+    question_type: 'short_answer',
+    question_summary: update?.question_summary?.trim() || question,
+    wrong_answer: wrongAnswer,
+    correct_answer: correctApproach || data.student_response,
+    analysis: analysis || data.structured_analysis.learning_state,
+    suggested_action: data.structured_analysis.study_suggestions[0] || correctApproach || '回看本轮问答解析后再做同类题。',
+    time_spent: 0,
+    difficulty: data.structured_analysis.difficulty_level === 'foundation' ? 'basic' : data.structured_analysis.difficulty_level,
+  }
+}
+
+async function syncQaMistakeToNotebook(data: QAResponsePayload, question: string) {
+  const payload = buildQaMistakePayload(data, question)
+  if (!payload) {
+    return
+  }
+
+  try {
+    await evaluationApi.post<ApiEnvelope<MistakeItem>>('/evaluation/mistakes/qa', payload)
+    ElMessage.success('已同步到对应科目的错题本。')
+  } catch (error: any) {
+    ElMessage.warning(error?.response?.data?.detail ?? error?.message ?? '问答错题同步失败，可稍后刷新错题本。')
+  }
+}
+
 async function openExercisesInPractice(exerciseSet: ExerciseGenerationResponse) {
   if (typeof window !== 'undefined') {
     window.sessionStorage.setItem(EXERCISE_STORAGE_KEY, JSON.stringify({
@@ -554,6 +641,7 @@ async function askQaAgent() {
     })
 
     upsertSessionFromResponse(data, question)
+    await syncQaMistakeToNotebook(data, question)
     qaForm.question = ''
     qaForm.student_answer = ''
     qaForm.wrong_answer = ''

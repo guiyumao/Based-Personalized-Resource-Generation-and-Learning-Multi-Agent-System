@@ -132,6 +132,7 @@ class PreparedSubmission:
     explanation: str
     chapter_id: str | None
     chapter_name: str | None
+    subject: str
     time_spent: float
     max_time: float
 
@@ -164,6 +165,7 @@ class AnswerTrace:
     difficulty: str
     chapter_id: str | None
     chapter_name: str | None
+    subject: str
     user_answer: str
     correct_answer: str
     reference_answer: str | None
@@ -449,6 +451,7 @@ class ReportService:
                 explanation=payload.analysis,
                 chapter_id=payload.chapter_id,
                 chapter_name=payload.chapter_name,
+                subject=payload.subject,
             )
         )
         mastery = result.knowledge_points[0].mastery_score if result.knowledge_points else None
@@ -486,14 +489,16 @@ class ReportService:
                 explanation=payload.analysis,
                 chapter_id=payload.chapter_id,
                 chapter_name=payload.chapter_name,
+                subject=payload.subject,
             )
         )
         return MistakeItem(
             user_id=payload.user_id,
             exercise_id=payload.exercise_id,
+            subject=payload.subject,
             knowledge_point=payload.knowledge_point,
             question_type=compatibility_question_type(normalize_exercise_type(payload.question_type)),
-            prompt=payload.question or "",
+            prompt=payload.question_summary or "",
             user_answer=payload.wrong_answer,
             correct_answer=payload.correct_answer,
             analysis=payload.analysis,
@@ -606,6 +611,7 @@ class ReportService:
             MistakeItem(
                 user_id=user_id,
                 exercise_id=item.exercise_id,
+                subject=item.subject,
                 knowledge_point=item.knowledge_point_ids[0] if item.knowledge_point_ids else "unknown",
                 question_type=compatibility_question_type(item.question_type),
                 prompt=getattr(item, "prompt", "") or "",
@@ -628,6 +634,7 @@ class ReportService:
             MistakeItem(
                 user_id=user_id,
                 exercise_id=item.exercise_id,
+                subject=item.subject,
                 knowledge_point=item.knowledge_point_ids[0] if item.knowledge_point_ids else "unknown",
                 question_type=compatibility_question_type(item.question_type),
                 prompt=getattr(item, "prompt", "") or "",
@@ -852,6 +859,12 @@ class ReportService:
 
             chapter_id = payload.chapter_id or self._string_or_none(exercise_content.get("chapter_id"))
             chapter_name = payload.chapter_name or self._string_or_none(exercise_content.get("chapter_name"))
+            subject = (
+                self._string_or_none(payload.subject)
+                or self._string_or_none(exercise_content.get("subject"))
+                or self._infer_subject_from_knowledge_points(knowledge_point_ids)
+                or ""
+            )
             explanation = payload.explanation or (exercise.analysis if exercise is not None else "") or ""
             if not explanation:
                 explanation = self._string_or_none(exercise_content.get("analysis")) or ""
@@ -876,6 +889,7 @@ class ReportService:
                 explanation=explanation,
                 chapter_id=chapter_id,
                 chapter_name=chapter_name,
+                subject=subject,
                 time_spent=payload.time_spent,
                 max_time=self._resolve_max_time(normalized_type, difficulty),
             )
@@ -923,6 +937,7 @@ class ReportService:
                     "explanation": prepared.explanation,
                     "chapter_id": prepared.chapter_id,
                     "chapter_name": prepared.chapter_name,
+                    "subject": prepared.subject,
                     "llm_used": outcome.llm_used,
                 },
                 created_at=answered_at,
@@ -1043,6 +1058,12 @@ class ReportService:
             score = float(metadata.get("score", 1.0 if answer_record.is_correct else 0.0))
             max_score = float(metadata.get("max_score", 1.0))
             ratio = float(metadata.get("ratio", (score / max_score) if max_score else 0.0))
+            subject = (
+                self._string_or_none(metadata.get("subject"))
+                or self._string_or_none(content.get("subject"))
+                or self._infer_subject_from_knowledge_points([str(item) for item in knowledge_point_ids])
+                or ""
+            )
             traces.append(
                 AnswerTrace(
                     answer_record_id=answer_record.id,
@@ -1054,6 +1075,7 @@ class ReportService:
                     difficulty=difficulty,
                     chapter_id=self._string_or_none(metadata.get("chapter_id") or content.get("chapter_id")),
                     chapter_name=self._string_or_none(metadata.get("chapter_name") or content.get("chapter_name")),
+                    subject=subject,
                     prompt=str(metadata.get("exercise_content") or content.get("exercise_content") or ""),
                     options=str(metadata.get("options") or content.get("options") or ""),
                     user_answer=answer_record.user_answer,
@@ -1305,6 +1327,7 @@ class ReportService:
             "knowledge_point_ids": prepared.knowledge_point_ids,
             "exercise_type": prepared.exercise_type,
             "difficulty": prepared.difficulty,
+            "subject": prepared.subject,
             "standard_answer": prepared.standard_answer,
             "reference_answer": prepared.reference_answer,
             "max_score": prepared.max_score,
@@ -1524,6 +1547,25 @@ class ReportService:
             return None
         text = str(value).strip()
         return text or None
+
+    def _infer_subject_from_knowledge_points(self, knowledge_point_ids: list[str]) -> str:
+        source_text = " ".join(knowledge_point_ids)
+        subject_rules = [
+            ("计算机网络", ["计算机网络", "TCP", "HTTP", "UDP", "IP", "网络协议", "分层模型"]),
+            ("计算机组成原理", ["计算机组成", "CPU", "指令", "寄存器", "总线", "存储器"]),
+            ("程序设计", ["Python", "Java", "递归", "循环", "数组", "算法", "编程"]),
+            ("高等数学", ["高数", "数学", "函数", "导数", "积分", "极限", "矩阵", "概率"]),
+            ("大学物理", ["牛顿", "力学", "运动", "电路", "电磁", "物理"]),
+            ("英语", ["英语", "单词", "语法", "阅读理解"]),
+        ]
+        for label, keywords in subject_rules:
+            if any(keyword in source_text for keyword in keywords):
+                return label
+
+        first_point = next((item.strip() for item in knowledge_point_ids if item.strip()), "")
+        if not first_point:
+            return ""
+        return re.split(r"[：:/｜|·\-—]", first_point, maxsplit=1)[0].strip()
 
     def _ensure_utc_datetime(self, value: datetime | None) -> datetime:
         if value is None:

@@ -30,6 +30,7 @@ class AnswerRecordSubmission(BaseModel):
     chapter_id: str | None = None
     chapter_name: str | None = None
     student_name: str | None = None
+    subject: str | None = None
 
     @model_validator(mode="after")
     def validate_subjective_requirements(self) -> "AnswerRecordSubmission":
@@ -195,6 +196,7 @@ class PracticeSubmission(BaseModel):
     exercise_content: str | None = None
     chapter_id: str | None = None
     chapter_name: str | None = None
+    subject: str = ""
 
 
 class PracticeFeedback(BaseModel):
@@ -226,6 +228,7 @@ class QAMistakeSubmission(BaseModel):
     difficulty: DifficultyLevel = "intermediate"
     chapter_id: str | None = None
     chapter_name: str | None = None
+    subject: str = ""
 
 
 class MistakeItem(BaseModel):
@@ -233,6 +236,7 @@ class MistakeItem(BaseModel):
 
     user_id: int
     exercise_id: int
+    subject: str = ""
     knowledge_point: str
     question_type: str
     prompt: str = ""

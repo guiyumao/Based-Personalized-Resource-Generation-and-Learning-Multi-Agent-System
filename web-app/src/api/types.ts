@@ -309,6 +309,7 @@ export type QAResponsePayload = {
 export type PracticeSubmissionPayload = {
   user_id: number
   exercise_id: number
+  subject?: string
   knowledge_point: string
   question_type: 'choice' | 'blank' | 'judge' | 'short_answer' | 'programming'
   user_answer: string
@@ -326,6 +327,7 @@ export type PracticeSubmissionPayload = {
 export type QAMistakeSubmissionPayload = {
   user_id: number
   exercise_id: number
+  subject?: string
   knowledge_point: string
   question_type: 'choice' | 'blank' | 'judge' | 'short_answer' | 'programming'
   question_summary: string
@@ -334,6 +336,9 @@ export type QAMistakeSubmissionPayload = {
   analysis: string
   suggested_action: string
   time_spent: number
+  difficulty?: 'basic' | 'intermediate' | 'advanced'
+  chapter_id?: string | null
+  chapter_name?: string | null
 }
 
 export type PracticeFeedback = {
@@ -348,7 +353,9 @@ export type PracticeFeedback = {
 }
 
 export type MistakeItem = {
+  user_id?: number
   exercise_id: number
+  subject?: string
   knowledge_point: string
   question_type: 'choice' | 'blank' | 'judge' | 'short_answer' | 'programming'
   prompt: string

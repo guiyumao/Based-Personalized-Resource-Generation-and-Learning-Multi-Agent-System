@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import {
@@ -10,6 +11,7 @@ import {
   type ExerciseGenerationResponse,
   type LearningPathPayload,
   type LearningPathResponse,
+  type LearningTaskItem,
   type ResourceResult,
   type TeachingScopeItem,
 } from '../../api'
@@ -22,6 +24,7 @@ import {
 } from '../../utils/studentWorkspace'
 
 const authStore = useAuthStore()
+const router = useRouter()
 const user = authStore.user!
 
 const pathForm = reactive<LearningPathPayload>({
@@ -333,6 +336,41 @@ function persistCoordinatedExercises() {
   }))
 }
 
+function resolveTaskRoute(taskType: LearningTaskItem['task_type']) {
+  const routeMap: Record<LearningTaskItem['task_type'], string> = {
+    courseware: 'student-courseware',
+    exercise: 'student-exercise',
+    graph: 'student-knowledge-graph',
+    review: 'student-mistakes',
+  }
+  return routeMap[taskType]
+}
+
+function getTaskActionLabel(taskType: LearningTaskItem['task_type']) {
+  const labelMap: Record<LearningTaskItem['task_type'], string> = {
+    courseware: '去学习',
+    exercise: '去练习',
+    graph: '看图谱',
+    review: '去复盘',
+  }
+  return labelMap[taskType]
+}
+
+function navigateToTask(task: LearningTaskItem) {
+  const routeName = resolveTaskRoute(task.task_type)
+  const topic = task.knowledge_point || learningPath.value?.knowledge_point || pathForm.knowledge_point
+
+  writeStudentWorkspaceContext({
+    userId: user.userId,
+    subject: learningPath.value?.subject || pathForm.subject,
+    topic,
+    goal: task.objective || learningPath.value?.overview || '',
+    generatedAt: Date.now(),
+  })
+
+  void router.push({ name: routeName })
+}
+
 async function adjustTask(taskId: string, action: 'complete' | 'skip') {
   try {
     await agentApi.post('/paths/adjust', { user_id: user.userId, task_id: taskId, action })
@@ -383,13 +421,28 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
               <h3>{{ stage.title }}</h3>
               <p>{{ stage.description }}</p>
               <div class="task-list">
-                <article v-for="task in stage.tasks" :key="task.task_id" class="task-chip" :class="{ done: task.completed }">
+                <article
+                  v-for="task in stage.tasks"
+                  :key="task.task_id"
+                  class="task-chip"
+                  :class="{ done: task.completed }"
+                  role="button"
+                  tabindex="0"
+                  @click="navigateToTask(task)"
+                  @keydown.enter.prevent="navigateToTask(task)"
+                  @keydown.space.prevent="navigateToTask(task)"
+                >
                   <div>
                     <strong>{{ task.title }}</strong>
                     <span>{{ task.task_type }} · {{ task.estimated_minutes }} 分钟 · {{ task.difficulty }}</span>
                   </div>
-                  <button v-if="!task.completed" @click="adjustTask(task.task_id, 'complete')">完成</button>
-                  <button v-else @click="adjustTask(task.task_id, 'skip')">撤销</button>
+                  <div class="task-actions">
+                    <button class="task-open-btn" @click.stop="navigateToTask(task)">
+                      {{ getTaskActionLabel(task.task_type) }}
+                    </button>
+                    <button v-if="!task.completed" @click.stop="adjustTask(task.task_id, 'complete')">完成</button>
+                    <button v-else @click.stop="adjustTask(task.task_id, 'skip')">撤销</button>
+                  </div>
                 </article>
               </div>
             </div>
@@ -604,10 +657,20 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
+  cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
 }
 
 .task-chip.done {
   border-color: color-mix(in srgb, var(--green) 55%, transparent);
+}
+
+.task-chip:hover,
+.task-chip:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  transform: translateY(-1px);
+  outline: none;
 }
 
 .task-chip strong,
@@ -615,11 +678,24 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
   display: block;
 }
 
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .task-chip button {
   padding: 7px 12px;
   background: var(--panel-strong);
   color: var(--text);
   border: 1px solid var(--line);
+}
+
+.task-chip .task-open-btn {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-strong));
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
 }
 
 .path-side {
