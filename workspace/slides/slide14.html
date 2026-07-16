@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #22C55E}.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#CFFAD9;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.green{border-left-color:#22C55E;background:#F0FDF4}.orange{border-left-color:#F59E0B;background:#FFF7ED}.red{border-left-color:#EF4444;background:#FFF1F2}.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}.list li{margin-bottom:2pt}.note{background:#102248;border-radius:9pt;padding:6pt 8pt}.note p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>12 多角色前端界面 - 协作结果的最终呈现</h1><p class="sub">把多智能体输出转化为学生、教师、管理员都能理解和操作的工作台</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">功能作用</p>
+      <div class="b"><h3>学生端</h3><p>承接资源、习题、路径、问答、评价和画像结果，形成完整学习入口。</p></div>
+      <div class="b green"><h3>教师端</h3><p>提供班级管理、学生洞察、教学范围设定、资源审核和教学计划干预。</p></div>
+      <div class="b orange"><h3>管理端</h3><p>负责用户角色、学科配置、系统参数、审计日志和平台运行秩序。</p></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">学生端页面</p>
+      <ul class="list">
+        <li>仪表盘：掌握度、趋势、推荐任务和今日学习概览。</li>
+        <li>学习路径：阶段目标、每日任务、完成进度和复盘安排。</li>
+        <li>资源中心：查看个性化课件、讲义和推荐学习材料。</li>
+        <li>习题练习：在线作答、即时评分、答案解析和错题沉淀。</li>
+        <li>智能问答：结合画像和知识上下文进行教学式答疑。</li>
+        <li>报告与画像：查看学习报告、错题本和画像分析结果。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">前端如何承接智能体结果</p>
+      <div class="b"><h3>资源生成结果</h3><p>以课件卡片、详情页、Markdown 渲染和资源列表呈现。</p></div>
+      <div class="b green"><h3>路径规划结果</h3><p>以阶段路线、任务清单、进度条和每日计划呈现。</p></div>
+      <div class="b orange"><h3>评价反馈结果</h3><p>以分数、解析、错题本、报告图表和行动建议呈现。</p></div>
+      <div class="b"><h3>知识图谱结果</h3><p>通过可交互图谱展示前置依赖、关联知识点和推荐学习顺序。</p></div>
+      <div class="b red"><h3>画像结果</h3><p>用可解释维度展示学生状态，而不是黑盒式推荐。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">系统协作关系</p>
+      <ul class="list">
+        <li>前端通过 Axios 对接多个 FastAPI 微服务。</li>
+        <li>Pinia 保存用户认证状态和角色信息。</li>
+        <li>Vue Router 根据 student/teacher/admin 做角色路由守卫。</li>
+        <li>学生端消费 AI 结果，教师端设置边界，管理端保障权限与配置。</li>
+        <li>前端让智能体输出从“后台数据”变成“可操作学习流程”。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="t">技术组成</p>
+      <ul class="list">
+        <li>Vue 3 + TypeScript + Element Plus。</li>
+        <li>Pinia + Vue Router + Axios。</li>
+        <li>vis-network 展示知识图谱。</li>
+      </ul>
+    </div>
+    <div class="note"><p>答辩表达：前端不是壳子，而是多智能体协作结果的产品化呈现层。</p></div>
+  </div>
+</div>
+</body>
+</html>

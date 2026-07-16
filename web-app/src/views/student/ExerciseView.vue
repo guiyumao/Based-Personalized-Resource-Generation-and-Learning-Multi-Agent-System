@@ -18,6 +18,7 @@ const MISTAKE_NOTEBOOK_STORAGE_KEY = 'student-workspace-mistakes'
 const PRACTICE_SESSION_STORAGE_KEY = buildPracticeSessionStorageKey(user.userId)
 const REQUIRED_EXERCISE_COUNT = 10
 const REQUIRED_QUESTION_TYPE_COUNTS = { choice: 5, judge: 3, blank: 2 } as const
+const EXERCISE_GENERATION_TIMEOUT_MS = 120000
 
 type StoredCoursewareSnapshot = {
   subject?: string
@@ -269,7 +270,11 @@ async function generateExercises() {
   clearStoredExerciseSnapshots()
   try {
     exerciseForm.user_id = user.userId
-    const { data } = await postContentWithTimeout<ExerciseGenerationResponse>('/exercises/generate', exerciseForm, 30000)
+    const { data } = await postContentWithTimeout<ExerciseGenerationResponse>(
+      '/exercises/generate',
+      exerciseForm,
+      EXERCISE_GENERATION_TIMEOUT_MS,
+    )
     if (!data.exercises.length) {
       genError.value = '未生成到练习题，请重新生成'
       ElMessage.error(genError.value)

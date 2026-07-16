@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #F59E0B}
+.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#FFE8B8;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}
+.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}
+.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.orange{border-left-color:#F59E0B;background:#FFF7ED}.green{border-left-color:#22C55E;background:#F0FDF4}.red{border-left-color:#EF4444;background:#FFF1F2}
+.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}.list li{margin-bottom:2pt}
+.qtypes{display:flex;flex-wrap:wrap;gap:3pt;margin-bottom:5pt}.q{background:#1E5AAB;border-radius:8pt;padding:2pt 6pt}.q p{color:#fff;font-size:5.8pt;margin:0}
+.bar{display:flex;height:15pt;border-radius:8pt;overflow:hidden;margin-bottom:6pt}.bar div{display:flex;align-items:center;justify-content:center}.d60{background:#2563EB;flex:6}.d30{background:#60A5FA;flex:3}.d10{background:#BFDBFE;flex:1}.bar p{font-size:5.6pt;margin:0}.d60 p{color:#fff}.d30 p,.d10 p{color:#17395D}
+.flow{background:#102248;border-radius:9pt;padding:6pt 8pt}.flow p{color:#DCEBFF;font-size:6pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>05 智能习题生成</h1><p class="sub">从“会出题”升级为“围绕薄弱点定向训练，并把作答结果回流画像”</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">功能作用</p>
+      <div class="b"><h3>解决什么问题</h3><p>普通题库随机抽题无法针对学生短板；本功能根据画像和课件内容生成适配当前阶段的题组。</p></div>
+      <div class="b green"><h3>题型覆盖</h3><p>支持选择题、填空题、判断题、简答题、编程题，每题包含答案、解析、知识点、难度和易错提醒。</p></div>
+      <div class="qtypes"><div class="q"><p>选择</p></div><div class="q"><p>填空</p></div><div class="q"><p>判断</p></div><div class="q"><p>简答</p></div><div class="q"><p>编程</p></div></div>
+      <div class="bar"><div class="d60"><p>60% 基础</p></div><div class="d30"><p>30% 进阶</p></div><div class="d10"><p>10% 挑战</p></div></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">输入与输出</p>
+      <ul class="list">
+        <li>输入：知识点、题目数量、题型要求、难度分布、学生画像。</li>
+        <li>可选输入：刚生成的课件内容、历史错题、教师指定范围。</li>
+        <li>输出：结构化题目列表、标准答案、解析、评分规则、错因标签。</li>
+        <li>输出格式便于前端渲染，也便于 evaluation-service 自动评分。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">执行流程</p>
+      <div class="b"><h3>1 识别训练目标</h3><p>从画像中读取薄弱知识点、薄弱题型、近期错题和掌握度。</p></div>
+      <div class="b orange"><h3>2 组合题型与难度</h3><p>按基础、进阶、挑战比例配置题组，避免全难或全简单。</p></div>
+      <div class="b"><h3>3 生成题目与解析</h3><p>LLM 生成题干、选项、答案、解析和易错提醒，并保持题目可作答。</p></div>
+      <div class="b green"><h3>4 审核与打回</h3><p>审核智能体调用 audit_exercises 检查题目是否跑题、不可读、明显错误或存在安全/价值观风险；不通过则重新生成。</p></div>
+      <div class="b red"><h3>5 作答后回流</h3><p>评价服务评分，错题进入错题本，掌握度回写画像。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">智能体协作</p>
+      <ul class="list">
+        <li>画像 agent：提供薄弱点、速度、常错类型和难度承受度。</li>
+        <li>资源 agent：提供课件内容，保证练习与刚学内容一致。</li>
+        <li>知识库/图谱 agent：提供概念边界和前置依赖，避免题目越界。</li>
+        <li>习题 agent：负责题组设计、题目生成、答案解析和结构化输出。</li>
+        <li>审核 agent：检查题目是否严重偏离用户需求，不合格时将原因反馈给习题 agent 重生成。</li>
+        <li>评价服务：完成自动评分、错因归类、错题沉淀和画像更新。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="t">功能价值</p>
+      <div class="b green"><h3>闭环训练</h3><p>学什么生成什么题，做错什么更新什么画像，下一轮继续针对性强化。</p></div>
+      <div class="flow"><p>课件学习 -> 习题训练 -> 自动评分 -> 错因归类 -> 画像更新 -> 下一轮资源/习题优化</p></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

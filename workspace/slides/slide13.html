@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #F59E0B}.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#FFE8B8;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.green{border-left-color:#22C55E;background:#F0FDF4}.orange{border-left-color:#F59E0B;background:#FFF7ED}.red{border-left-color:#EF4444;background:#FFF1F2}.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}.list li{margin-bottom:2pt}
+.matrix{display:grid;grid-template-columns:1fr 1fr;gap:4pt}.mini{background:#EEF4FF;border:1pt solid #BFDBFE;border-radius:8pt;padding:4pt 5pt}.mini h3{color:#1E40AF;font-size:6.7pt;margin:0 0 1pt 0}.mini p{color:#53657C;font-size:5.2pt;line-height:1.1;margin:0}.note{background:#102248;border-radius:9pt;padding:6pt 8pt}.note p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>11 学习者画像与反馈联合智能体</h1><p class="sub">画像负责“理解学生”，反馈负责“汇总证据并指导下一轮协作”</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">画像系统：个性化起点</p>
+      <div class="b"><h3>动态学习者画像</h3><p>把学生的知识基础、认知风格、错因模式、学习速度、兴趣方向和目标导向转成智能体共享上下文。</p></div>
+      <div class="b green"><h3>持续更新</h3><p>画像不是注册时一次填写，而是随答题、问答、资源学习和报告结果不断更新。</p></div>
+      <div class="b orange"><h3>统一上下文</h3><p>资源、习题、路径、问答和反馈智能体都读取同一份画像，避免各模块判断割裂。</p></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">画像输入与输出</p>
+      <ul class="list">
+        <li>输入：用户信息、目标描述、学习行为、答题结果、错题、问答记录。</li>
+        <li>六维度：knowledgeBase、cognitiveStyle、errorPreference、learningSpeed、interestDirection、goalOrientation。</li>
+        <li>输出：掌握度、薄弱提示、偏好摘要、profile_summary、agent_handoff。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">反馈联合智能体：闭环汇总层</p>
+      <div class="b"><h3>1 汇总多源数据</h3><p>收集画像、图谱、路径、资源、习题、QA 和评价报告，形成统一证据上下文。</p></div>
+      <div class="b green"><h3>2 交叉验证</h3><p>检查不同来源是否指向同一薄弱点，例如图谱前置缺失与错题结果是否一致。</p></div>
+      <div class="b orange"><h3>3 发现冲突</h3><p>如果资源难度、路径阶段和掌握度不匹配，给出调整理由。</p></div>
+      <div class="b"><h3>4 生成反馈</h3><p>输出当前优势、核心短板、证据引用、下一步行动清单和风险提醒。</p></div>
+      <div class="b red"><h3>5 回写下一轮</h3><p>反馈结果进入画像和协调器上下文，影响下一轮智能体选择和生成。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel">
+      <p class="t">交叉分析示例</p>
+      <div class="matrix">
+        <div class="mini"><h3>画像 + 习题</h3><p>选择题薄弱 -> 增加变式训练</p></div>
+        <div class="mini"><h3>图谱 + 评价</h3><p>前置正确率低 -> 先补基础</p></div>
+        <div class="mini"><h3>QA + 知识库</h3><p>问答误解 -> 推荐易错文章</p></div>
+        <div class="mini"><h3>资源 + 画像</h3><p>课件偏难 -> 切基础版</p></div>
+      </div>
+    </div>
+    <div class="panel fill">
+      <p class="t">对下游功能的作用</p>
+      <ul class="list">
+        <li>资源 agent：决定讲解深度、案例风格和课件结构。</li>
+        <li>习题 agent：决定难度、题型分布和薄弱点训练。</li>
+        <li>路径 agent：决定学习节奏、任务量和阶段安排。</li>
+        <li>QA agent：决定解释粒度和是否先补前置概念。</li>
+        <li>反馈 agent：把多个模块结果合成为下一轮可执行建议。</li>
+      </ul>
+    </div>
+    <div class="note"><p>答辩表达：画像是共同记忆，反馈是闭环总结；二者共同决定系统能否持续变得更懂学生。</p></div>
+  </div>
+</div>
+</body>
+</html>

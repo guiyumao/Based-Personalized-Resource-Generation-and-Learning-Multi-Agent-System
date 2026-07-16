@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+html { background: #ffffff; }
+body {
+  width: 720pt; height: 405pt; margin: 0; padding: 0;
+  background: #F8FBFF; font-family: "Segoe UI", Arial, sans-serif; display: flex;
+}
+.side {
+  width: 170pt; background: #0F1F45;
+  padding: 24pt 20pt; box-sizing: border-box; color: white;
+}
+.side h1 { font-size: 20pt; margin: 0; }
+.side p { color: #99AED2; font-size: 8pt; margin: 4pt 0 0 0; }
+.side .bar { width: 34pt; height: 3pt; background: #3B82F6; border-radius: 2pt; margin-top: 16pt; }
+.side .desc { color: #C8D7EE; font-size: 8pt; line-height: 1.5; margin-top: 18pt; }
+.side .chips{display:flex;flex-wrap:wrap;gap:4pt;margin-top:16pt}
+.side .chip{background:#183260;border-radius:10pt;padding:3pt 6pt}
+.side .chip p{color:#DCEBFF;font-size:6pt;margin:0}
+.main { flex: 1; padding: 12pt 16pt; display: flex; gap: 9pt; box-sizing: border-box; }
+.col { flex: 1; }
+.item {
+  display: flex; gap: 7pt; align-items: flex-start; background: #FFFFFF; border: 1pt solid #E5EEF9;
+  border-radius: 8pt; padding: 6pt 8pt; margin-bottom: 4pt;
+}
+.num {
+  min-width: 21pt; height: 21pt; border-radius: 50%; background: #DBEAFE;
+  display: flex; align-items: center; justify-content: center;
+}
+.num p { color: #2563EB; font-size: 9pt; font-weight: 700; margin: 0; }
+.txt h3 { color: #0F2040; font-size: 9pt; margin: 0 0 2pt 0; }
+.txt p { color: #5B6B84; font-size: 6.25pt; line-height: 1.24; margin: 0; }
+</style>
+</head>
+<body>
+<div class="side">
+  <h1>目录</h1>
+  <p>CONTENTS</p>
+  <div class="bar"></div>
+  <p class="desc">整套汇报围绕“为什么做、如何协作、功能价值、技术亮点、未来方向”五条主线展开。</p>
+  <div class="chips">
+    <div class="chip"><p>画像</p></div><div class="chip"><p>RAG</p></div><div class="chip"><p>图谱</p></div><div class="chip"><p>审核</p></div><div class="chip"><p>闭环</p></div>
+  </div>
+</div>
+<div class="main">
+  <div class="col">
+    <div class="item"><div class="num"><p>01</p></div><div class="txt"><h3>项目背景与目标</h3><p>说明教育场景痛点，以及为什么需要多智能体协作而不是单模型直接生成。</p></div></div>
+    <div class="item"><div class="num"><p>02</p></div><div class="txt"><h3>系统总体架构</h3><p>介绍六个服务、多库协同和 agent-service 作为中枢的整体设计。</p></div></div>
+    <div class="item"><div class="num"><p>03</p></div><div class="txt"><h3>多智能体协调系统</h3><p>讲清协调器如何选智能体、排顺序、传上下文和汇总结果。</p></div></div>
+    <div class="item"><div class="num"><p>04</p></div><div class="txt"><h3>个性化资源生成</h3><p>展示课件如何结合画像、RAG 和图谱，生成适配学生的学习材料。</p></div></div>
+    <div class="item"><div class="num"><p>05</p></div><div class="txt"><h3>智能习题生成</h3><p>说明题目生成如何与课件、评价和画像更新形成学习闭环。</p></div></div>
+    <div class="item"><div class="num"><p>06</p></div><div class="txt"><h3>智能问答系统</h3><p>说明答疑如何结合知识库、图谱与学生上下文输出教学式回答。</p></div></div>
+  </div>
+  <div class="col">
+    <div class="item"><div class="num"><p>07</p></div><div class="txt"><h3>大小模型协作聊天</h3><p>展示系统如何在速度、成本和回答质量之间做动态平衡。</p></div></div>
+    <div class="item"><div class="num"><p>08</p></div><div class="txt"><h3>学习路径规划</h3><p>说明如何把学生状态转化成每日任务和阶段目标。</p></div></div>
+    <div class="item"><div class="num"><p>09</p></div><div class="txt"><h3>知识图谱</h3><p>说明图谱如何为生成、问答和路径规划提供结构化知识依据。</p></div></div>
+    <div class="item"><div class="num"><p>10</p></div><div class="txt"><h3>学习评价与报告</h3><p>展示作答、评分、错题、报告和数据回流的闭环设计。</p></div></div>
+    <div class="item"><div class="num"><p>11</p></div><div class="txt"><h3>画像与反馈智能体</h3><p>说明六维画像和联合反馈如何驱动持续个性化。</p></div></div>
+    <div class="item"><div class="num"><p>12</p></div><div class="txt"><h3>多角色前端界面</h3><p>展示学生端、教师端、管理端如何承接智能体结果。</p></div></div>
+    <div class="item"><div class="num"><p>13</p></div><div class="txt"><h3>技术亮点、流程与总结</h3><p>汇总创新点、全系统协作流程和未来展望。</p></div></div>
+  </div>
+</div>
+</body>
+</html>

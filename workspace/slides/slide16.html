@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:17pt 32pt 12pt 32pt;border-bottom:4pt solid #EF4444}
+.hdr h1{color:#fff;font-size:21pt;margin:0;font-weight:800}
+.sub{color:#FFD6D6;font-size:8pt;margin:4pt 0 0 0}
+.wrap{flex:1;padding:13pt 20pt 15pt 20pt;box-sizing:border-box}
+.row{display:flex;align-items:stretch;gap:7pt;margin-bottom:9pt}
+.node{flex:1;background:#fff;border:1pt solid #DDE8F6;border-radius:11pt;padding:8pt 7pt;text-align:center;box-sizing:border-box;min-height:58pt}
+.node h3{color:#102248;font-size:8.6pt;margin:0 0 3pt 0}
+.node p{color:#53657C;font-size:6.3pt;line-height:1.25;margin:0}
+.core{background:#102248;border-color:#102248}
+.core h3{color:#fff}
+.core p{color:#DCEBFF}
+.blue{border-top:4pt solid #2563EB}
+.orange{border-top:4pt solid #F59E0B}
+.green{border-top:4pt solid #22C55E}
+.red{border-top:4pt solid #EF4444}
+.arr{display:flex;align-items:center}
+.arr p{color:#2563EB;font-size:13pt;font-weight:900;margin:0}
+.loop{display:flex;gap:10pt}
+.panel{flex:1;background:#fff;border:1pt solid #E4ECF7;border-radius:12pt;padding:9pt 11pt;box-sizing:border-box}
+.panel h3{color:#1D4ED8;font-size:10pt;margin:0 0 5pt 0}
+.panel p{color:#334155;font-size:7.1pt;line-height:1.42;margin:0}
+.list{margin:0;padding-left:14pt;color:#334155;font-size:7pt;line-height:1.42}
+.list li{margin-bottom:3pt}
+.em{background:#ECFDF3;border:1pt solid #86EFAC;border-radius:12pt;padding:8pt 10pt;margin-top:8pt}
+.em p{color:#14532D;font-size:7.2pt;line-height:1.38;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <h1>14 全系统智能体协作流程图</h1>
+  <p class="sub">从用户请求到画像更新：生成内容必须经过审核智能体把关，不合格则打回重生成</p>
+</div>
+<div class="wrap">
+  <div class="row">
+    <div class="node blue"><h3>用户请求</h3><p>学习目标、知识点、答疑、练习或全系统协作需求</p></div>
+    <div class="arr"><p>&gt;</p></div>
+    <div class="node core"><h3>CoordinatorWorkflow</h3><p>意图分析、智能体选择、执行顺序、冲突处理</p></div>
+    <div class="arr"><p>&gt;</p></div>
+    <div class="node orange"><h3>学习者画像</h3><p>掌握度、风格、错因、速度、兴趣、目标</p></div>
+    <div class="arr"><p>&gt;</p></div>
+    <div class="node green"><h3>知识支撑</h3><p>知识库 RAG 检索 + 知识图谱依赖分析</p></div>
+  </div>
+  <div class="row">
+    <div class="node blue"><h3>路径规划智能体</h3><p>阶段路线、每日任务、复习节奏</p></div>
+    <div class="node blue"><h3>资源生成智能体</h3><p>个性化课件、讲解材料、资源变体</p></div>
+    <div class="node red"><h3>内容审核智能体</h3><p>价值观、安全性、主题匹配、质量检查；REJECT 打回</p></div>
+    <div class="node blue"><h3>习题生成智能体</h3><p>题型分布、难度控制、薄弱点训练</p></div>
+    <div class="node blue"><h3>QA 智能体</h3><p>答疑解释、错因分析、下一步建议</p></div>
+    <div class="node red"><h3>评价反馈智能体</h3><p>评分、报告、跨智能体综合反馈</p></div>
+  </div>
+  <div class="loop">
+    <div class="panel">
+      <h3>协作数据如何流动</h3>
+      <ul class="list">
+        <li>画像是个性化起点，所有生成类智能体都读取画像上下文。</li>
+        <li>知识库和知识图谱提供内容依据与结构约束，减少空泛生成。</li>
+        <li>资源和习题生成后先进入审核智能体；不符合需求或存在风险时打回重生成。</li>
+        <li>通过审核的资源、习题、路径和问答产生学习过程数据，进入评价与报告。</li>
+        <li>评价结果回流画像，触发下一轮更精确的资源、练习和路径优化。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>闭环结果</h3>
+      <p>系统不是一次性回答问题，而是持续观察学生表现，用新数据修正画像，再用新画像指导下一轮智能体协作。</p>
+      <div class="em"><p>一句话概括：用户请求 -> 协调器编排 -> 多智能体生成与分析 -> 评价反馈 -> 画像更新 -> 下一轮个性化。</p></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+html { background: #ffffff; }
+body {
+  width: 720pt; height: 405pt; margin: 0; padding: 0;
+  background: #ffffff; font-family: Arial, sans-serif; display: flex; flex-direction: column;
+}
+.header { background: #0F2040; padding: 20pt 36pt 14pt 36pt; }
+.header h1 { color: #FFFFFF; font-size: 22pt; margin: 0; }
+.content { flex: 1; padding: 10pt 28pt; display: flex; gap: 14pt; }
+.col { flex: 1; }
+.t { color: #1E5AAB; font-size: 11pt; font-weight: bold; margin: 0 0 6pt 0; }
+.dc { background: #F8FAFC; border-left: 3pt solid #3B82F6; padding: 5pt 8pt; margin-bottom: 4pt; display: flex; align-items: flex-start; gap: 7pt; }
+.di { min-width: 20pt; text-align: center; }
+.di p { font-size: 12pt; margin: 0; }
+.dt h3 { color: #0F2040; font-size: 9pt; margin: 0 0 1pt 0; }
+.dt p { color: #64748B; font-size: 7pt; margin: 0; }
+.fb { background: #EFF6FF; border: 1pt solid #BFDBFE; border-radius: 5pt; padding: 8pt 10pt; text-align: center; margin-bottom: 8pt; }
+.fb h3 { color: #1E40AF; font-size: 10pt; margin: 0 0 6pt 0; }
+.fs { display: flex; align-items: center; justify-content: center; gap: 5pt; }
+.fi { background: #1E5AAB; border-radius: 3pt; padding: 4pt 8pt; }
+.fi p { color: #FFFFFF; font-size: 8pt; margin: 0; }
+.fa p { color: #3B82F6; font-size: 10pt; margin: 0; }
+.dr { background: #F0FDF4; border: 1pt solid #86EFAC; border-radius: 4pt; padding: 7pt 9pt; margin-top: 6pt; }
+.dr h3 { color: #15803D; font-size: 10pt; margin: 0 0 3pt 0; }
+.dr p { color: #166534; font-size: 8pt; margin: 0; }
+</style>
+</head>
+<body>
+<div class="header"><h1>11  学习者画像系统</h1></div>
+<div class="content">
+  <div class="col" style="flex: 1.15;">
+    <p class="t">六维画像模型</p>
+    <div class="dc"><div class="di"><p>1</p></div><div class="dt"><h3>knowledgeBase</h3><p>描述当前知识基础与已有掌握情况</p></div></div>
+    <div class="dc"><div class="di"><p>2</p></div><div class="dt"><h3>cognitiveStyle</h3><p>区分图解型、文本型、听讲型、动手型偏好</p></div></div>
+    <div class="dc"><div class="di"><p>3</p></div><div class="dt"><h3>errorPreference</h3><p>记录常见错误类型和易卡知识环节</p></div></div>
+    <div class="dc"><div class="di"><p>4</p></div><div class="dt"><h3>learningSpeed</h3><p>反映学习节奏和知识吸收速度</p></div></div>
+    <div class="dc"><div class="di"><p>5</p></div><div class="dt"><h3>interestDirection</h3><p>反映更偏好的学科方向和内容主题</p></div></div>
+    <div class="dc"><div class="di"><p>6</p></div><div class="dt"><h3>goalOrientation</h3><p>区分考试、项目、求职等目标导向</p></div></div>
+  </div>
+  <div class="col">
+    <div class="fb">
+      <h3>画像构建流程</h3>
+      <div class="fs">
+        <div class="fi"><p>对话采集</p></div><div class="fa"><p>→</p></div>
+        <div class="fi"><p>语义解析</p></div><div class="fa"><p>→</p></div>
+        <div class="fi"><p>维度更新</p></div>
+      </div>
+    </div>
+    <p class="t">对下游智能体的作用</p>
+    <ul style="color: #475569; font-size: 8pt; margin: 2pt 0;">
+      <li>为资源生成提供讲解深度和表达风格</li>
+      <li>为习题生成提供薄弱点与学习速度</li>
+      <li>为路径规划提供节奏与目标导向</li>
+      <li>为 QA 提供更适合的解释方式</li>
+    </ul>
+    <div class="dr"><h3>核心价值</h3><p>画像系统是整个多智能体协作的起点。没有画像，系统只能生成通用资源。</p></div>
+  </div>
+</div>
+</body>
+</html>

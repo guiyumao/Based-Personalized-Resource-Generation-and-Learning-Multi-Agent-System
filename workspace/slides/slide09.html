@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #60A5FA}.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#BBD3FF;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.green{border-left-color:#22C55E;background:#F0FDF4}.orange{border-left-color:#F59E0B;background:#FFF7ED}.red{border-left-color:#EF4444;background:#FFF1F2}.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}.list li{margin-bottom:2pt}
+.metric{background:#EEF4FF;border:1pt solid #BFDBFE;border-radius:9pt;text-align:center;padding:6pt;margin-bottom:5pt}.metric h2{color:#1D4ED8;font-size:16pt;margin:0}.metric p{color:#53657C;font-size:5.8pt;margin:1pt 0 0 0}.note{background:#102248;border-radius:9pt;padding:6pt 8pt}.note p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>07 大小模型协作聊天</h1><p class="sub">用路由策略在响应速度、回答质量和模型成本之间取得平衡</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">功能作用</p>
+      <div class="b"><h3>为什么需要大小模型协作</h3><p>教育平台存在大量高频简单问题，如果全部交给大模型，会造成响应慢、成本高、资源浪费。</p></div>
+      <div class="b green"><h3>轻量链路</h3><p>处理知识库命中明确、规则可回答、上下文较短的问题，优先保证速度和成本。</p></div>
+      <div class="b orange"><h3>深度链路</h3><p>处理多轮对话、复杂推理、错因分析、个性化教学解释等需要强模型的问题。</p></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">路由判断依据</p>
+      <ul class="list">
+        <li>问题长度、上下文轮数和推理复杂度。</li>
+        <li>知识库检索命中分数是否足够高。</li>
+        <li>是否涉及学习诊断、错因分析、路径建议。</li>
+        <li>是否需要结合画像生成个性化解释。</li>
+        <li>模型不可用时按 DeepSeek、Qwen、OpenAI 或降级链路兜底。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">执行流程</p>
+      <div class="b"><h3>1 接收对话</h3><p>记录 session、用户问题、当前学习上下文和历史轮次。</p></div>
+      <div class="b green"><h3>2 复杂度识别</h3><p>根据关键字、长度、检索命中和任务类型判断轻量或深度处理。</p></div>
+      <div class="b orange"><h3>3 选择模型链路</h3><p>简单问题走轻量模型/检索模板；复杂问题调用大模型并注入画像与知识依据。</p></div>
+      <div class="b"><h3>4 返回并记录</h3><p>输出回答，同时沉淀对话数据，为后续画像和反馈分析提供材料。</p></div>
+      <div class="b red"><h3>5 异常降级</h3><p>当主模型不可用时切换备用 provider，保证问答服务不中断。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel">
+      <p class="t">指标与价值</p>
+      <div class="metric"><h2>60-70%</h2><p>简单场景下模型调用成本可下降</p></div>
+      <div class="metric"><h2>&lt; 2s</h2><p>高频问题可获得更快响应</p></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">协作关系</p>
+      <ul class="list">
+        <li>QA agent 发起对话处理并整合上下文。</li>
+        <li>知识库 agent 提供检索命中，辅助路由判断。</li>
+        <li>画像 agent 决定是否需要个性化深度解释。</li>
+        <li>LLMFactory 管理多 provider 降级与统一调用。</li>
+      </ul>
+    </div>
+    <div class="note"><p>答辩表达：大小模型协作不是简单换模型，而是把不同问题分配给合适成本和能力的推理链路。</p></div>
+  </div>
+</div>
+</body>
+</html>

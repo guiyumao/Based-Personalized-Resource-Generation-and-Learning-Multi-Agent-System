@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html><head><style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#fff;font-family:Arial,sans-serif;display:flex;flex-direction:column}
+.hdr{background:#0F1A3A;padding:16pt 36pt 10pt 36pt}
+.hdr h1{color:#fff;font-size:20pt;margin:0}
+.c{flex:1;padding:10pt 20pt;display:flex;gap:12pt}
+.col{flex:1}
+.st{color:#1E40AF;font-size:10pt;font-weight:bold;margin:0 0 4pt 0}
+.dv{height:2pt;background:#3B82F6;margin-bottom:4pt}
+.sc{background:#F8FAFC;border-left:3pt solid #2563EB;padding:3pt 7pt;margin-bottom:3pt}
+.sc .n p{color:#0F2040;font-weight:bold;font-size:7pt;margin:0}
+.sc .d p{color:#64748B;font-size:6pt;margin:0}
+.tag{display:inline-block;background:#1E40AF;border-radius:3pt;padding:2pt 5pt;margin:1pt 2pt 1pt 0}
+.tag p{color:#fff;font-size:6pt;margin:0}
+.t2{display:inline-block;background:#DBEAFE;border-radius:3pt;padding:2pt 5pt;margin:1pt 2pt 1pt 0}
+.t2 p{color:#1E40AF;font-size:6pt;margin:0}
+.fb{background:#EFF6FF;border:1pt solid #BFDBFE;border-radius:4pt;padding:6pt 8pt;margin-top:6pt}
+.fb p{color:#1E3A5F;font-size:7pt;margin:0;line-height:1.35}
+.chain{background:#FFF7ED;border:1pt solid #FED7AA;border-radius:4pt;padding:4pt 7pt;margin-top:4pt}
+.chain p{color:#9A3412;font-size:6pt;margin:0;text-align:center}
+</style></head><body>
+<div class="hdr"><h1>02  系统总体架构 — 多智能体协作基础设施</h1></div>
+<div class="c">
+<div class="col">
+<p class="st">服务层 — 6 微服务</p><div class="dv"></div>
+<div class="sc"><div class="n"><p>user-service :8001</p></div><div class="d"><p>注册登录 · 鉴权 · 画像构建与更新</p></div></div>
+<div class="sc"><div class="n"><p>agent-service :8002 ★ 核心调度</p></div><div class="d"><p>9 智能体编排 · 课件/习题/路径/问答/图谱/反馈/审核</p></div></div>
+<div class="sc"><div class="n"><p>resource-service :8003</p></div><div class="d"><p>学习资源存储 · 检索 · 导出与管理</p></div></div>
+<div class="sc"><div class="n"><p>evaluation-service :8004</p></div><div class="d"><p>评分判定 · 错题本 · 报告 · 数据回流画像</p></div></div>
+<div class="sc"><div class="n"><p>teacher-service :8005 / system-service :8006</p></div><div class="d"><p>教师工作台 · 班级洞察 / 配置 · 角色 · 审计</p></div></div>
+</div>
+<div class="col">
+<p class="st">协作基础设施</p><div class="dv"></div>
+<div><div class="tag"><p>PostgreSQL</p></div><div class="tag"><p>Redis</p></div><div class="tag"><p>RabbitMQ</p></div><div class="tag"><p>Neo4j</p></div><div class="tag"><p>ChromaDB</p></div><div class="tag"><p>MinIO</p></div></div>
+<p class="st" style="margin-top:7pt">LLM 容灾链</p><div class="dv"></div>
+<div class="chain"><p>DeepSeek（主力）→ Qwen（备用）→ OpenAI（保底）</p></div>
+<p class="st" style="margin-top:7pt">前端技术栈</p><div class="dv"></div>
+<div><div class="t2"><p>Vue 3 / TS</p></div><div class="t2"><p>Element Plus</p></div><div class="t2"><p>vis-network 图谱</p></div></div>
+<p class="st" style="margin-top:7pt">智能体协作数据流</p><div class="dv"></div>
+<div class="fb"><p>前端请求 → agent-service 协调器 → 9 智能体按序执行：画像提供个性化上下文 → 图谱/知识库提供grounding → 资源/习题/路径产出教学内容 → 审核智能体拦截跑题/错误内容 → 评价回流画像 → 反馈合成统一报告 → 驱动下一轮推荐</p></div>
+</div>
+</div>
+</body></html>

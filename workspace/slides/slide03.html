@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+html { background: #ffffff; }
+body {
+  width: 720pt; height: 405pt; margin: 0; padding: 0;
+  background: #ffffff; font-family: "Segoe UI", Arial, sans-serif; display: flex; flex-direction: column;
+}
+.hdr { background: #0F1A3A; padding: 18pt 36pt 12pt 36pt; }
+.hdr h1 { color: #fff; font-size: 21pt; margin: 0; }
+.c { flex: 1; padding: 14pt 24pt 10pt 24pt; display: flex; gap: 14pt; box-sizing: border-box; }
+.l,.r { flex: 1; }
+.st { color: #1E40AF; font-size: 11pt; font-weight: 700; margin: 0 0 6pt 0; }
+.pb {
+  background: #FEF2F2; border-left: 4pt solid #EF4444; border-radius: 0 8pt 8pt 0;
+  padding: 7pt 9pt; margin-bottom: 7pt;
+}
+.pb p { color: #991B1B; font-size: 8pt; line-height: 1.35; margin: 0; }
+.gi { display: flex; align-items: flex-start; gap: 7pt; margin-bottom: 7pt; background: #F8FAFC; border-radius: 8pt; padding: 7pt 8pt; }
+.gn {
+  background: #2563EB; min-width: 17pt; height: 17pt; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+}
+.gn p { color: #FFFFFF; font-size: 8pt; font-weight: 700; margin: 0; }
+.gt p { color: #334155; font-size: 8pt; line-height: 1.35; margin: 0; }
+.bot { background: #0F2040; margin: 0 24pt 10pt 24pt; border-radius: 10pt; padding: 9pt 12pt; }
+.bot h3 { color: #D6E7FF; font-size: 9pt; margin: 0 0 6pt 0; }
+.flow { display: flex; gap: 3pt; align-items: center; flex-wrap: wrap; }
+.ft { background: #183260; border-radius: 10pt; padding: 2pt 6pt; }
+.ft p { color: #fff; font-size: 7pt; margin: 0; }
+.fa p { color: #7CC0FF; font-size: 8pt; margin: 0; }
+</style>
+</head>
+<body>
+<div class="hdr"><h1>01  项目背景与目标</h1></div>
+<div class="c">
+  <div class="l">
+    <p class="st">教育场景中的核心痛点</p>
+    <div class="pb"><p>学习资源统一分发，很难适应不同学生的基础差异、学习速度和认知偏好。</p></div>
+    <div class="pb"><p>学生做题后往往只知道对错，却不知道为什么错、缺什么前置知识、下一步该学什么。</p></div>
+    <div class="pb"><p>单一大模型直接生成教学内容，容易出现缺少知识依据、个性化不足和稳定性不够的问题。</p></div>
+  </div>
+  <div class="r">
+    <p class="st">系统目标与解决思路</p>
+    <div class="gi"><div class="gn"><p>1</p></div><div class="gt"><p>构建动态学习者画像，把学生的基础、偏好、薄弱点和目标转成可用上下文。</p></div></div>
+    <div class="gi"><div class="gn"><p>2</p></div><div class="gt"><p>让课件、习题、路径、问答和反馈不再孤立，而是由多个智能体联合完成。</p></div></div>
+    <div class="gi"><div class="gn"><p>3</p></div><div class="gt"><p>通过 RAG 和知识图谱为大模型提供语义依据与结构依据，提高内容可靠性。</p></div></div>
+    <div class="gi"><div class="gn"><p>4</p></div><div class="gt"><p>把评价结果回流到画像和路径中，形成“学习—练习—评价—再优化”的持续闭环。</p></div></div>
+  </div>
+</div>
+<div class="bot">
+  <h3>多智能体协作主线</h3>
+  <div class="flow">
+    <div class="ft"><p>画像分析</p></div><div class="fa"><p>→</p></div>
+    <div class="ft"><p>知识增强</p></div><div class="fa"><p>→</p></div>
+    <div class="ft"><p>资源生成</p></div><div class="fa"><p>→</p></div>
+    <div class="ft"><p>习题练习</p></div><div class="fa"><p>→</p></div>
+    <div class="ft"><p>学习评价</p></div><div class="fa"><p>→</p></div>
+    <div class="ft"><p>反馈优化</p></div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #22C55E}.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#CFFAD9;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.green{border-left-color:#22C55E;background:#F0FDF4}.orange{border-left-color:#F59E0B;background:#FFF7ED}.red{border-left-color:#EF4444;background:#FFF1F2}.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}.list li{margin-bottom:2pt}
+.stage{background:#EEF4FF;border:1pt solid #BFDBFE;border-radius:8pt;padding:5pt 6pt;margin-bottom:5pt}.stage h3{color:#1E40AF;font-size:7.4pt;margin:0 0 1pt 0}.stage p{color:#53657C;font-size:5.8pt;line-height:1.18;margin:0}.note{background:#102248;border-radius:9pt;padding:6pt 8pt}.note p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>08 学习路径规划</h1><p class="sub">把画像、图谱和评价结果转化成可执行的阶段化学习路线</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">功能作用</p>
+      <div class="b"><h3>解决什么问题</h3><p>学生知道要学某个知识点，但不知道先补什么、每天做什么、什么时候复习。本功能把目标拆成阶段任务。</p></div>
+      <div class="b green"><h3>规划结果</h3><p>输出阶段目标、每日任务、推荐资源、练习安排、复习节点和预计完成时间。</p></div>
+      <div class="b orange"><h3>动态调整</h3><p>当评价结果显示掌握度不足时，路径会延长复习或回退到前置知识。</p></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">输入与输出</p>
+      <ul class="list">
+        <li>输入：知识点、学科、每日可用时间、目标期限、学生画像。</li>
+        <li>约束：教师指定教学范围、知识图谱前置依赖、资源可用情况。</li>
+        <li>输出：阶段路线、每日任务、学习材料、练习任务、复盘节点。</li>
+        <li>持久化：路径版本、完成状态、任务进度和调整原因。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">三阶段路径</p>
+      <div class="stage"><h3>阶段一：概念构建</h3><p>根据图谱依赖先补前置知识，再学习核心概念，解决“先学什么”。</p></div>
+      <div class="stage" style="border-color:#FCD34D;background:#FFF7ED"><h3>阶段二：练习强化</h3><p>结合画像薄弱点和课件内容安排训练，解决“练哪里、练多少”。</p></div>
+      <div class="stage" style="border-color:#86EFAC;background:#F0FDF4"><h3>阶段三：复盘提升</h3><p>结合评价报告查漏补缺，生成复习任务和下一阶段建议。</p></div>
+      <div class="b red"><h3>路径不是静态计划</h3><p>它会根据作答结果、问答记录、资源完成情况持续修正。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">智能体协作</p>
+      <ul class="list">
+        <li>画像 agent：提供学习速度、目标导向、基础水平和时间承受度。</li>
+        <li>图谱 agent：提供前置依赖和知识点先后关系。</li>
+        <li>知识库/资源 agent：提供可用学习材料和推荐资源。</li>
+        <li>评价服务：提供掌握度、错题趋势和是否需要回退复习。</li>
+        <li>路径 agent：整合以上信息，生成阶段化学习路线。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="t">功能价值</p>
+      <div class="b green"><h3>从分析到行动</h3><p>画像告诉系统“学生是什么状态”，路径规划告诉学生“接下来具体怎么做”。</p></div>
+    </div>
+    <div class="note"><p>答辩表达：路径规划是个性化教学落地的执行层，把多智能体分析结果变成日程和任务。</p></div>
+  </div>
+</div>
+</body>
+</html>

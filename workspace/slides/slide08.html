@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #22C55E}.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#CFFAD9;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.green{border-left-color:#22C55E;background:#F0FDF4}.orange{border-left-color:#F59E0B;background:#FFF7ED}.red{border-left-color:#EF4444;background:#FFF1F2}.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}.list li{margin-bottom:2pt}
+.tags{display:flex;flex-wrap:wrap;gap:3pt}.tag{background:#EAF2FF;border-radius:8pt;padding:2pt 5pt}.tag p{color:#1E40AF;font-size:5.7pt;margin:0}.note{background:#102248;border-radius:9pt;padding:6pt 8pt}.note p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>06 智能问答系统</h1><p class="sub">让问答从“通用聊天”变成“懂学生、懂知识结构、懂学习路径”的教学助理</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">功能作用</p>
+      <div class="b"><h3>知识型问答</h3><p>回答概念解释、例题思路、知识点区分、代码问题等即时疑问。</p></div>
+      <div class="b green"><h3>学习诊断型问答</h3><p>不仅给答案，还解释为什么错、缺什么前置知识、下一步如何补。</p></div>
+      <div class="b orange"><h3>个性化解释</h3><p>同一问题会根据学生画像调整深度、语言风格、例子类型和推导粒度。</p></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">输入与输出</p>
+      <ul class="list">
+        <li>输入：用户问题、会话 ID、当前知识点、学生答案或错误答案。</li>
+        <li>上下文：学习者画像、历史错题、学习路径、知识库片段、图谱依赖。</li>
+        <li>输出：直接回答、逐步解释、错因分析、关联资源、下一步建议。</li>
+        <li>结构化输出：student_response + structured_analysis，便于前端展示与后续反馈复用。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">执行流程</p>
+      <div class="b"><h3>1 问题分类</h3><p>判断是普通问答、学习诊断、错题解释、代码调试还是路径咨询。</p></div>
+      <div class="b green"><h3>2 检索与依赖分析</h3><p>知识库提供 grounding；图谱判断是否缺前置概念。</p></div>
+      <div class="b orange"><h3>3 画像注入</h3><p>根据学生基础、风格和目标调整表达方式。</p></div>
+      <div class="b"><h3>4 生成回答</h3><p>QA 智能体整合多源上下文，先回答问题，再给学习建议。</p></div>
+      <div class="b red"><h3>5 结果沉淀</h3><p>高频误解和错因可进入反馈分析，为后续资源和习题优化提供依据。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel">
+      <p class="t">调用的上下文</p>
+      <div class="tags">
+        <div class="tag"><p>学习者画像</p></div><div class="tag"><p>当前知识点</p></div><div class="tag"><p>历史错题</p></div><div class="tag"><p>知识库片段</p></div><div class="tag"><p>路径阶段</p></div><div class="tag"><p>图谱依赖</p></div><div class="tag"><p>会话历史</p></div><div class="tag"><p>学习报告</p></div>
+      </div>
+    </div>
+    <div class="panel fill">
+      <p class="t">智能体协作</p>
+      <ul class="list">
+        <li>画像 agent：决定解释深度和表达风格。</li>
+        <li>知识库 agent：提供可信内容依据。</li>
+        <li>图谱 agent：判断前置知识缺口。</li>
+        <li>QA agent：生成教学式回答与结构化分析。</li>
+        <li>反馈 agent：后续汇总问答中的共性误解。</li>
+      </ul>
+    </div>
+    <div class="note"><p>答辩表达：问答模块不是外挂聊天框，而是系统学习闭环中的“即时辅导入口”。</p></div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #22C55E}.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#CFFAD9;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.green{border-left-color:#22C55E;background:#F0FDF4}.orange{border-left-color:#F59E0B;background:#FFF7ED}.red{border-left-color:#EF4444;background:#FFF1F2}.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}.list li{margin-bottom:2pt}
+.rel{display:grid;grid-template-columns:1fr 1fr;gap:4pt}.rbox{background:#EEF4FF;border:1pt solid #BFDBFE;border-radius:8pt;padding:4pt 5pt}.rbox h3{color:#1E40AF;font-size:6.8pt;margin:0 0 1pt 0}.rbox p{color:#53657C;font-size:5.2pt;line-height:1.1;margin:0}.graph{background:#102248;border-radius:9pt;padding:6pt 8pt;margin-top:4pt}.graph p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}.note{background:#102248;border-radius:9pt;padding:6pt 8pt}.note p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>09 知识图谱 - 结构化知识支撑</h1><p class="sub">用 Neo4j 表达知识点依赖、资源关联和推荐顺序，为生成、问答和路径规划提供结构依据</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">功能作用</p>
+      <div class="b"><h3>表示知识结构</h3><p>用节点表示知识点、课程资源和学习活动，用边表示前置依赖、推荐顺序和资源关联。</p></div>
+      <div class="b green"><h3>支撑智能推理</h3><p>在资源生成、问答解释和路径规划前，先判断学生是否缺少前置知识，避免跳过基础直接讲难点。</p></div>
+      <div class="b orange"><h3>可视化学习地图</h3><p>前端用 vis-network 展示知识点网络，让学生知道当前学习位置、相邻概念和后续路线。</p></div>
+      <div class="rel"><div class="rbox"><h3>DEPENDS_ON</h3><p>前置依赖</p></div><div class="rbox"><h3>RECOMMENDS</h3><p>后续推荐</p></div><div class="rbox"><h3>ASSOCIATED_WITH</h3><p>资源关联</p></div><div class="rbox"><h3>MASTERED_BY</h3><p>掌握状态</p></div></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">输入与输出</p>
+      <ul class="list">
+        <li>输入：知识点名称、学科、前置关系、课件内容、资源元数据、评价结果。</li>
+        <li>图谱查询：前置知识、关联知识点、推荐路径、已关联资源。</li>
+        <li>可视化输出：节点、边、分组、状态、推荐顺序和高亮路径。</li>
+        <li>下游输出：传给资源、问答和路径智能体的 dependencies / related_resources。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">执行流程</p>
+      <div class="b"><h3>1 知识点标准化</h3><p>统一知识点命名、学科归属和层级信息，减少同义词造成的重复节点。</p></div>
+      <div class="b green"><h3>2 关系构建</h3><p>根据教学资源、课程结构和生成内容抽取依赖关系与资源关联。</p></div>
+      <div class="b orange"><h3>3 查询推理</h3><p>为路径规划提供学习顺序，为问答提供前置解释，为资源生成提供结构约束。</p></div>
+      <div class="b"><h3>4 状态融合</h3><p>结合评价结果标记掌握、薄弱和待复习知识点。</p></div>
+      <div class="b red"><h3>5 前端展示</h3><p>输出可视化数据，让学生和教师都能看到知识网络与学习位置。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">智能体协作</p>
+      <ul class="list">
+        <li>图谱 agent：查询依赖、推荐后续知识点、输出可视化结构。</li>
+        <li>资源 agent：生成课件后把知识点和资源关系同步回图谱。</li>
+        <li>路径 agent：用 DEPENDS_ON 确定“先学什么、后学什么”。</li>
+        <li>QA agent：发现学生缺前置知识时，先解释基础再回答问题。</li>
+        <li>评价服务：把掌握度变化回写到知识点状态中。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="t">功能价值</p>
+      <div class="b green"><h3>让生成有结构</h3><p>图谱把大模型输出约束在合理的知识先后顺序里，增强教学逻辑和可解释性。</p></div>
+      <div class="graph"><p>典型链路：目标知识点 -> 查询前置依赖 -> 判断画像掌握度 -> 推荐补齐资源 -> 生成路径/问答/课件。</p></div>
+    </div>
+    <div class="note"><p>答辩表达：知识图谱是系统的结构化知识骨架，让个性化生成不只“会写”，还“讲得有顺序”。</p></div>
+  </div>
+</div>
+</body>
+</html>

@@ -337,15 +337,36 @@ class CoordinatorWorkflow:
 
             # 2. Query the graph
             max_depth = int(context.get("max_depth") or 3)
+            warnings: list[str] = []
+            dependencies: list[dict[str, Any]] = []
+            related_resources: list[dict[str, Any]] = []
+            visualization: dict[str, Any] = {"nodes": [], "edges": []}
+
+            try:
+                dependencies = repository.find_dependency_path(knowledge_point, max_depth)
+            except Exception as exc:
+                warnings.append(f"依赖路径暂缺：{exc}")
+                logger.warning("Knowledge graph dependency lookup failed: %s", exc)
+
+            try:
+                if hasattr(repository, "find_related_resources"):
+                    related_resources = repository.find_related_resources(knowledge_point)
+            except Exception as exc:
+                warnings.append(f"关联资源暂缺：{exc}")
+                logger.warning("Knowledge graph resource lookup failed: %s", exc)
+
+            try:
+                visualization = repository.get_visualization_graph(knowledge_point, min(max_depth, 2))
+            except Exception as exc:
+                warnings.append(f"图谱可视化暂缺：{exc}")
+                logger.warning("Knowledge graph visualization lookup failed: %s", exc)
+
             return {
-                "status": "completed",
-                "dependencies": repository.find_dependency_path(knowledge_point, max_depth),
-                "related_resources": (
-                    repository.find_related_resources(knowledge_point)
-                    if hasattr(repository, "find_related_resources")
-                    else []
-                ),
-                "visualization": repository.get_visualization_graph(knowledge_point, min(max_depth, 2)),
+                "status": "completed" if not warnings else "partial",
+                "dependencies": dependencies,
+                "related_resources": related_resources,
+                "visualization": visualization,
+                "warnings": warnings,
             }
         finally:
             repository.close()

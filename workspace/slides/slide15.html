@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #60A5FA}.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#BBD3FF;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}.item{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:5pt 7pt;margin-bottom:5pt}
+.item h3{color:#102248;font-size:7.6pt;margin:0 0 1pt 0}.item p{color:#53657C;font-size:6pt;line-height:1.2;margin:0}.orange{border-left-color:#F59E0B;background:#FFF7ED}.green{border-left-color:#22C55E;background:#F0FDF4}.red{border-left-color:#EF4444;background:#FFF1F2}.blue{border-left-color:#0EA5E9;background:#F0F9FF}
+.conclusion{background:#102248;border-radius:9pt;padding:6pt 8pt}.conclusion h3{color:#fff;font-size:7.6pt;margin:0 0 2pt 0}.conclusion p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>13 技术亮点与未来展望</h1><p class="sub">亮点不只是“用了大模型”，而是把大模型组织进可协作、可审核、可优化的学习系统</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">核心技术亮点</p>
+      <div class="item"><h3>多智能体协作编排</h3><p>CoordinatorWorkflow 按意图选择 9 个智能体，支持异步队列分发和同步串行执行。</p></div>
+      <div class="item orange"><h3>画像驱动全链路个性化</h3><p>六维画像贯穿资源、习题、路径、问答、评价和反馈流程。</p></div>
+      <div class="item green"><h3>RAG + 知识图谱双重增强</h3><p>ChromaDB 提供语义依据，Neo4j 提供依赖结构，降低纯模型生成不稳定性。</p></div>
+      <div class="item red"><h3>内容审核智能体 + 打回重生成</h3><p>审核课件和习题的主题匹配、学术正确性、可读性、价值观与安全风险；REJECT 后带原因重生成。</p></div>
+      <div class="item blue"><h3>学习闭环自我优化</h3><p>评价结果回流画像，画像再驱动下一轮资源、习题和路径生成。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">未来发展方向</p>
+      <div class="item"><h3>更多学科与更细粒度追踪</h3><p>扩展知识库覆盖范围，支持知识点级掌握度预测和前置依赖判断。</p></div>
+      <div class="item orange"><h3>多模态资源生成</h3><p>从文本课件扩展到图解、音频讲解、交互式可视化和课堂活动材料。</p></div>
+      <div class="item green"><h3>教师协同增强</h3><p>强化教师审核、班级干预和教学计划嵌入，让 AI 推荐贴合真实课堂。</p></div>
+      <div class="item red"><h3>审核规则扩展</h3><p>进一步细化价值观、安全合规、年龄适配、题目可答性和教学目标一致性规则。</p></div>
+      <div class="conclusion"><h3>答辩表达重点</h3><p>本项目不是让单个模型替代教学，而是用多智能体把画像、知识、生成、审核、练习、评价和反馈组织成完整闭环。</p></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

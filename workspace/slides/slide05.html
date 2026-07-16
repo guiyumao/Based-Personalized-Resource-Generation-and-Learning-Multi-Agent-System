@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column}
+.hdr{background:#102248;padding:15pt 28pt 9pt 28pt;border-bottom:3pt solid #60A5FA}
+.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#BBD3FF;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:9pt;box-sizing:border-box}
+.left{flex:1.02;display:flex;flex-direction:column;gap:6pt}.right{flex:.98;display:flex;flex-direction:column;gap:6pt}
+.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.5pt;font-weight:800;margin:0 0 5pt 0}
+.step{display:flex;gap:6pt;align-items:flex-start;background:#F8FAFC;border-radius:8pt;padding:5pt 6pt;margin-bottom:4pt}
+.bubble{min-width:16pt;height:16pt;border-radius:50%;background:#2563EB;display:flex;align-items:center;justify-content:center}.bubble p{color:#fff;font-size:7pt;font-weight:800;margin:0}
+.stxt h3{color:#102248;font-size:7.6pt;margin:0 0 1pt 0}.stxt p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4pt}
+.agent{background:#F8FAFC;border:1pt solid #E4ECF7;border-radius:8pt;padding:4pt 5pt;min-height:38pt}.agent h3{color:#1E40AF;font-size:6.8pt;margin:0 0 1pt 0}.agent p{color:#53657C;font-size:5.2pt;line-height:1.12;margin:0}
+.audit{border-color:#FCA5A5;background:#FFF1F2}.audit h3{color:#B91C1C}
+.hero{background:#102248;border-radius:9pt;padding:6pt 8pt}.hero p{color:#DCEBFF;font-size:6.2pt;line-height:1.25;margin:0}
+.warn{background:#FFF7ED;border:1pt solid #FCD34D;border-radius:9pt;padding:6pt 8pt}.warn p{color:#92400E;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>03 多智能体协调系统 - 系统大脑</h1><p class="sub">CoordinatorWorkflow 负责选智能体、排顺序、传上下文、收结果；审核智能体负责生成内容的安全与质量把关</p></div>
+<div class="wrap">
+  <div class="left">
+    <div class="panel">
+      <p class="t">CoordinatorWorkflow 三步编排引擎</p>
+      <div class="step"><div class="bubble"><p>1</p></div><div class="stxt"><h3>analyze_intent 意图分析</h3><p>理解用户请求，从 9 个智能体中选出需要参与的组合，支持 force_agents 指定和关键词自动路由。</p></div></div>
+      <div class="step"><div class="bubble"><p>2</p></div><div class="stxt"><h3>dispatch_tasks 任务分发</h3><p>画像先提供上下文，图谱/知识库提供依据，资源/习题/路径/问答执行生成或分析，审核节点对生成结果把关。</p></div></div>
+      <div class="step"><div class="bubble"><p>3</p></div><div class="stxt"><h3>resolve_conflicts 冲突解决</h3><p>处理资源生成、审核、评价反馈等先后关系；汇总成功/失败智能体，输出本轮协作摘要。</p></div></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">审核智能体的特殊逻辑</p>
+      <div class="step"><div class="bubble"><p>A</p></div><div class="stxt"><h3>AuditService 内容审核</h3><p>检查 AI 生成课件和习题是否严重跑题、明显学术错误、空内容/乱码，以及价值观或安全风险内容。</p></div></div>
+      <div class="step"><div class="bubble"><p>B</p></div><div class="stxt"><h3>REJECT 后打回重生成</h3><p>审核不通过时，把驳回原因写入下一轮 prompt，资源/习题智能体最多重试 2 次后再返回结果。</p></div></div>
+    </div>
+    <div class="hero"><p>协调器不直接生成教学内容，而是负责组织协作；审核智能体则保证生成内容不能偏离用户需求，也不能把不合适内容交给学生。</p></div>
+  </div>
+  <div class="right">
+    <div class="panel fill">
+      <p class="t">9 个智能体的协作分工</p>
+      <div class="grid">
+        <div class="agent"><h3>画像 agent</h3><p>学生基础、偏好、薄弱点</p></div>
+        <div class="agent"><h3>图谱 agent</h3><p>前置依赖、结构顺序</p></div>
+        <div class="agent"><h3>知识库 agent</h3><p>RAG grounding 内容</p></div>
+        <div class="agent"><h3>路径 agent</h3><p>阶段路线、每日任务</p></div>
+        <div class="agent"><h3>资源 agent</h3><p>个性化课件与讲义</p></div>
+        <div class="agent"><h3>习题 agent</h3><p>题组、答案、解析</p></div>
+        <div class="agent"><h3>问答 agent</h3><p>诊断式答疑与建议</p></div>
+        <div class="agent"><h3>反馈 agent</h3><p>跨智能体综合反馈</p></div>
+        <div class="agent audit"><h3>审核 agent</h3><p>检查课件/习题，不合格打回重生成</p></div>
+      </div>
+    </div>
+    <div class="warn"><p>审核 agent 是生成链路的“闸门”：资源 agent 和习题 agent 的输出必须先通过审核，才能进入前端展示、评价服务和后续学习闭环。</p></div>
+  </div>
+</div>
+</body>
+</html>

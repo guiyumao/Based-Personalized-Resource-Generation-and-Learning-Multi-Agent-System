@@ -133,6 +133,7 @@ export type LearningPathResponse = {
   estimated_days: number
   stages: LearningStageItem[]
   teacher_scope?: TeachingScopeItem | null
+  generation_source?: 'llm' | 'rule_fallback' | null
 }
 
 export type AgentExecutionOutput<T = unknown> = {

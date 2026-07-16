@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+import logging
+from typing import Any
 
 from sqlalchemy.orm import Session
 
+from common.config import get_settings
 from common.models.learning import LearningPath
 from common.schemas.agent import LearningPathAdjustRequest, LearningPathRequest
+from services.agent_service.app.services.llm_factory import LLMFactory
+
+
+logger = logging.getLogger(__name__)
 
 
 class LearningPathService:
@@ -19,10 +27,27 @@ class LearningPathService:
     def generate_path(self, request: LearningPathRequest) -> dict[str, object]:
         """Create a staged learning path around one knowledge point."""
 
+        teacher_scope = self._extract_teacher_scope(request.learner_profile)
+        payload = self._build_rule_based_path(request, teacher_scope)
+        llm_payload = self._generate_path_with_llm(request, payload, teacher_scope)
+        if llm_payload is not None:
+            payload = llm_payload
+            payload.setdefault("generation_source", "llm")
+        else:
+            payload.setdefault("generation_source", "rule_fallback")
+
+        return self._persist_generated_path(request.user_id, payload) if self.db is not None else payload
+
+    def _build_rule_based_path(
+        self,
+        request: LearningPathRequest,
+        teacher_scope: dict[str, object] | None,
+    ) -> dict[str, object]:
+        """Build the deterministic path used as an LLM schema/template fallback."""
+
         daily_minutes = request.daily_minutes
         estimated_days = 3 if daily_minutes >= 45 else 4
         style = str(request.learner_profile.get("learning_style", "visual"))
-        teacher_scope = self._extract_teacher_scope(request.learner_profile)
 
         # Only inject profile summary if the topic matches known weak areas
         kp = request.knowledge_point.lower()
@@ -115,7 +140,187 @@ class LearningPathService:
             ],
         }
         payload = self._apply_teacher_scope_to_path(payload, teacher_scope)
-        return self._persist_generated_path(request.user_id, payload) if self.db is not None else payload
+        return payload
+
+    def _generate_path_with_llm(
+        self,
+        request: LearningPathRequest,
+        fallback_payload: dict[str, object],
+        teacher_scope: dict[str, object] | None,
+    ) -> dict[str, object] | None:
+        """Ask the configured LLM to personalize the path while preserving API shape."""
+
+        try:
+            settings = get_settings()
+            llm = LLMFactory(settings).build_chat_model(temperature=0.25)
+            prompt = self._build_llm_prompt(request, fallback_payload, teacher_scope)
+            result = llm.invoke(prompt)
+            content = self._coerce_llm_text(getattr(result, "content", result))
+            payload = self._parse_llm_json(content)
+            return self._normalize_llm_path(request, payload, fallback_payload, teacher_scope)
+        except Exception as exc:
+            logger.warning("LLM learning path generation failed, using fallback: %s", exc)
+            return None
+
+    def _build_llm_prompt(
+        self,
+        request: LearningPathRequest,
+        fallback_payload: dict[str, object],
+        teacher_scope: dict[str, object] | None,
+    ) -> list[tuple[str, str]]:
+        profile = {
+            "daily_minutes": request.daily_minutes,
+            "learner_profile": request.learner_profile,
+            "teacher_scope": teacher_scope,
+        }
+        system = (
+            "你是个性化学习路径规划智能体。请严格输出 JSON，不要输出 Markdown。"
+            "JSON 必须包含 user_id, subject, knowledge_point, overview, estimated_days, stages。"
+            "stages 为 3 个阶段左右；每个阶段包含 stage_id, title, description, tasks。"
+            "每个 task 包含 task_id, title, task_type, knowledge_point, objective, "
+            "estimated_minutes, difficulty, completed, status。"
+            "task_type 只能是 courseware/exercise/review/graph，difficulty 只能是 "
+            "foundation/intermediate/advanced，status 使用 pending。"
+        )
+        user = (
+            "请基于学习者画像、教师范围和参考结构生成更自然的个性化学习路径。\n"
+            f"学习主题：{request.knowledge_point}\n"
+            f"学科：{request.subject}\n"
+            f"画像与约束：{json.dumps(profile, ensure_ascii=False, default=str)}\n"
+            f"参考结构：{json.dumps(fallback_payload, ensure_ascii=False, default=str)}"
+        )
+        return [("system", system), ("user", user)]
+
+    def _parse_llm_json(self, content: str) -> dict[str, Any]:
+        text = content.strip()
+        if text.startswith("```"):
+            text = text.strip("`").strip()
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError("LLM did not return a JSON object")
+        parsed = json.loads(text[start : end + 1])
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM JSON payload must be an object")
+        return parsed
+
+    def _normalize_llm_path(
+        self,
+        request: LearningPathRequest,
+        payload: dict[str, Any],
+        fallback_payload: dict[str, object],
+        teacher_scope: dict[str, object] | None,
+    ) -> dict[str, object]:
+        normalized: dict[str, object] = {
+            "user_id": request.user_id,
+            "subject": str(payload.get("subject") or fallback_payload.get("subject") or request.subject),
+            "knowledge_point": str(
+                payload.get("knowledge_point")
+                or fallback_payload.get("knowledge_point")
+                or request.knowledge_point
+            ),
+            "overview": str(payload.get("overview") or fallback_payload.get("overview") or ""),
+            "estimated_days": self._safe_int(payload.get("estimated_days"), fallback_payload.get("estimated_days"), 3),
+            "stages": [],
+        }
+        if teacher_scope:
+            normalized["teacher_scope"] = teacher_scope
+        elif "teacher_scope" in fallback_payload:
+            normalized["teacher_scope"] = fallback_payload.get("teacher_scope")
+
+        fallback_stages = fallback_payload.get("stages", [])
+        stages = payload.get("stages")
+        if not isinstance(stages, list) or not stages:
+            stages = fallback_stages
+
+        normalized_stages: list[dict[str, object]] = []
+        for stage_index, stage in enumerate(stages[:4], start=1):
+            if not isinstance(stage, dict):
+                continue
+            fallback_stage = (
+                fallback_stages[stage_index - 1]
+                if isinstance(fallback_stages, list) and len(fallback_stages) >= stage_index
+                else {}
+            )
+            if not isinstance(fallback_stage, dict):
+                fallback_stage = {}
+            tasks = stage.get("tasks")
+            fallback_tasks = fallback_stage.get("tasks", [])
+            normalized_tasks = self._normalize_llm_tasks(
+                tasks if isinstance(tasks, list) else fallback_tasks,
+                fallback_tasks if isinstance(fallback_tasks, list) else [],
+                normalized["knowledge_point"],
+            )
+            if not normalized_tasks:
+                continue
+            normalized_stages.append(
+                {
+                    "stage_id": str(stage.get("stage_id") or fallback_stage.get("stage_id") or f"stage-{stage_index}"),
+                    "title": str(stage.get("title") or fallback_stage.get("title") or f"阶段{stage_index}"),
+                    "description": str(stage.get("description") or fallback_stage.get("description") or ""),
+                    "tasks": normalized_tasks,
+                }
+            )
+
+        if not normalized_stages:
+            return fallback_payload
+        normalized["stages"] = normalized_stages
+        return self._normalize_payload(normalized)
+
+    def _normalize_llm_tasks(
+        self,
+        tasks: Any,
+        fallback_tasks: list[Any],
+        knowledge_point: object,
+    ) -> list[dict[str, object]]:
+        allowed_types = {"courseware", "exercise", "review", "graph"}
+        allowed_difficulties = {"foundation", "intermediate", "advanced"}
+        normalized: list[dict[str, object]] = []
+        if not isinstance(tasks, list):
+            tasks = fallback_tasks
+        for task_index, task in enumerate(tasks[:5], start=1):
+            if not isinstance(task, dict):
+                continue
+            fallback_task = fallback_tasks[task_index - 1] if len(fallback_tasks) >= task_index else {}
+            if not isinstance(fallback_task, dict):
+                fallback_task = {}
+            task_type = str(task.get("task_type") or fallback_task.get("task_type") or "courseware")
+            difficulty = str(task.get("difficulty") or fallback_task.get("difficulty") or "foundation")
+            normalized.append(
+                {
+                    "task_id": str(task.get("task_id") or fallback_task.get("task_id") or f"task-{task_index}"),
+                    "title": str(task.get("title") or fallback_task.get("title") or "学习任务"),
+                    "task_type": task_type if task_type in allowed_types else "courseware",
+                    "knowledge_point": str(task.get("knowledge_point") or fallback_task.get("knowledge_point") or knowledge_point),
+                    "objective": str(task.get("objective") or fallback_task.get("objective") or ""),
+                    "estimated_minutes": self._safe_int(
+                        task.get("estimated_minutes"),
+                        fallback_task.get("estimated_minutes"),
+                        20,
+                    ),
+                    "difficulty": difficulty if difficulty in allowed_difficulties else "foundation",
+                    "completed": False,
+                    "status": "pending",
+                }
+            )
+        return normalized
+
+    def _safe_int(self, value: Any, fallback: Any, default: int) -> int:
+        for candidate in (value, fallback, default):
+            try:
+                return int(candidate)
+            except (TypeError, ValueError):
+                continue
+        return default
+
+    def _coerce_llm_text(self, content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(str(item.get("text", item)) if isinstance(item, dict) else str(item) for item in content)
+        return str(content)
 
     def _build_profile_summary(self, learner_profile: dict[str, object]) -> str:
         summaries = learner_profile.get("profile_analysis_summaries")

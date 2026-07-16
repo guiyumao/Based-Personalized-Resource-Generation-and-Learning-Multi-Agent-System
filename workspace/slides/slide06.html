@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #3B82F6}
+.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}
+.sub{color:#BBD3FF;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}
+.col{flex:1;display:flex;flex-direction:column;gap:6pt}
+.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}
+.panel.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}
+.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}
+.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}
+.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.orange{border-left-color:#F59E0B;background:#FFF7ED}.green{border-left-color:#22C55E;background:#F0FDF4}.red{border-left-color:#EF4444;background:#FFF1F2}
+.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}
+.list li{margin-bottom:2pt}
+.flow{display:flex;gap:4pt;align-items:stretch;margin-bottom:4pt}
+.step{flex:1;background:#EEF4FF;border:1pt solid #BFDBFE;border-radius:7pt;padding:4pt 3pt;text-align:center}
+.step h3{color:#1E40AF;font-size:6.8pt;margin:0 0 1pt 0}
+.step p{color:#52647A;font-size:5.4pt;line-height:1.12;margin:0}
+.tag{display:inline-block;background:#DBEAFE;border-radius:8pt;padding:2pt 5pt;margin:0 2pt 3pt 0}
+.tag p{color:#1E40AF;font-size:5.8pt;margin:0}
+.note{background:#102248;border-radius:9pt;padding:6pt 8pt}
+.note p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>04 个性化资源生成 - 多智能体协作产物</h1><p class="sub">把同一个知识点转化为适合不同学生的课件、讲义、例题和复习材料</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">功能作用</p>
+      <div class="b"><h3>解决什么问题</h3><p>传统资源对所有学生一样，无法适配基础差异、认知风格和错题模式。本功能把知识点生成变成“学生画像驱动的内容定制”。</p></div>
+      <div class="b green"><h3>生成什么内容</h3><p>输出结构化课件、核心概念解释、例题讲解、易错点提醒、课堂练习、总结复盘和资源元数据。</p></div>
+      <div class="b orange"><h3>为什么不是直接让 LLM 写</h3><p>直接生成容易空泛或顺序混乱；系统先检索知识库、检查图谱依赖、注入画像，再让模型生成。</p></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">输入与输出</p>
+      <ul class="list">
+        <li>输入：知识点、学科、资源类型、难度目标、学生画像、教师约束。</li>
+        <li>画像输入：掌握度、学习速度、认知风格、兴趣方向、目标导向。</li>
+        <li>知识输入：知识库片段、易错点、应用场景、图谱前置依赖。</li>
+        <li>输出：Markdown 课件、生成计划、个性化说明、审核结果、存储记录。</li>
+        <li>后续流向：同步到资源库，可被习题、问答、路径和图谱继续复用。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">执行流程</p>
+      <div class="flow"><div class="step"><h3>1 标准化</h3><p>统一知识点名称</p></div><div class="step"><h3>2 画像快照</h3><p>读取学生状态</p></div><div class="step"><h3>3 RAG 检索</h3><p>查知识依据</p></div></div>
+      <div class="flow"><div class="step"><h3>4 图谱校验</h3><p>检查前置知识</p></div><div class="step"><h3>5 生成计划</h3><p>确定结构与难度</p></div><div class="step"><h3>6 生成审核</h3><p>产出并保存</p></div></div>
+      <div class="b"><h3>生成计划包含</h3><p>标题、受众、学习目标、章节结构、难度曲线、案例类型、练习配置、个性化提示和禁止项。</p></div>
+      <div class="b green"><h3>质量控制</h3><p>审核智能体检查主题匹配、学术正确性、空内容/乱码和价值观风险；REJECT 时把原因写入 prompt 并打回重生成。</p></div>
+      <div class="b orange"><h3>持久化</h3><p>通过 resource-service 存储资源记录，通过 MinIO 保存文件，通过知识图谱同步课件与知识点关系。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel">
+      <p class="t">参与协作的智能体</p>
+      <div class="tag"><p>画像 agent：决定怎么讲</p></div>
+      <div class="tag"><p>知识库 agent：决定讲什么</p></div>
+      <div class="tag"><p>图谱 agent：决定先后顺序</p></div>
+      <div class="tag"><p>资源 agent：生成课件</p></div>
+      <div class="tag"><p>审核 agent：不合格打回</p></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">协作关系</p>
+      <ul class="list">
+        <li>画像智能体先给出“学生当前适合怎样学”。</li>
+        <li>知识库智能体提供 grounding，保证内容有依据。</li>
+        <li>图谱智能体判断是否需要先补前置知识。</li>
+        <li>资源智能体把三类上下文合并进 prompt，生成正式课件。</li>
+        <li>审核智能体调用 audit_courseware 检查课件，严重跑题/价值观风险/明显错误会 REJECT。</li>
+        <li>REJECT 后资源智能体最多重试 2 次，带着驳回原因重新生成。</li>
+        <li>评价智能体后续验证学习效果，把结果回流画像。</li>
+      </ul>
+    </div>
+    <div class="note"><p>答辩表达：资源生成不是单点 LLM 能力，而是画像、RAG、图谱和审核共同约束下的个性化内容生产流水线。</p></div>
+  </div>
+</div>
+</body>
+</html>

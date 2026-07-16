@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#F4F7FB;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.hdr{background:#102248;padding:14pt 30pt 9pt 30pt;border-bottom:3pt solid #EF4444}.hdr h1{color:#fff;font-size:20pt;margin:0;font-weight:800}.sub{color:#FFD6D6;font-size:7pt;margin:3pt 0 0 0}
+.wrap{flex:1;padding:10pt 18pt 12pt 18pt;display:flex;gap:8pt;box-sizing:border-box}.col{flex:1;display:flex;flex-direction:column;gap:6pt}.panel{background:#fff;border:1pt solid #DDE8F6;border-radius:10pt;padding:7pt 8pt;box-sizing:border-box}.fill{flex:1}
+.t{color:#1D4ED8;font-size:9.4pt;font-weight:800;margin:0 0 5pt 0}.b{background:#F8FAFC;border-left:3pt solid #2563EB;border-radius:0 7pt 7pt 0;padding:4pt 6pt;margin-bottom:4pt}.b h3{color:#102248;font-size:7.4pt;margin:0 0 1pt 0}.b p{color:#53657C;font-size:5.9pt;line-height:1.18;margin:0}
+.green{border-left-color:#22C55E;background:#F0FDF4}.orange{border-left-color:#F59E0B;background:#FFF7ED}.red{border-left-color:#EF4444;background:#FFF1F2}.list{margin:0;padding-left:12pt;color:#334155;font-size:5.9pt;line-height:1.25}.list li{margin-bottom:2pt}
+.reports{display:flex;gap:4pt}.report{flex:1;background:#EEF4FF;border:1pt solid #BFDBFE;border-radius:8pt;padding:4pt;text-align:center}.report h3{color:#1E40AF;font-size:6.8pt;margin:0 0 1pt 0}.report p{color:#53657C;font-size:5.3pt;line-height:1.1;margin:0}.note{background:#102248;border-radius:9pt;padding:6pt 8pt}.note p{color:#DCEBFF;font-size:6.1pt;line-height:1.25;margin:0}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>10 学习评价与报告 - 数据回流画像的闭环枢纽</h1><p class="sub">把作答结果、错题记录和学习趋势变成下一轮智能体协作的依据</p></div>
+<div class="wrap">
+  <div class="col">
+    <div class="panel">
+      <p class="t">功能作用</p>
+      <div class="b"><h3>即时评分</h3><p>客观题自动判分，主观题和编程题通过 LLM 语义评分，输出分数、解析和改进建议。</p></div>
+      <div class="b green"><h3>错题沉淀</h3><p>记录错题、错因、知识点、题型和时间，形成长期错误画像。</p></div>
+      <div class="b orange"><h3>报告生成</h3><p>按阶段、月度和综合维度输出掌握度、趋势、薄弱点和下一步建议。</p></div>
+      <div class="reports"><div class="report"><h3>阶段报告</h3><p>章节/知识点</p></div><div class="report"><h3>月度报告</h3><p>趋势变化</p></div><div class="report"><h3>综合报告</h3><p>整体诊断</p></div></div>
+    </div>
+    <div class="panel fill">
+      <p class="t">输入与输出</p>
+      <ul class="list">
+        <li>输入：题目、学生答案、标准答案、题型、知识点、学生 ID。</li>
+        <li>评分输出：得分、是否正确、解析、错因、建议、置信说明。</li>
+        <li>报告输出：掌握度变化、薄弱知识点、学习趋势、错题分布。</li>
+        <li>回流输出：更新画像中的 mastery_score、weakness_hint、errorPreference。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">执行流程</p>
+      <div class="b"><h3>1 答案归一化</h3><p>对 T/F、对/错、大小写、空格等常见格式做统一处理。</p></div>
+      <div class="b green"><h3>2 自动评分</h3><p>客观题规则判分；主观题调用 LLM 判断语义相似度和答题完整性。</p></div>
+      <div class="b orange"><h3>3 错因识别</h3><p>判断是概念混淆、计算错误、前置知识缺失、审题错误还是表达不完整。</p></div>
+      <div class="b"><h3>4 更新掌握度</h3><p>结合正确率、难度、时间和学习率更新知识点掌握度。</p></div>
+      <div class="b red"><h3>5 生成报告</h3><p>汇总阶段表现，输出可执行建议，并交给反馈智能体做跨模块分析。</p></div>
+    </div>
+  </div>
+  <div class="col">
+    <div class="panel fill">
+      <p class="t">智能体协作</p>
+      <ul class="list">
+        <li>习题 agent 生成可评测题目和标准答案。</li>
+        <li>evaluation-service 完成判分、错因归类和报告生成。</li>
+        <li>画像 agent 接收评分结果并更新掌握度。</li>
+        <li>路径 agent 根据评价结果决定是否回退或进入下一阶段。</li>
+        <li>反馈 agent 综合评价、画像、路径和问答，生成统一建议。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <p class="t">闭环价值</p>
+      <div class="b green"><h3>不是终点，是起点</h3><p>评价结果会驱动下一轮资源、习题、路径和问答调整，让系统越用越了解学生。</p></div>
+    </div>
+    <div class="note"><p>答辩表达：评价模块是数据回流枢纽，负责把“学生做得怎么样”转化为“系统下一步怎么教”。</p></div>
+  </div>
+</div>
+</body>
+</html>

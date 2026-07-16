@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+html{background:#fff}
+body{width:720pt;height:405pt;margin:0;padding:0;background:#102248;font-family:"Microsoft YaHei","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;box-sizing:border-box}
+.wrap{height:100%;padding:18pt 26pt 14pt 26pt;box-sizing:border-box;display:flex;flex-direction:column}
+.title{text-align:center;margin-top:2pt}
+.title h1{color:#fff;font-size:21pt;margin:0 0 8pt 0;font-weight:800}
+.stats{display:flex;gap:7pt;justify-content:center;margin-bottom:10pt}
+.card{width:78pt;background:#183260;border-radius:8pt;padding:7pt 5pt;text-align:center}
+.num{color:#60A5FA;font-size:17pt;font-weight:800;margin:0}
+.lab{color:#B9D7FF;font-size:6.5pt;margin:2pt 0 0 0}
+.main{display:flex;gap:8pt;flex:1}
+.col{flex:1;background:rgba(255,255,255,.07);border:1pt solid rgba(255,255,255,.12);border-radius:10pt;padding:8pt 9pt;box-sizing:border-box}
+.col h2{color:#D9E8FF;font-size:10.5pt;margin:0 0 6pt 0}
+.item{display:flex;gap:5pt;align-items:flex-start;margin-bottom:5pt}
+.idx{min-width:16pt;height:16pt;border-radius:50%;background:#2563EB;display:flex;align-items:center;justify-content:center}
+.idx p{color:#fff;font-size:7pt;font-weight:800;margin:0}
+.txt p{color:#D2DEF1;font-size:6.1pt;line-height:1.28;margin:0}
+.chips{display:flex;flex-wrap:wrap;gap:3pt}.chip{background:#183260;border-radius:8pt;padding:2pt 5pt}.chip p{color:#DCEBFF;font-size:5.8pt;margin:0}
+.bottom{text-align:center;padding-top:7pt}
+.bottom p{color:#8FA9D2;font-size:9pt;margin:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title"><h1>总结与展望</h1></div>
+  <div class="stats">
+    <div class="card"><p class="num">9</p><p class="lab">核心智能体</p></div>
+    <div class="card"><p class="num">6</p><p class="lab">后端微服务</p></div>
+    <div class="card"><p class="num">6</p><p class="lab">画像维度</p></div>
+    <div class="card"><p class="num">1</p><p class="lab">学习闭环</p></div>
+  </div>
+  <div class="main">
+    <div class="col">
+      <h2>已完成能力</h2>
+      <div class="item"><div class="idx"><p>1</p></div><div class="txt"><p>画像、图谱、RAG、资源、习题、问答、路径、评价、反馈、审核和前端工作台已形成完整链路。</p></div></div>
+      <div class="item"><div class="idx"><p>2</p></div><div class="txt"><p>生成内容先经过知识依据与图谱结构约束，再由审核智能体做质量与风险把关。</p></div></div>
+      <div class="item"><div class="idx"><p>3</p></div><div class="txt"><p>评价结果回流画像，画像再驱动下一轮资源、习题、路径和问答优化。</p></div></div>
+    </div>
+    <div class="col">
+      <h2>功能特色总览</h2>
+      <div class="chips"><div class="chip"><p>个性化课件</p></div><div class="chip"><p>智能出题</p></div><div class="chip"><p>诊断问答</p></div><div class="chip"><p>大小模型路由</p></div><div class="chip"><p>学习路径</p></div><div class="chip"><p>知识图谱</p></div><div class="chip"><p>错题报告</p></div><div class="chip"><p>六维画像</p></div><div class="chip"><p>联合反馈</p></div><div class="chip"><p>内容审核</p></div><div class="chip"><p>教师端</p></div><div class="chip"><p>管理端</p></div></div>
+    </div>
+    <div class="col">
+      <h2>未来方向</h2>
+      <div class="item"><div class="idx"><p>1</p></div><div class="txt"><p>扩展更多学科知识库，增强知识点级掌握度预测和长期学习行为建模。</p></div></div>
+      <div class="item"><div class="idx"><p>2</p></div><div class="txt"><p>增加图解、语音讲解、交互式可视化等多模态资源生成能力。</p></div></div>
+      <div class="item"><div class="idx"><p>3</p></div><div class="txt"><p>强化教师协同审核与班级干预，让 AI 推荐更贴近真实教学计划。</p></div></div>
+    </div>
+  </div>
+  <div class="bottom"><p>感谢聆听 · Q &amp; A</p></div>
+</div>
+</body>
+</html>
