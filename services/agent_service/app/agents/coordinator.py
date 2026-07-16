@@ -253,11 +253,20 @@ class CoordinatorWorkflow:
                     daily_minutes=int(context.get("daily_minutes") or 45),
                     learner_profile=learner_profile,
                 )
-                outputs["path_planning_agent"] = {
-                    "status": "completed",
-                    "learning_path": LearningPathService(session).generate_path(path_request),
-                    "profile_handoff": self._agent_handoff(learner_profile, "path_planning_agent"),
-                }
+                profile_handoff = self._agent_handoff(learner_profile, "path_planning_agent")
+                try:
+                    outputs["path_planning_agent"] = {
+                        "status": "completed",
+                        "learning_path": LearningPathService(session).generate_path(path_request),
+                        "profile_handoff": profile_handoff,
+                    }
+                except Exception as exc:
+                    logger.warning("Path planning agent failed: %s", exc)
+                    outputs["path_planning_agent"] = {
+                        "status": "failed",
+                        "error": str(exc),
+                        "profile_handoff": profile_handoff,
+                    }
                 plan_parts.append("学习路径")
 
             if "resource_generation_agent" in selected:

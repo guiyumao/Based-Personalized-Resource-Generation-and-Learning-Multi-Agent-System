@@ -149,7 +149,7 @@ class LearningPathResponse(BaseModel):
     estimated_days: int
     stages: list[LearningStageItem]
     teacher_scope: dict[str, Any] | None = None
-    generation_source: Literal["llm", "rule_fallback"] | None = None
+    generation_source: Literal["llm"] | None = None
 
 
 class LearningPathAdjustRequest(BaseModel):

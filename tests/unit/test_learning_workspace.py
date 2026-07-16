@@ -11,6 +11,36 @@ from services.evaluation_service.app.schemas.report import PracticeSubmission
 from services.evaluation_service.app.services.report_service import ReportService
 
 
+def _learning_path_payload(knowledge_point: str = "Python loops") -> dict[str, object]:
+    return {
+        "user_id": 1,
+        "subject": "Python programming",
+        "knowledge_point": knowledge_point,
+        "overview": "LLM generated path",
+        "estimated_days": 3,
+        "stages": [
+            {
+                "stage_id": "stage-1",
+                "title": "Concepts",
+                "description": "Build the core concept first.",
+                "tasks": [
+                    {
+                        "task_id": "task-1",
+                        "title": "Read courseware",
+                        "task_type": "courseware",
+                        "knowledge_point": knowledge_point,
+                        "objective": "Understand the core concept.",
+                        "estimated_minutes": 20,
+                        "difficulty": "foundation",
+                        "completed": False,
+                        "status": "pending",
+                    }
+                ],
+            }
+        ],
+    }
+
+
 class FakeLLMClient:
     """Deterministic LLM scoring stub for practice-submission tests."""
 
@@ -63,10 +93,15 @@ def _exercise_payload(count: int, question_types: list[str]) -> dict[str, object
     return {"summary": "stub", "exercises": exercises}
 
 
-def test_generate_learning_path_contains_stages() -> None:
+def test_generate_learning_path_contains_stages(monkeypatch) -> None:
     """Learning path generation should produce multiple stages and tasks."""
 
     service = LearningPathService()
+    monkeypatch.setattr(
+        service,
+        "_generate_path_with_llm",
+        lambda request, teacher_scope: _learning_path_payload(request.knowledge_point),
+    )
     response = service.generate_path(
         type(
             "Payload",
@@ -91,6 +126,7 @@ def test_generate_learning_path_contains_stages() -> None:
     assert response["stages"]
     assert response["stages"][0]["tasks"]
     assert response["overview"]  # learning path overview populated by service
+    assert response["generation_source"] == "llm"
 
 
 def test_generate_structured_exercises() -> None:
