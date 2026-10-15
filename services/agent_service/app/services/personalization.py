@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from common.models.learning import AnswerRecord, Exercise, UserProfile
+from services.agent_service.app.services.profile_mapping import build_zhishu_profile_view
 
 
 @dataclass
@@ -84,6 +85,13 @@ class PersonalizationService:
             "recent_mistakes": recent_mistakes,
             "weak_question_types": weakest_types,
         }
+        learner_profile["zhishu_profile"] = build_zhishu_profile_view(
+            learner_profile=learner_profile,
+            mastery_score=int(explicit_mastery),
+            answered_count=answered_count,
+            correct_rate=correct_rate,
+            recent_mistakes=recent_mistakes,
+        )
 
         return LearnerPersonalizationSnapshot(
             learner_profile=learner_profile,

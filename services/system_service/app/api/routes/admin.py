@@ -2,14 +2,18 @@
 
 Auth classification:
 - GET  /subjects      : PUBLIC (read-only catalog)
-- GET  /configs       : PUBLIC (read-only, used by other services)
+- GET  /configs       : PROTECTED (admin only) — values are free-form strings and
+                        may hold credentials, so anonymous read was closed (DEF-006)
 - POST /roles/assign  : PROTECTED (admin only)
 - POST /subjects      : PROTECTED (admin only)
 - PUT  /configs/{key} : PROTECTED (admin only)
 - GET  /logs          : PROTECTED (admin only)
 """
 
-from fastapi import APIRouter, Depends, Query
+import logging
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from common.dependencies import require_role
 from common.models.learning import User
@@ -22,10 +26,42 @@ from services.system_service.app.schemas.system import (
     SystemConfigItem,
     SystemConfigUpdate,
 )
-from services.system_service.app.services.system_manager import SystemManager
+from services.system_service.app.services.system_persistence import SystemManager
+
+LOGGER = logging.getLogger(__name__)
 
 router = APIRouter()
 manager = SystemManager()
+
+#: Config keys matching any of these are never returned, even to an administrator.
+#: Keys are free-form, so a defence-in-depth filter is required on top of RBAC.
+_SENSITIVE_KEY_PATTERN = re.compile(
+    r"(secret|password|passwd|pwd|token|credential|private[_-]?key|api[_-]?key|"
+    r"access[_-]?key|salt|dsn|connection[_-]?string|database[_-]?url|"
+    r"jwt|session[_-]?key|smtp|webhook)",
+    re.IGNORECASE,
+)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    """Return True when a config key looks like it holds a secret."""
+
+    return bool(_SENSITIVE_KEY_PATTERN.search(str(key or "")))
+
+
+def _filter_configs(items: list[SystemConfigItem]) -> list[SystemConfigItem]:
+    """Drop sensitive-looking entries from a config listing."""
+
+    kept, dropped = [], []
+    for item in items:
+        (dropped if _is_sensitive_key(item.key) else kept).append(item)
+    if dropped:
+        LOGGER.warning(
+            "system_configs_sensitive_keys_suppressed count=%d keys=%s",
+            len(dropped),
+            ", ".join(sorted(i.key for i in dropped))[:200],
+        )
+    return kept
 
 
 @router.post("/roles/assign", response_model=ApiResponse[dict[str, object]])
@@ -35,7 +71,13 @@ def assign_role(
 ) -> ApiResponse[dict[str, object]]:
     """Assign a role to a user. (admin only)"""
 
-    return ApiResponse(data=manager.assign_role(payload), message="Role assigned successfully.")
+    try:
+        result = manager.assign_role(payload, _user.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ApiResponse(data=result, message="Role assigned successfully.")
 
 
 @router.get("/subjects", response_model=ApiResponse[list[SubjectItem]])
@@ -52,14 +94,27 @@ def create_subject(
 ) -> ApiResponse[SubjectItem]:
     """Create a new managed subject. (admin only)"""
 
-    return ApiResponse(data=manager.create_subject(payload), message="Subject created successfully.")
+    try:
+        item = manager.create_subject(payload, _user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ApiResponse(data=item, message="Subject created successfully.")
 
 
 @router.get("/configs", response_model=ApiResponse[list[SystemConfigItem]])
-def list_configs() -> ApiResponse[list[SystemConfigItem]]:
-    """List system configuration entries. (public, read-only)"""
+def list_configs(
+    _user: User = Depends(require_role("admin")),
+) -> ApiResponse[list[SystemConfigItem]]:
+    """List system configuration entries. (admin only; sensitive keys filtered)
 
-    return ApiResponse(data=manager.list_configs(), message="Configs fetched successfully.")
+    Values are free-form strings, so this listing is limited to administrators and
+    additionally drops any entry whose key looks like a credential.
+    """
+
+    return ApiResponse(
+        data=_filter_configs(manager.list_configs()),
+        message="Configs fetched successfully.",
+    )
 
 
 @router.put("/configs/{key}", response_model=ApiResponse[SystemConfigItem])
@@ -71,7 +126,7 @@ def update_config(
     """Update one system configuration entry. (admin only)"""
 
     return ApiResponse(
-        data=manager.update_config(key, payload.value),
+        data=manager.update_config(key, payload.value, _user.id),
         message="Config updated successfully.",
     )
 

@@ -25,6 +25,40 @@ class ResourceItem(BaseModel):
     notes: str | None = None
     file_name: str | None = None
     is_downloadable: bool = False
+    generation_status: Literal["queued", "generating", "generated", "failed"] = "generated"
+    audit_status: Literal["pending", "passed", "rejected", "unavailable"] = "pending"
+    publish_status: Literal["draft", "published", "archived"] = "draft"
+    audit_reason: str = ""
+
+
+class ResourceRecommendationItem(ResourceItem):
+    """A resource ranked for the current learner with explainable signals."""
+
+    recommendation_score: float = 0
+    recommendation_reason: str
+    recommendation_strategy: Literal[
+        "hybrid_collaborative", "personalized_heuristic", "cold_start_popularity"
+    ] = "personalized_heuristic"
+    collaborative_score: float = 0
+    user_cf_score: float = 0
+    item_cf_score: float = 0
+    view_count: int = 0
+    download_count: int = 0
+
+
+class ResourceInteractionCreate(BaseModel):
+    """A learner action that contributes to future recommendations."""
+
+    action: Literal["view", "download", "open_source"]
+
+
+class ResourceInteractionSummary(BaseModel):
+    """Updated aggregate counters after an interaction is recorded."""
+
+    resource_id: int
+    recorded: bool
+    view_count: int = 0
+    download_count: int = 0
 
 
 class ResourceStatusUpdate(BaseModel):

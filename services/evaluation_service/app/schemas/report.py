@@ -33,7 +33,7 @@ class AnswerRecordSubmission(BaseModel):
     subject: str | None = None
 
     @model_validator(mode="after")
-    def validate_subjective_requirements(self) -> "AnswerRecordSubmission":
+    def validate_subjective_requirements(self) -> AnswerRecordSubmission:
         normalized_type = normalize_exercise_type(self.exercise_type)
         if normalized_type in {"short_answer", "code"}:
             if not self.reference_answer:
@@ -292,6 +292,16 @@ class AnalyticsSuggestion(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     focus_areas: list[str] = Field(default_factory=list)
     recommended_action: str
+
+
+class ReportDashboardResponse(BaseModel):
+    """One-query payload used by the student report dashboard."""
+
+    stage_report: ReportDetail
+    comprehensive_report: ReportDetail
+    profile_snapshot: dict[str, Any]
+    learning_suggestions: AnalyticsSuggestion
+    mistake_notebook: MistakeNotebook
 
 
 class AnswerRecordIn(BaseModel):

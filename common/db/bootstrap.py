@@ -5,12 +5,12 @@ from __future__ import annotations
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
+from common.config import get_settings
 from common.db.base import Base
 from common.db.session import engine
 from common.models import learning  # noqa: F401
 from common.models.learning import User, UserProfile
 from common.security.auth import hash_password, verify_password
-from common.config import get_settings
 
 
 def ensure_database_schema() -> None:
@@ -117,6 +117,20 @@ def _ensure_legacy_columns() -> None:
             statements.append("ALTER TABLE resources ADD COLUMN language VARCHAR(10)")
         if "summary" not in resource_columns:
             statements.append("ALTER TABLE resources ADD COLUMN summary TEXT")
+        if "generation_status" not in resource_columns:
+            statements.append(
+                "ALTER TABLE resources ADD COLUMN generation_status VARCHAR(20) DEFAULT 'generated'"
+            )
+        if "audit_status" not in resource_columns:
+            statements.append(
+                "ALTER TABLE resources ADD COLUMN audit_status VARCHAR(20) DEFAULT 'pending'"
+            )
+        if "publish_status" not in resource_columns:
+            statements.append(
+                "ALTER TABLE resources ADD COLUMN publish_status VARCHAR(20) DEFAULT 'draft'"
+            )
+        if "audit_reason" not in resource_columns:
+            statements.append("ALTER TABLE resources ADD COLUMN audit_reason TEXT DEFAULT ''")
 
     if not statements:
         return

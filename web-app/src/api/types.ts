@@ -45,6 +45,23 @@ export type LearnerProfileDashboard = {
   heatmap: LearnerHeatmapCell[]
 }
 
+export type LearnerSuggestion = {
+  user_id: number
+  suggestions: string[]
+  focus_areas: string[]
+  recommended_action: string
+}
+
+export type LearnerProfileSnapshot = {
+  user_id: number
+  learning_style: string
+  mastery_overview: number
+  weekly_focus_minutes: number
+  habit_summary: string
+  radar_metrics: LearnerRadarMetric[]
+  heatmap: LearnerHeatmapCell[]
+}
+
 export type UserProfileRead = {
   user_id: number
   mastery_json: Record<string, unknown>
@@ -401,6 +418,14 @@ export type ReportDetail = {
   }
 }
 
+export type ReportDashboard = {
+  stage_report: ReportDetail
+  comprehensive_report: ReportDetail
+  profile_snapshot: LearnerProfileSnapshot
+  learning_suggestions: LearnerSuggestion
+  mistake_notebook: MistakeNotebook
+}
+
 export type RemedialExerciseItem = {
   exercise_id: number
   knowledge_point: string
@@ -477,6 +502,24 @@ export type ManagedResourceItem = {
   is_downloadable: boolean
 }
 
+export type ResourceRecommendationItem = ManagedResourceItem & {
+  recommendation_score: number
+  recommendation_reason: string
+  recommendation_strategy: 'hybrid_collaborative' | 'personalized_heuristic' | 'cold_start_popularity'
+  collaborative_score: number
+  user_cf_score: number
+  item_cf_score: number
+  view_count: number
+  download_count: number
+}
+
+export type ResourceInteractionSummary = {
+  resource_id: number
+  recorded: boolean
+  view_count: number
+  download_count: number
+}
+
 export type ExternalResourceImportPayload = {
   title: string
   provider: string
@@ -493,6 +536,17 @@ export type KnowledgeBaseListResponse = {
   items: KnowledgeBaseArticle[]
 }
 
+export type KnowledgeSubjectOption = {
+  value: string
+  label: string
+  resource_count: number
+}
+
+export type KnowledgeSubjectCatalogResponse = {
+  total: number
+  subjects: KnowledgeSubjectOption[]
+}
+
 export type KnowledgeBaseSearchResponse = {
   query: string
   items: KnowledgeBaseArticle[]
@@ -504,11 +558,60 @@ export type ApiEnvelope<T> = {
   message: string
 }
 
+export type TranscriptRow = {
+  student_no: string
+  student_name: string
+  class_name: string
+  subject: string
+  score: number | null
+  max_score: number
+  exam_date?: string | null
+  chapter: string
+  question_scores: Record<string, number>
+  confidence: Record<string, number>
+  raw: Record<string, unknown>
+}
+
+export type TranscriptParseResponse = {
+  import_id?: number | null
+  file_name: string
+  file_type: string
+  headers: string[]
+  rows: TranscriptRow[]
+  field_mapping: Record<string, string | null>
+  warnings: string[]
+  quality_score: number
+  ocr_mode: boolean
+  low_confidence_cells: Array<{ row: number; column: string; confidence: number }>
+}
+
+export type TranscriptAnalysis = {
+  analysis_id: number
+  import_id: number
+  status: string
+  cache_hit: boolean
+  scope: 'student' | 'class'
+  data_quality: 'sufficient' | 'limited' | string
+  report_text: string
+  orchestration: { dispatcher: string; serial_agents: string[]; parallel_agents: string[]; fallback: string }
+  score_statistics: { record_count: number; overall_average: number; subject_statistics: Record<string, { average: number; highest: number; lowest: number; pass_rate: number; excellent_rate: number; standard_deviation: number; score_bands: Record<string, number> }>; students: Array<{ student_name: string; student_no: string; total_score: number; average_score: number; rank: number; rank_band: string }> }
+  student_profile: { learning_style: string; strong_subjects: string[]; weak_subjects: string[]; loss_reason_distribution: Record<string, number>; evidence: string }
+  weakness_diagnosis: { granularity: string; confidence_note: string; weak_points: Array<{ knowledge_point: string; chapter: string; mastery: number; loss_contribution: number; priority: number; importance_tag: string; confidence: number }> }
+  resource_recommendations: { resources: Array<{ name: string; knowledge_point: string; resource_type: string; difficulty: string; minutes: number; source: string }>; seven_day_plan: Array<{ day: number; focus: string; goal: string; minutes: number }> }
+  exercise_recommendations: { distribution: Record<string, number>; source: string; items: Array<{ tier: string; question: string; answer: string; analysis: string; knowledge_point: string; minutes: number }> }
+  report: { title: string; summary: string; strengths: string[]; weaknesses: string[]; next_actions: string[]; quality_note: string }
+  student_reports?: TranscriptAnalysis[]
+}
+
+export type TranscriptHistoryItem = { id: number; import_id: number; file_name: string; scope: string; status: string; data_quality: string; created_at: string; summary: string }
+
 export type TeacherClassItem = {
   id: number
   name: string
   subject: string
   teacher_name: string
+  course_id?: number | null
+  student_count: number
 }
 
 export type TeacherClassCreatePayload = {
@@ -521,6 +624,59 @@ export type HomeworkAssignPayload = {
   class_id: number
   title: string
   description: string
+  due_at?: string | null
+}
+
+export type AssignmentItem = HomeworkAssignPayload & {
+  id: number
+  status: string
+  created_at: string
+  submission_count: number
+}
+
+export type AssignmentSubmissionItem = {
+  id: number
+  assignment_id: number
+  student_user_id: number
+  student_name: string
+  content: string
+  attachment_url?: string | null
+  status: string
+  submitted_at: string
+  score?: number | null
+  teacher_comment: string
+  reviewed_at?: string | null
+}
+
+export type DiscussionReplyItem = {
+  id: number
+  author_user_id: number
+  author_name: string
+  content: string
+  created_at: string
+}
+
+export type DiscussionItem = {
+  id: number
+  class_id?: number | null
+  author_user_id: number
+  author_name: string
+  title: string
+  content: string
+  status: string
+  created_at: string
+  replies: DiscussionReplyItem[]
+}
+
+export type LearningNotificationItem = {
+  id: number
+  title: string
+  content: string
+  type: string
+  related_type: string
+  related_id?: number | null
+  is_read: boolean
+  created_at: string
 }
 
 export type HomeworkReviewPayload = {

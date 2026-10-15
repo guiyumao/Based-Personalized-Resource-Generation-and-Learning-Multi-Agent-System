@@ -28,6 +28,18 @@ dependencies = [
     "chromadb>=0.5.5",
     "httpx>=0.27.0",
     "orjson>=3.10.7",
+    "requests>=2.32.0",
+    "beautifulsoup4>=4.12.3",
+    "pypdf>=5.0.0",
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1.5",
+    "xlrd>=2.0.1",
+    "python-docx>=1.1.2",
+    "defusedxml>=0.7.1",
+    "Pillow>=10.4.0",
+    "pytesseract>=0.3.13",
+    "pypdfium2>=4.30.0",
+    "reportlab>=4.2.2",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +48,8 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.6.0",
+    "pip-audit>=2.7.0",
+    "bandit>=1.7.9",
 ]
 
 [tool.pytest.ini_options]
@@ -45,7 +59,44 @@ pythonpath = [
     "services/agent_service",
 ]
 testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+markers = [
+    "slow: tests that hit external AI providers or take more than a few seconds",
+]
+
+[tool.coverage.run]
+source = ["common", "services"]
+omit = [
+    "*/__init__.py",
+    "services/*/app/main.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# Keep the gate focused on real defects first; style rules can be tightened later.
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # line length is enforced by the formatter, not the linter
+    "B008",  # FastAPI dependencies are intentionally called in argument defaults
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "node_modules"]
+skips = ["B101"]  # asserts are acceptable in this codebase's internal checks
+
+[tool.ruff.lint.per-file-ignores]
+# These modules intentionally configure sys.path before importing project code,
+# so the imports cannot sit at the very top of the file.
+"common/db/bootstrap_chat.py" = ["E402"]
+"scripts/create_tables.py" = ["E402"]
+"tests/test_chat_service.py" = ["E402"]
+# The one-off codemod scripts in tests/global keep long historical literals.
+"tests/global/_patch_eval_auth.py" = ["E501"]
+"tests/global/_patch_profile_tests.py" = ["E501"]

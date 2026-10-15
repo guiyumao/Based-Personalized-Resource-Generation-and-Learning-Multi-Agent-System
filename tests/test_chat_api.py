@@ -1,4 +1,3 @@
-import json
 import os
 
 import requests
@@ -43,7 +42,7 @@ def test_chat_api():
         )
         response.raise_for_status()
         result = response.json()
-        print(f"✓ Response received:")
+        print("✓ Response received:")
         print(f"  Model: {result['model_used']}")
         print(f"  Content: {result['content'][:100]}...")
     except Exception as e:

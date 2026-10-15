@@ -14,7 +14,6 @@ from common.models.learning import ProfileConversation, User, UserProfile
 from common.schemas.user import ProfileChatResponse, sanitize_profile_dimensions
 from services.agent_service.app.services.llm_factory import LLMFactory
 
-
 FIRST_QUESTION = (
     "为了更方便地了解您的需求，提供个性化服务，请您简单地描述一下您现在的情况"
     "——比如您的学习基础、目标、感兴趣的领域以及平时的学习习惯。"
@@ -566,7 +565,7 @@ class ProfileBuilderService:
                     label_positions.append((idx, label))
             if len(label_positions) >= 2:
                 label_positions.sort(key=lambda x: x[0])
-                for i, (pos, label) in enumerate(label_positions):
+                for i, (pos, _label) in enumerate(label_positions):
                     start = pos
                     end = label_positions[i + 1][0] if i + 1 < len(label_positions) else len(line)
                     segments.append(line[start:end].strip().rstrip("，,;；"))
