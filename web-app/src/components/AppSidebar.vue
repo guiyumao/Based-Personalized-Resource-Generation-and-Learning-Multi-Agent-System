@@ -1,203 +1,121 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { ArrowLeftBold, ArrowRightBold, Close } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
+import { navigationForRole } from '../config/navigation'
 import { useAuthStore } from '../stores/auth'
 
+const props = defineProps<{ mobileOpen?: boolean }>()
+const emit = defineEmits<{ close: [] }>()
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-
 const isCollapsed = ref(localStorage.getItem('sidebar-collapsed') === '1')
 
-interface MenuItem {
-  key: string
-  label: string
-  icon: string
-  route: string
-  roles: string[]
+const visibleItems = computed(() => navigationForRole(authStore.user?.role))
+const groupedItems = computed(() => {
+  const groups = new Map<string, typeof visibleItems.value>()
+  visibleItems.value.forEach((item) => {
+    const current = groups.get(item.group) ?? []
+    current.push(item)
+    groups.set(item.group, current)
+  })
+  return Array.from(groups.entries())
+})
+
+function isActive(path: string) {
+  return route.path === path || (path === '/student/dashboard' && route.path === '/student')
 }
 
-const menuItems: MenuItem[] = [
-  { key: 'dashboard', label: '学习概览', icon: '📊', route: '/student/dashboard', roles: ['student'] },
-  { key: 'learning-path', label: '学习路径', icon: '🧭', route: '/student/learning-path', roles: ['student'] },
-  { key: 'courseware', label: '课件中心', icon: '📚', route: '/student/courseware', roles: ['student'] },
-  { key: 'exercise', label: '练习测评', icon: '✍️', route: '/student/exercise', roles: ['student'] },
-  { key: 'mistakes', label: '错题本', icon: '📒', route: '/student/mistakes', roles: ['student'] },
-  { key: 'knowledge-graph', label: '知识图谱', icon: '🔗', route: '/student/knowledge-graph', roles: ['student'] },
-  { key: 'report', label: '学习报告', icon: '📈', route: '/student/report', roles: ['student'] },
-  { key: 'qa', label: '智能问答', icon: '💬', route: '/student/qa', roles: ['student'] },
-  { key: 'resources', label: '学习资源', icon: '🎓', route: '/student/resources', roles: ['student'] },
-  { key: 'teacher-overview', label: '教师总览', icon: '🏫', route: '/teacher/overview', roles: ['teacher'] },
-  { key: 'teacher-classes', label: '班级管理', icon: '👥', route: '/teacher/classes', roles: ['teacher'] },
-  { key: 'teacher-knowledge-base', label: '课程知识库', icon: '🎓', route: '/teacher/knowledge-base', roles: ['teacher'] },
-  { key: 'teacher-scopes', label: '学习范围', icon: '🎯', route: '/teacher/scopes', roles: ['teacher'] },
-  { key: 'teacher-students', label: '学生洞察', icon: '🧑‍🎓', route: '/teacher/students', roles: ['teacher'] },
-  { key: 'teacher-analytics', label: '教学分析', icon: '📉', route: '/teacher/analytics', roles: ['teacher'] },
-  { key: 'teacher-homework', label: '作业管理', icon: '📝', route: '/teacher/homework', roles: ['teacher'] },
-  { key: 'admin', label: '管理控制台', icon: '🛡️', route: '/admin', roles: ['admin'] },
-]
-
-const visibleItems = computed(() =>
-  menuItems.filter(m => m.roles.includes(authStore.user?.role ?? 'student'))
-)
-
-function isActive(item: MenuItem) {
-  if (item.key === 'dashboard') {
-    return route.path === '/student/dashboard' || route.path === '/student'
-  }
-  if (item.key === 'admin') {
-    return route.path.startsWith('/admin')
-  }
-  return route.path.startsWith(item.route)
-}
-
-function navigate(item: MenuItem) {
-  router.push(item.route)
+async function navigate(path: string) {
+  await router.push(path)
+  emit('close')
 }
 
 function toggleCollapse() {
   isCollapsed.value = !isCollapsed.value
   localStorage.setItem('sidebar-collapsed', isCollapsed.value ? '1' : '0')
 }
+
+watch(() => route.fullPath, () => emit('close'))
 </script>
 
 <template>
-  <aside class="app-sidebar" :class="{ collapsed: isCollapsed }">
+  <aside class="app-sidebar" :class="{ collapsed: isCollapsed, 'mobile-open': props.mobileOpen }">
     <div class="sidebar-brand">
-      <div class="brand-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-          <path d="M2 17l10 5 10-5"/>
-          <path d="M2 12l10 5 10-5"/>
-        </svg>
-      </div>
-      <span class="brand-text">智学平台</span>
+      <div class="brand-icon" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div class="brand-copy"><strong>智学平台</strong><small>Learning OS</small></div>
+      <button class="mobile-close" type="button" aria-label="关闭导航" @click="emit('close')">
+        <el-icon><Close /></el-icon>
+      </button>
     </div>
 
-    <nav class="sidebar-nav">
-      <button
-        v-for="item in visibleItems"
-        :key="item.key"
-        class="nav-item"
-        :class="{ active: isActive(item) }"
-        :title="isCollapsed ? item.label : ''"
-        @click="navigate(item)"
-      >
-        <span class="nav-icon">{{ item.icon }}</span>
-        <span class="nav-label">{{ item.label }}</span>
-      </button>
+    <nav class="sidebar-nav" aria-label="主导航">
+      <section v-for="([group, items]) in groupedItems" :key="group" class="nav-group">
+        <div class="nav-group-title">{{ group }}</div>
+        <button
+          v-for="item in items"
+          :key="item.key"
+          class="nav-item"
+          :class="{ active: isActive(item.route) }"
+          :title="isCollapsed ? `${item.label} - ${item.description}` : item.description"
+          type="button"
+          @click="navigate(item.route)"
+        >
+          <span class="nav-icon"><component :is="item.icon" /></span>
+          <span class="nav-label">{{ item.label }}</span>
+        </button>
+      </section>
     </nav>
 
     <div class="sidebar-footer">
-      <button class="collapse-btn" @click="toggleCollapse">
-        <span style="font-size:16px">{{ isCollapsed ? '▶' : '◀' }}</span>
-        <span class="nav-label">{{ isCollapsed ? '' : '收起菜单' }}</span>
+      <button class="collapse-btn" type="button" @click="toggleCollapse">
+        <el-icon><ArrowRightBold v-if="isCollapsed" /><ArrowLeftBold v-else /></el-icon>
+        <span class="nav-label">收起导航</span>
       </button>
     </div>
   </aside>
 </template>
 
 <style scoped>
-.app-sidebar {
-  width: 260px;
-  min-width: 260px;
-  height: 100vh;
-  background: linear-gradient(180deg, var(--panel-strong), var(--panel));
-  border-right: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  transition: width 0.28s cubic-bezier(0.33, 1, 0.68, 1),
-              min-width 0.28s cubic-bezier(0.33, 1, 0.68, 1);
-  position: relative;
-  z-index: 10;
-  overflow: hidden;
+.app-sidebar { width:256px; min-width:256px; height:100dvh; border-right:1px solid var(--line); background:color-mix(in srgb,var(--panel-strong) 96%,transparent); display:flex; flex-direction:column; position:relative; z-index:30; overflow:hidden; box-shadow:14px 0 36px color-mix(in srgb,var(--text) 5%,transparent); transition:width .24s ease,min-width .24s ease,transform .24s ease; }
+.app-sidebar.collapsed { width:80px; min-width:80px; }
+.sidebar-brand { min-height:76px; display:flex; align-items:center; gap:12px; padding:16px 18px; border-bottom:1px solid var(--line); }
+.brand-icon { width:40px; height:40px; min-width:40px; border-radius:13px; display:grid; place-content:center; gap:3px; background:linear-gradient(145deg,var(--accent),var(--accent-deep)); box-shadow:0 10px 24px color-mix(in srgb,var(--accent) 24%,transparent); }
+.brand-icon span { display:block; width:18px; height:3px; border-radius:3px; background:rgba(255,255,255,.94); transform:skewY(-16deg); }
+.brand-copy { min-width:0; display:grid; gap:2px; white-space:nowrap; }
+.brand-copy strong { color:var(--text); font-size:17px; letter-spacing:.02em; }
+.brand-copy small { color:var(--muted); font-size:10px; letter-spacing:.14em; text-transform:uppercase; }
+.collapsed .brand-copy { opacity:0; pointer-events:none; }
+.sidebar-nav { flex:1; overflow-y:auto; padding:14px 12px; scrollbar-width:thin; scrollbar-color:color-mix(in srgb,var(--muted) 20%,transparent) transparent; }
+.nav-group + .nav-group { margin-top:16px; }
+.nav-group-title { padding:0 12px 7px; color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; white-space:nowrap; }
+.collapsed .nav-group-title { height:1px; padding:0; margin:7px 14px; background:var(--line); color:transparent; }
+.nav-item,.collapse-btn { width:100%; border:0; background:transparent; color:var(--muted); font-family:inherit; cursor:pointer; }
+.nav-item { min-height:44px; display:flex; align-items:center; gap:12px; padding:9px 12px; border-radius:11px; position:relative; text-align:left; font-size:14px; font-weight:560; transition:background .18s ease,color .18s ease,transform .18s ease; }
+.nav-item + .nav-item { margin-top:3px; }
+.nav-item:hover { color:var(--text); background:var(--surface-soft); transform:translateX(2px); }
+.nav-item.active { color:var(--accent); background:var(--accent-soft); font-weight:700; }
+.nav-item.active::after { content:''; width:3px; height:22px; border-radius:3px; background:var(--accent); position:absolute; left:0; top:50%; transform:translateY(-50%); }
+.nav-icon { width:20px; height:20px; min-width:20px; display:grid; place-items:center; }
+.nav-icon :deep(svg) { width:19px; height:19px; }
+.nav-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; transition:opacity .18s ease; }
+.collapsed .nav-label { opacity:0; pointer-events:none; }
+.collapsed .nav-item { justify-content:center; padding-inline:0; }
+.sidebar-footer { padding:12px; border-top:1px solid var(--line); }
+.collapse-btn { min-height:40px; display:flex; align-items:center; justify-content:center; gap:10px; border-radius:10px; }
+.collapse-btn:hover { color:var(--text); background:var(--surface-soft); }
+.mobile-close { display:none; }
+
+@media (max-width:900px) {
+  .app-sidebar,.app-sidebar.collapsed { width:min(84vw,292px); min-width:min(84vw,292px); position:fixed; inset:0 auto 0 0; transform:translateX(-104%); box-shadow:24px 0 60px rgba(15,23,42,.2); }
+  .app-sidebar.mobile-open { transform:translateX(0); }
+  .collapsed .brand-copy,.collapsed .nav-label { opacity:1; pointer-events:auto; }
+  .collapsed .nav-group-title { height:auto; padding:0 12px 7px; margin:0; background:none; color:var(--muted); }
+  .collapsed .nav-item { justify-content:flex-start; padding-inline:12px; }
+  .sidebar-footer { display:none; }
+  .mobile-close { width:36px; height:36px; margin-left:auto; display:grid; place-items:center; border:0; border-radius:10px; color:var(--muted); background:var(--surface-soft); cursor:pointer; }
 }
 
-.app-sidebar.collapsed {
-  width: 72px;
-  min-width: 72px;
-}
-
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 22px 20px;
-  border-bottom: 1px solid var(--line);
-}
-
-.brand-icon {
-  width: 36px; height: 36px; min-width: 36px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-
-.brand-icon svg { width: 20px; height: 20px; }
-
-.brand-text {
-  font-size: 18px; font-weight: 750; letter-spacing: 0.03em;
-  white-space: nowrap;
-  background: linear-gradient(135deg, var(--text), var(--accent));
-  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  background-clip: text;
-  transition: opacity 0.28s ease;
-}
-
-.collapsed .brand-text { opacity: 0; }
-
-.sidebar-nav {
-  flex: 1; overflow-y: auto; padding: 10px 12px;
-  display: flex; flex-direction: column; gap: 2px;
-}
-
-.sidebar-nav::-webkit-scrollbar { width: 0; }
-
-.nav-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 14px; border-radius: 12px;
-  cursor: pointer; color: var(--muted);
-  font-size: 14px; font-weight: 500;
-  white-space: nowrap; transition: all 0.2s ease;
-  position: relative; border: none; background: none;
-  width: 100%; text-align: left;
-  font-family: inherit;
-}
-
-.nav-item:hover {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: var(--text);
-}
-
-.nav-item.active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent); font-weight: 650;
-}
-
-.nav-item.active::before {
-  content: "";
-  position: absolute; left: 0; top: 50%;
-  transform: translateY(-50%);
-  width: 3px; height: 22px; border-radius: 3px;
-  background: var(--accent);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 40%, transparent);
-}
-
-.nav-icon { width: 20px; height: 20px; min-width: 20px; font-size: 16px; opacity: 0.75; }
-.nav-item.active .nav-icon { opacity: 1; }
-.nav-label { transition: opacity 0.28s ease; }
-.collapsed .nav-label { opacity: 0; pointer-events: none; }
-
-.sidebar-footer { padding: 14px 12px; border-top: 1px solid var(--line); }
-
-.collapse-btn {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px; border-radius: 10px;
-  cursor: pointer; color: var(--muted); font-size: 13px;
-  border: none; background: none; width: 100%;
-  transition: all 0.2s ease; font-family: inherit;
-}
-
-.collapse-btn:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); color: var(--text); }
+@media (prefers-reduced-motion:reduce) { .app-sidebar,.nav-item,.nav-label { transition:none; } }
 </style>

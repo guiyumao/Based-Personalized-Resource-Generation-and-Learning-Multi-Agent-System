@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from common.config import get_settings
+from common.dependencies import get_current_user, require_self_or_staff
+from common.models.learning import User
+from common.performance import set_trace_context
 from common.schemas.response import ApiResponse
 from services.evaluation_service.app.schemas.report import (
     AnalyticsSuggestion,
@@ -20,6 +24,7 @@ from services.evaluation_service.app.schemas.report import (
     PracticeSubmission,
     QAMistakeSubmission,
     RemedialExerciseSet,
+    ReportDashboardResponse,
     ReportDetail,
     ReportSummary,
     StageReportResponse,
@@ -27,6 +32,17 @@ from services.evaluation_service.app.schemas.report import (
 from services.evaluation_service.app.services.report_service import ReportService
 
 router = APIRouter()
+
+
+def _set_report_trace(user_id: str | int, task_type: str, **attributes: object) -> None:
+    settings = get_settings()
+    set_trace_context(
+        user_id=user_id,
+        task_type=task_type,
+        deadline_seconds=settings.report_deadline_seconds,
+        retry_budget=settings.max_total_retries,
+        **attributes,
+    )
 
 
 @router.post("/submit", response_model=ApiResponse[AnswerEvaluationResult])
@@ -57,6 +73,7 @@ async def batch_submit(payload: BatchAnswerSubmission) -> ApiResponse[BatchEvalu
 async def get_stage_report(user_id: str, chapter_id: str) -> ApiResponse[StageReportResponse]:
     """Generate a chapter-level stage report."""
 
+    _set_report_trace(user_id, "stage_report_generation", chapter_id=chapter_id)
     service = ReportService()
     try:
         result = await service.generate_stage_report(user_id, chapter_id)
@@ -69,6 +86,7 @@ async def get_stage_report(user_id: str, chapter_id: str) -> ApiResponse[StageRe
 async def get_monthly_report(user_id: str) -> ApiResponse[MonthlyReportResponse]:
     """Generate a rolling 30-day monthly report."""
 
+    _set_report_trace(user_id, "monthly_report_generation")
     service = ReportService()
     try:
         result = await service.generate_monthly_report(user_id)
@@ -114,9 +132,14 @@ async def submit_qa_mistake(payload: QAMistakeSubmission) -> ApiResponse[Mistake
 
 
 @router.get("/reports/stage/{user_id}", response_model=ApiResponse[ReportSummary])
-async def get_stage_report_legacy(user_id: int) -> ApiResponse[ReportSummary]:
+async def get_stage_report_legacy(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[ReportSummary]:
     """Compatibility route for old stage summary callers."""
 
+    require_self_or_staff(user_id, current_user)
+
+    _set_report_trace(user_id, "stage_report_summary")
     service = ReportService()
     try:
         result = await service.generate_stage_report_summary_legacy(user_id)
@@ -126,9 +149,14 @@ async def get_stage_report_legacy(user_id: int) -> ApiResponse[ReportSummary]:
 
 
 @router.get("/reports/stage/{user_id}/detail", response_model=ApiResponse[ReportDetail])
-async def get_stage_report_detail(user_id: int) -> ApiResponse[ReportDetail]:
+async def get_stage_report_detail(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[ReportDetail]:
     """Compatibility route for old detailed stage report callers."""
 
+    require_self_or_staff(user_id, current_user)
+
+    _set_report_trace(user_id, "stage_report_detail")
     service = ReportService()
     try:
         result = await service.generate_stage_report_detail(user_id)
@@ -138,9 +166,14 @@ async def get_stage_report_detail(user_id: int) -> ApiResponse[ReportDetail]:
 
 
 @router.get("/reports/comprehensive/{user_id}", response_model=ApiResponse[ReportSummary])
-async def get_comprehensive_report(user_id: int) -> ApiResponse[ReportSummary]:
+async def get_comprehensive_report(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[ReportSummary]:
     """Compatibility route for monthly summary callers."""
 
+    require_self_or_staff(user_id, current_user)
+
+    _set_report_trace(user_id, "comprehensive_report_summary")
     service = ReportService()
     try:
         result = await service.generate_comprehensive_report(user_id)
@@ -150,9 +183,14 @@ async def get_comprehensive_report(user_id: int) -> ApiResponse[ReportSummary]:
 
 
 @router.get("/reports/comprehensive/{user_id}/detail", response_model=ApiResponse[ReportDetail])
-async def get_comprehensive_report_detail(user_id: int) -> ApiResponse[ReportDetail]:
+async def get_comprehensive_report_detail(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[ReportDetail]:
     """Compatibility route for detailed monthly report callers."""
 
+    require_self_or_staff(user_id, current_user)
+
+    _set_report_trace(user_id, "comprehensive_report_detail")
     service = ReportService()
     try:
         result = await service.generate_comprehensive_report_detail(user_id)
@@ -161,9 +199,30 @@ async def get_comprehensive_report_detail(user_id: int) -> ApiResponse[ReportDet
     return ApiResponse(data=result, message="Detailed comprehensive report generated successfully.")
 
 
+@router.get("/reports/dashboard/{user_id}", response_model=ApiResponse[ReportDashboardResponse])
+async def get_report_dashboard(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[ReportDashboardResponse]:
+    """Return all student report-page data from one database snapshot."""
+
+    require_self_or_staff(user_id, current_user)
+
+    _set_report_trace(user_id, "report_dashboard")
+    service = ReportService()
+    try:
+        result = await service.generate_dashboard(user_id)
+    except Exception as exc:  # pragma: no cover - route translation
+        raise _translate_service_error(exc) from exc
+    return ApiResponse(data=result, message="Report dashboard generated successfully.")
+
+
 @router.get("/mistakes/{user_id}", response_model=ApiResponse[dict[str, object]])
-async def get_mistake_statistics(user_id: int) -> ApiResponse[dict[str, object]]:
+async def get_mistake_statistics(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[dict[str, object]]:
     """Return mistake statistics."""
+
+    require_self_or_staff(user_id, current_user)
 
     service = ReportService()
     try:
@@ -174,8 +233,12 @@ async def get_mistake_statistics(user_id: int) -> ApiResponse[dict[str, object]]
 
 
 @router.get("/mistakes/{user_id}/detail", response_model=ApiResponse[MistakeNotebook])
-async def get_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebook]:
+async def get_mistake_notebook(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[MistakeNotebook]:
     """Return the learner mistake notebook."""
+
+    require_self_or_staff(user_id, current_user)
 
     service = ReportService()
     try:
@@ -186,8 +249,13 @@ async def get_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebook]:
 
 
 @router.get("/mistakes/{user_id}/teacher-detail", response_model=ApiResponse[MistakeNotebook])
-async def get_teacher_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebook]:
+async def get_teacher_mistake_notebook(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[MistakeNotebook]:
     """Return all real mistakes for teacher-side detail views."""
+
+    if current_user.role not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="Teacher access required")
 
     service = ReportService()
     try:
@@ -198,8 +266,12 @@ async def get_teacher_mistake_notebook(user_id: int) -> ApiResponse[MistakeNoteb
 
 
 @router.delete("/mistakes/{user_id}", response_model=ApiResponse[MistakeNotebookClearResult])
-async def clear_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebookClearResult]:
+async def clear_mistake_notebook(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[MistakeNotebookClearResult]:
     """Clear the learner's visible mistake notebook entries."""
+
+    require_self_or_staff(user_id, current_user)
 
     service = ReportService()
     try:
@@ -210,8 +282,12 @@ async def clear_mistake_notebook(user_id: int) -> ApiResponse[MistakeNotebookCle
 
 
 @router.get("/mistakes/{user_id}/remedial", response_model=ApiResponse[RemedialExerciseSet])
-async def get_remedial_exercises(user_id: int) -> ApiResponse[RemedialExerciseSet]:
+async def get_remedial_exercises(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[RemedialExerciseSet]:
     """Return remedial exercises derived from real mistakes."""
+
+    require_self_or_staff(user_id, current_user)
 
     service = ReportService()
     try:
@@ -222,8 +298,12 @@ async def get_remedial_exercises(user_id: int) -> ApiResponse[RemedialExerciseSe
 
 
 @router.get("/profiles/{user_id}/snapshot", response_model=ApiResponse[dict[str, object]])
-async def get_profile_snapshot(user_id: int) -> ApiResponse[dict[str, object]]:
+async def get_profile_snapshot(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[dict[str, object]]:
     """Return a learner profile snapshot."""
+
+    require_self_or_staff(user_id, current_user)
 
     service = ReportService()
     try:
@@ -234,9 +314,14 @@ async def get_profile_snapshot(user_id: int) -> ApiResponse[dict[str, object]]:
 
 
 @router.get("/reports/suggestions/{user_id}", response_model=ApiResponse[AnalyticsSuggestion])
-async def get_learning_suggestions(user_id: int) -> ApiResponse[AnalyticsSuggestion]:
+async def get_learning_suggestions(
+    user_id: int, current_user: User = Depends(get_current_user)
+) -> ApiResponse[AnalyticsSuggestion]:
     """Return personalized suggestions based on real answer data."""
 
+    require_self_or_staff(user_id, current_user)
+
+    _set_report_trace(user_id, "learning_suggestions")
     service = ReportService()
     try:
         result = await service.generate_learning_suggestions(user_id)

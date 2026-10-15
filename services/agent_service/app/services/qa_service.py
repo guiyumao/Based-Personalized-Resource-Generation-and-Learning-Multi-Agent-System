@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from common.config import get_settings
 from common.models.learning import ChatMessage, ChatSession
+from common.performance import traced_invoke
 from common.schemas.agent import (
     ExerciseGenerationRequest,
     QARequest,
@@ -21,8 +22,12 @@ from common.schemas.agent import (
 from common.utils.text import is_placeholder_session_title, looks_like_unreadable_text
 from common.utils.time import to_utc_isoformat
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
-from services.agent_service.app.services.knowledge_base import KnowledgeArticle, KnowledgeBaseService
+from services.agent_service.app.services.knowledge_base import (
+    KnowledgeArticle,
+    KnowledgeBaseService,
+)
 from services.agent_service.app.services.llm_factory import LLMFactory
+from services.agent_service.app.services.personalization import LearnerPersonalizationSnapshot
 from services.agent_service.app.services.resource_generation import ResourceGenerationService
 from services.agent_service.app.services.web_search_service import WebSearchService
 
@@ -157,8 +162,13 @@ class QAService:
     )
     SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
 
-    def __init__(self, db: Session | None = None) -> None:
+    def __init__(
+        self,
+        db: Session | None = None,
+        personalization_snapshot: LearnerPersonalizationSnapshot | None = None,
+    ) -> None:
         self.db = db
+        self.personalization_snapshot = personalization_snapshot
         self.settings = get_settings()
         self.knowledge_base = KnowledgeBaseService()
         self.web_search = WebSearchService(self.settings)
@@ -198,7 +208,8 @@ class QAService:
         )
 
         if flags["has_learning_context"]:
-            llm_learning_response = self._generate_learning_response_with_llm(
+            llm_learning_response, study_suggestions = self._generate_learning_answer_bundle_with_llm(
+                request=request,
                 conversation=conversation,
                 flags=flags,
                 context_snippets=context_snippets,
@@ -217,21 +228,8 @@ class QAService:
                 follow_up=conversation["follow_up"],
                 history=history,
             )
+            study_suggestions = []
 
-        study_suggestions = (
-            self._generate_study_suggestions_with_llm(
-                request=request,
-                conversation=conversation,
-                flags=flags,
-                context_snippets=context_snippets,
-                student_response=student_response,
-                generated_resource=generated_resource,
-                generated_exercises=generated_exercises,
-                history=history,
-            )
-            if flags["has_learning_context"]
-            else []
-        )
         structured_analysis = self._build_structured_analysis(
             request=request,
             conversation=conversation,
@@ -785,7 +783,11 @@ class QAService:
                 resource_type="courseware",
                 learner_profile=learner_profile,
                 request_text=conversation["effective_question"],
-            )
+                subject=request.subject,
+                grade=request.grade,
+                performance_mode="balanced",
+            ),
+            snapshot=self.personalization_snapshot,
         )
 
     def _maybe_generate_exercises(
@@ -825,8 +827,86 @@ class QAService:
                 question_type_counts={},
                 generation_mode=self._infer_generation_mode(request.question),
                 courseware_content=courseware_content,
+                subject=request.subject,
+                grade=request.grade,
+                performance_mode="balanced",
+                retrieval_context=dict((generated_resource or {}).get("retrieval_context") or {}),
+            ),
+            snapshot=self.personalization_snapshot,
+        )
+
+    def _generate_learning_answer_bundle_with_llm(
+        self,
+        *,
+        request: QARequest,
+        conversation: dict[str, Any],
+        flags: dict[str, Any],
+        context_snippets: list[str],
+        generated_resource: dict[str, Any] | None,
+        generated_exercises: dict[str, Any] | None,
+        history: list[dict[str, Any]],
+    ) -> tuple[str, list[str]]:
+        """Generate the tutoring answer and next-step suggestions in one model call."""
+
+        from langchain_core.output_parsers import StrOutputParser
+        from langchain_core.prompts import ChatPromptTemplate
+
+        knowledge_point = str(
+            conversation.get("knowledge_point") or conversation.get("subject") or "当前知识点"
+        )
+        article: KnowledgeArticle | None = conversation.get("article")
+        focus_notes: list[str] = []
+        if article is not None:
+            focus_notes.append(f"知识点：{article.title}")
+            focus_notes.append(f"摘要：{article.summary}")
+            focus_notes.extend(f"核心概念：{item}" for item in article.concepts[:3])
+            focus_notes.extend(f"易错点：{item}" for item in article.mistakes[:2])
+        focus_notes.extend(f"参考：{item}" for item in context_snippets[:4])
+        if generated_resource is not None:
+            focus_notes.append(
+                f"已生成课件：{generated_resource.get('knowledge_point') or knowledge_point}"
+            )
+        if generated_exercises is not None:
+            focus_notes.append(f"已生成习题：{len(generated_exercises.get('exercises') or [])} 道")
+
+        system_prompt = (
+            "你是中文学习辅导助手。一次生成学生回答和 1 到 4 条具体的下一步建议。\n"
+            "回答应直接解决当前问题，已生成课件或习题时自然提醒学生使用。\n"
+            "建议必须对应本轮知识点，每条不超过 45 个汉字。\n"
+            '只输出 JSON：{{"answer":"...","study_suggestions":["...","..."]}}。'
+        )
+        messages: list[tuple[str, str]] = [("system", system_prompt)]
+        for message in history[-4:]:
+            role = str(message.get("role") or "")
+            content = str(message.get("content") or "").strip()
+            if role in {"user", "assistant"} and content:
+                messages.append((role, content[:1200]))
+        messages.append(
+            (
+                "user",
+                (
+                    f"学科：{request.subject}\n年级：{request.grade}\n"
+                    f"当前知识点：{knowledge_point}\n学生问题：{conversation['question']}\n"
+                    f"是否追问：{'是' if conversation['follow_up'] else '否'}\n"
+                    f"需要课件：{'是' if flags['needs_resource_generation'] else '否'}\n"
+                    f"需要习题：{'是' if flags['needs_exercise_generation'] else '否'}\n"
+                    "参考信息：\n"
+                    + ("\n".join(f"- {item}" for item in focus_notes) if focus_notes else "- 无")
+                ),
             )
         )
+        llm = self.llm_factory.build_chat_model(temperature=0.2)
+        chain = ChatPromptTemplate.from_messages(messages) | llm | StrOutputParser()
+        raw = str(traced_invoke(chain, {}, stage="generation")).strip()
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
+        payload = json.loads(cleaned)
+        answer = str(payload.get("answer") or "").strip()
+        suggestions = self._parse_llm_suggestions(
+            json.dumps(payload.get("study_suggestions") or [], ensure_ascii=False)
+        )
+        if not answer:
+            raise ValueError("Learning QA generation returned an empty answer.")
+        return answer, suggestions
 
     def _build_general_response(
         self,
@@ -905,7 +985,7 @@ class QAService:
 
             prompt = ChatPromptTemplate.from_messages(messages)
             chain = prompt | llm | StrOutputParser()
-            response = chain.invoke({})
+            response = traced_invoke(chain, {}, stage="generation")
             cleaned = str(response).strip()
             return cleaned or None
         except Exception:
@@ -992,7 +1072,7 @@ class QAService:
                 ]
             )
             chain = prompt | llm | StrOutputParser()
-            response = chain.invoke({"feedback_context": user_prompt})
+            response = traced_invoke(chain, {"feedback_context": user_prompt}, stage="generation")
             suggestions = self._parse_llm_suggestions(str(response))
             if not suggestions:
                 raise ValueError("Learning analysis LLM returned no study suggestions.")
@@ -1079,7 +1159,7 @@ class QAService:
 
             prompt = ChatPromptTemplate.from_messages(messages)
             chain = prompt | llm | StrOutputParser()
-            response = chain.invoke({})
+            response = traced_invoke(chain, {}, stage="generation")
             cleaned = str(response).strip()
             return cleaned or None
         except Exception:

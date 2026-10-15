@@ -8,6 +8,7 @@ import LoginView from './views/LoginView.vue'
 import MistakeNotebookView from './views/MistakeNotebookView.vue'
 import RegisterView from './views/RegisterView.vue'
 import TeacherView from './views/TeacherView.vue'
+import TranscriptAnalysisView from './views/TranscriptAnalysisView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -64,6 +65,11 @@ const router = createRouter({
           component: CoursewareView,
         },
         {
+          path: 'classroom',
+          name: 'student-classroom',
+          component: () => import('./views/student/ClassroomView.vue'),
+        },
+        {
           path: 'knowledge-base',
           name: 'student-knowledge-base',
           redirect: '/student/resources',
@@ -87,6 +93,11 @@ const router = createRouter({
           path: 'report',
           name: 'student-report',
           component: () => import('./views/student/ReportView.vue'),
+        },
+        {
+          path: 'transcripts',
+          name: 'student-transcripts',
+          component: TranscriptAnalysisView,
         },
         {
           path: 'qa',
@@ -142,6 +153,11 @@ const router = createRouter({
           path: 'analytics',
           name: 'teacher-analytics',
           component: TeacherView,
+        },
+        {
+          path: 'transcripts',
+          name: 'teacher-transcripts',
+          component: TranscriptAnalysisView,
         },
         {
           path: 'homework',

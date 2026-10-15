@@ -23,6 +23,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 
 from common.config import get_settings
+from common.performance import traced_invoke
 from services.agent_service.app.services.llm_factory import LLMFactory
 
 logger = logging.getLogger(__name__)
@@ -110,27 +111,9 @@ class FeedbackSynthesisService:
         error_message: str,
     ) -> dict[str, Any]:
         """Generate data-only fallback feedback when LLM synthesis fails."""
-        suggestions = evaluation_data.get("suggestions", {})
-        if isinstance(suggestions, dict):
-            suggestion_texts = suggestions.get("suggestions", [])
-            focus_areas = suggestions.get("focus_areas", [])
-            recommended_action = suggestions.get("recommended_action", "")
-        else:
-            suggestion_texts = []
-            focus_areas = []
-            recommended_action = ""
-
-        snapshot = evaluation_data.get("profile_snapshot", {})
-        if isinstance(snapshot, dict):
-            mastery = snapshot.get("mastery_overview", 0)
-            habit = snapshot.get("habit_summary", "")
-        else:
-            mastery = 0
-            habit = ""
-
-        mistake_stats = evaluation_data.get("mistake_statistics", {})
-        mistake_count = mistake_stats.get("mistake_count", 0) if isinstance(mistake_stats, dict) else 0
-
+        # The fallback payload below is intentionally sparse: the intermediate
+        # reads existed only to feed a richer answer that is unavailable on the
+        # error path, so they are not computed here.
         return {
             "overall_assessment": "",
             "core_strengths": [],
@@ -387,7 +370,7 @@ class FeedbackSynthesisService:
                 HumanMessage(content=variables["synthesis_context"]),
             ]
             chain = llm | StrOutputParser()
-            return chain.invoke(messages)
+            return traced_invoke(chain, messages, stage="generation")
         except Exception:
             logger.exception("LLM synthesis invocation failed")
             raise

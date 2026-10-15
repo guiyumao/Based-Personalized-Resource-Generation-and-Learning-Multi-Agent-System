@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 import logging
-from pathlib import Path
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from common.config import get_settings
 from common.db.session import SessionLocal
 from common.models.learning import KnowledgePoint, Resource
+from common.performance import get_current_trace, traced_invoke
 from common.schemas.agent import ResourceGenerationRequest
 from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.llm_factory import LLMFactory
@@ -19,7 +20,6 @@ from services.agent_service.app.services.personalization import (
     PersonalizationService,
 )
 from services.agent_service.app.services.rag import ChromaRetriever
-
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,121 @@ class ResourceGenerationService:
         if raw:
             return raw
         return f"{request.knowledge_point} {request.resource_type} {request.resource_style}".strip()
+
+    def _normalize_subject(self, subject: str) -> str:
+        lowered = subject.strip().lower()
+        exact_aliases = {
+            "算法": "algorithms",
+            "算法与数据结构": "algorithms",
+            "人工智能": "artificial_intelligence",
+            "c语言": "c_lang",
+            "编译原理": "compilers",
+            "计算机组成原理": "computer_architecture",
+            "计算机网络": "computer_networks",
+            "计算机科学": "computer_science",
+            "c++": "cpp",
+            "数据结构": "data_structures",
+            "数据库": "databases",
+            "深度学习": "deep_learning",
+            "开发工具": "developer_tools",
+            "离散数学": "discrete_math",
+            "分布式系统": "distributed_systems",
+            "线性代数": "linear_algebra",
+            "机器学习": "machine_learning",
+            "数学基础": "math",
+            "操作系统": "operating_systems",
+            "概率论": "probability",
+            "python": "python",
+            "java": "java",
+            "软件工程": "software_eng",
+            "web开发": "web_development",
+        }
+        if lowered in exact_aliases:
+            return exact_aliases[lowered]
+        aliases = (
+            (("c语言", "c language"), "c_lang"),
+            (("数据库", "mysql", "sql"), "databases"),
+            (("算法",), "algorithms"),
+            (("数学", "微积分", "概率"), "math"),
+            (("软件工程", "spring", "http"), "software_eng"),
+            (("计算机网络",), "computer_networks"),
+        )
+        for keywords, canonical in aliases:
+            if any(keyword in lowered for keyword in keywords):
+                return canonical
+        return subject.strip()
+
+    def _build_retrieval_filters(self, request: ResourceGenerationRequest) -> dict[str, Any]:
+        filters: dict[str, Any] = {}
+        if request.subject:
+            filters["subject"] = self._normalize_subject(request.subject)
+        if request.chapter:
+            filters["chapter"] = request.chapter.strip()
+        if request.section:
+            filters["section"] = request.section.strip()
+        if request.knowledge_point_id:
+            filters["knowledge_point_id"] = request.knowledge_point_id.strip()
+        if request.teaching_scope_id:
+            filters["teacher_scope"] = request.teaching_scope_id.strip()
+        return filters
+
+    def _retrieval_limits(self, mode: str) -> tuple[int, int]:
+        if mode == "fast":
+            return 5, 3
+        if mode == "quality":
+            return 8, 5
+        return max(5, self.settings.resource_rag_top_k), max(3, self.settings.rag_final_top_k)
+
+    def _load_retrieval_context(
+        self,
+        request: ResourceGenerationRequest,
+        *,
+        knowledge_point: str,
+        resource_type: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        supplied = request.retrieval_context
+        if (
+            isinstance(supplied, dict)
+            and supplied.get("knowledge_base_version") == self.settings.knowledge_base_version
+            and supplied.get("knowledge_point_id") in {"", request.knowledge_point_id, knowledge_point}
+            and isinstance(supplied.get("retrieved_chunks"), list)
+        ):
+            chunks = list(supplied["retrieved_chunks"])
+            trace = get_current_trace()
+            if trace is not None:
+                trace.record_retrieval(len(chunks), cache_hit=True, cache_type="retrieval_context")
+            return chunks, supplied
+
+        candidate_count, final_count = self._retrieval_limits(request.performance_mode)
+        query = f"{knowledge_point} {resource_type}"
+        if request.performance_mode != "fast" and self.retriever.should_rewrite_query(query):
+            query = self.retriever.rewrite_query(query, context_hint=request.request_text)
+        trace = get_current_trace()
+        if trace is not None:
+            manager = trace.stage("retrieval")
+        else:
+            from contextlib import nullcontext
+            manager = nullcontext()
+        with manager:
+            context = self.retriever.build_context(
+                query=query,
+                knowledge_point_id=request.knowledge_point_id or knowledge_point,
+                scope_id=request.teaching_scope_id or "public",
+                filters=self._build_retrieval_filters(request),
+                top_k=candidate_count,
+                user_id=request.user_id,
+                private=bool(request.teaching_scope_id),
+            )
+        chunks = self.retriever.rerank(
+            query,
+            context.retrieved_chunks,
+            limit=final_count,
+            mode=request.performance_mode,
+        )
+        payload = context.model_dump()
+        payload["retrieved_chunks"] = chunks
+        payload["source_ids"] = [str(item.get("id", "")) for item in chunks if item.get("id")]
+        return chunks, payload
 
     def _normalize_knowledge_point(self, request: ResourceGenerationRequest, request_text: str) -> str:
         _ = request_text
@@ -381,12 +496,12 @@ class ResourceGenerationService:
             )
         return "\n".join(lines)
 
-    def _invoke_llm(self, variables: dict[str, Any]) -> str:
+    def _invoke_llm(self, variables: dict[str, Any], *, temperature: float = 0.2) -> str:
         try:
             from langchain_core.output_parsers import StrOutputParser
             from langchain_core.prompts import ChatPromptTemplate
 
-            llm = self.llm_factory.build_chat_model(temperature=0.2)
+            llm = self.llm_factory.build_chat_model(temperature=temperature)
             prompt = ChatPromptTemplate.from_messages(
                 [
                     ("system", self.prompt_template),
@@ -394,6 +509,7 @@ class ResourceGenerationService:
                         "human",
                         (
                             "请围绕下面的信息生成一份真正可学习的 Markdown 课件。\n"
+                            "学科：{subject}\n"
                             "知识点：{knowledge_point}\n"
                             "资源类型：{resource_type}\n"
                             "呈现风格：{resource_style}\n"
@@ -415,7 +531,7 @@ class ResourceGenerationService:
                 ]
             )
             chain = prompt | llm | StrOutputParser()
-            return chain.invoke(variables)
+            return traced_invoke(chain, variables, stage="generation")
         except Exception as exc:
             logger.exception("Model-based courseware generation failed")
             raise ResourceGenerationError("Model-based courseware generation failed.") from exc
@@ -453,14 +569,22 @@ class ResourceGenerationService:
         request: ResourceGenerationRequest,
         generation_plan: dict[str, Any],
         primary: dict[str, Any],
+        *,
+        audit_status: str = "pending",
+        audit_reason: str = "",
     ) -> int:
         knowledge_point = self._resolve_or_create_knowledge_point(db, generation_plan["knowledge_point"])
         resource = Resource(
+            title=primary.get("title"),
             type=generation_plan["resource_type"],
             content=primary["content"],
             format="markdown",
             knowledge_point_id=knowledge_point.id,
             generated_for_user_id=request.user_id,
+            generation_status="generated",
+            audit_status=audit_status,
+            publish_status="draft",
+            audit_reason=audit_reason,
         )
         db.add(resource)
         db.commit()
@@ -514,6 +638,7 @@ class ResourceGenerationService:
 
         personalization = self._build_personalization_payload(request.knowledge_point, snapshot)
         variables = {
+            "subject": request.subject.strip() or "由知识点推断",
             "knowledge_point": request.knowledge_point,
             "resource_type": request.resource_type,
             "resource_style": request.resource_style,
@@ -542,7 +667,8 @@ class ResourceGenerationService:
         primary = next((item for item in variants if item["is_recommended"]), variants[0])
 
         # ── Audit: validate content matches requested topic ──
-        primary = self._audit_and_retry_courseware(request, primary, variables)
+        primary, audit = self._audit_and_retry_courseware(request, primary, variables)
+        variants = [primary if item.get("is_recommended") else item for item in variants]
 
         return {
             "user_id": request.user_id,
@@ -553,28 +679,39 @@ class ResourceGenerationService:
             "personalization": personalization,
             "content": primary["content"],
             "variants": variants,
+            "generation_status": "generated",
+            "audit_status": audit.status,
+            "publish_status": "draft",
+            "audit_reason": audit.reason,
         }
 
-    def generate_courseware_with_plan(self, request: ResourceGenerationRequest) -> dict[str, Any]:
+    def generate_courseware_with_plan(
+        self,
+        request: ResourceGenerationRequest,
+        *,
+        snapshot: LearnerPersonalizationSnapshot | None = None,
+    ) -> dict[str, Any]:
         """Generate resources with an explicit coordination plan inspired by agent-core."""
 
         request_text = self._build_request_text(request)
         resolved_knowledge_point = self._normalize_knowledge_point(request, request_text)
         resolved_resource_type = self._infer_resource_type(request, request_text)
 
-        retrieved_context = self.retriever.retrieve(
-            query=f"{resolved_knowledge_point} {resolved_resource_type}",
-            top_k=max(1, self.settings.resource_rag_top_k),
+        retrieved_context, retrieval_context = self._load_retrieval_context(
+            request,
+            knowledge_point=resolved_knowledge_point,
+            resource_type=resolved_resource_type,
         )
         context_text = "\n\n".join(item["content"] for item in retrieved_context) or "当前暂无可用参考资料。"
         grounding_text = self._build_grounding_text(resolved_knowledge_point)
 
-        with SessionLocal() as db:
-            snapshot = PersonalizationService(db).build_snapshot(
-                user_id=request.user_id,
-                knowledge_point=resolved_knowledge_point,
-                fallback_profile=request.learner_profile,
-            )
+        if snapshot is None:
+            with SessionLocal() as db:
+                snapshot = PersonalizationService(db).build_snapshot(
+                    user_id=request.user_id,
+                    knowledge_point=resolved_knowledge_point,
+                    fallback_profile=request.learner_profile,
+                )
 
         generation_plan = self._build_generation_plan(
             request,
@@ -591,6 +728,7 @@ class ResourceGenerationService:
             *generation_plan["personalization_hints"],
         ]
         variables = {
+            "subject": request.subject.strip() or "由知识点推断",
             "knowledge_point": generation_plan["knowledge_point"],
             "resource_type": generation_plan["resource_type"],
             "resource_style": generation_plan["resource_style"],
@@ -620,8 +758,29 @@ class ResourceGenerationService:
             )
 
         primary = next((item for item in variants if item["is_recommended"]), variants[0])
-        with SessionLocal() as db:
-            resource_id = self._persist_generated_resource(db, request, generation_plan, primary)
+        primary, audit = self._audit_and_retry_courseware(request, primary, variables)
+        variants = [primary if item.get("is_recommended") else item for item in variants]
+        trace = get_current_trace()
+        if trace is not None:
+            manager = trace.stage("persistence")
+        else:
+            from contextlib import nullcontext
+            manager = nullcontext()
+        with manager:
+            with SessionLocal() as db:
+                resource_id = self._persist_generated_resource(
+                    db,
+                    request,
+                    generation_plan,
+                    primary,
+                    audit_status=audit.status,
+                    audit_reason=audit.reason,
+                )
+
+        if audit.status == "rejected":
+            raise ResourceGenerationError(
+                f"Generated resource {resource_id} failed audit: {audit.reason}"
+            )
 
         return {
             "id": resource_id,
@@ -631,9 +790,14 @@ class ResourceGenerationService:
             "resource_style": generation_plan["resource_style"],
             "generation_plan": generation_plan,
             "references": retrieved_context,
+            "retrieval_context": retrieval_context,
             "personalization": personalization,
             "content": primary["content"],
             "variants": variants,
+            "generation_status": "generated",
+            "audit_status": audit.status,
+            "publish_status": "draft",
+            "audit_reason": audit.reason,
         }
 
     def _audit_and_retry_courseware(
@@ -642,42 +806,65 @@ class ResourceGenerationService:
         primary: dict[str, Any],
         variables: dict[str, Any],
         max_retries: int = 2,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], Any]:
         """Audit courseware content; retry on rejection."""
         from services.agent_service.app.services.audit_service import AuditService
 
         auditor = AuditService(self.settings)
-        content = primary.get("content", "")
+        retry_limit = min(max_retries, max(0, self.settings.max_total_retries))
+        decision = auditor.audit_courseware(
+            request.knowledge_point,
+            str(primary.get("content", "")),
+            str(primary.get("title", "")),
+            mode=request.performance_mode,
+        )
 
-        for attempt in range(max_retries + 1):
-            passed, reason = auditor.audit_courseware(
-                request.knowledge_point, content, primary.get("title", "")
-            )
-            if passed:
-                return primary
+        for attempt in range(retry_limit + 1):
+            if decision.passed:
+                return primary, decision
 
-            if attempt < max_retries:
-                try:
-                    retry_temp = 0.2 + (attempt + 1) * 0.3
-                    llm = self.llm_factory.build_chat_model(temperature=retry_temp)
-                    retry_variables = {
-                        **variables,
-                        "audit_rejection_reason": reason,
-                        "resource_style": "concise",
+            trace = get_current_trace()
+            if attempt >= retry_limit or (trace is not None and not trace.can_retry()):
+                break
+            if trace is not None:
+                trace.record_retry(stage="courseware_generation", reason=decision.reason, audit=True)
+
+            try:
+                retry_temp = 0.2 + (attempt + 1) * 0.2
+                retry_variables = {
+                    **variables,
+                    "resource_style": "concise",
+                    "personalization_basis_text": (
+                        f"{variables.get('personalization_basis_text', '')}\n"
+                        f"- 上次审核未通过：{decision.reason}，请修正后完整输出。"
+                    ),
+                }
+                retry_content = self._sanitize_generated_content(
+                    self._invoke_llm(retry_variables, temperature=retry_temp)
+                )
+                if retry_content:
+                    primary = {
+                        **primary,
+                        "content": retry_content,
+                        "title": self._extract_title(
+                            retry_content,
+                            request.knowledge_point,
+                            str(primary.get("resource_style", "concise")),
+                        ),
+                        "is_recommended": True,
                     }
-                    retry_content = self._sanitize_generated_content(
-                        self._invoke_llm(retry_variables)
-                    )
-                    if retry_content and len(retry_content) > 50:
-                        primary = {
-                            **primary,
-                            "content": retry_content,
-                            "title": self._extract_title(retry_content, request.knowledge_point, primary.get("resource_style", "concise")),
-                            "is_recommended": True,
-                        }
-                except Exception:
-                    pass
-        return primary
+                decision = auditor.audit_courseware(
+                    request.knowledge_point,
+                    str(primary.get("content", "")),
+                    str(primary.get("title", "")),
+                    mode=request.performance_mode,
+                )
+            except Exception as exc:
+                if trace is not None:
+                    trace.retry_reason = str(exc)[:200]
+                break
+
+        return primary, decision
 
     def _build_conditional_profile_text(self, knowledge_point: str, snapshot) -> str:
         """Only inject learner profile when the topic matches known weak areas."""
@@ -687,8 +874,23 @@ class ResourceGenerationService:
         kp_lower = knowledge_point.lower()
         matches = any(area.lower() in kp_lower or kp_lower in area.lower() for area in weak_areas)
         if matches:
+            summaries = snapshot.learner_profile.get("profile_analysis_summaries", {})
+            summary_payload = {
+                "mastery_score": snapshot.mastery_score,
+                "correct_rate": snapshot.correct_rate,
+                "answered_count": snapshot.answered_count,
+                "weak_question_types": list(weak_areas)[:5],
+                "preferred_resource_modes": list(
+                    snapshot.learner_profile.get("preferred_resource_modes", [])
+                )[:3],
+                "analysis_summaries": {
+                    str(key): str(value)[:160]
+                    for key, value in summaries.items()
+                    if str(value).strip()
+                } if isinstance(summaries, dict) else {},
+            }
             import json
-            return json.dumps(snapshot.learner_profile, ensure_ascii=False)
+            return json.dumps(summary_payload, ensure_ascii=False)
         return f"学生正在学习全新主题「{knowledge_point}」，请从基础概念出发生成课件，不要受学生历史画像影响。"
 
     def _sanitize_generated_content(self, content: str) -> str:

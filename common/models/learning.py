@@ -5,7 +5,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from common.db.base import Base
@@ -33,10 +44,10 @@ class User(TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    profile: Mapped["UserProfile"] = relationship(back_populates="user", uselist=False)
-    learning_paths: Mapped[list["LearningPath"]] = relationship(back_populates="user")
-    answer_records: Mapped[list["AnswerRecord"]] = relationship(back_populates="user")
-    reports: Mapped[list["LearningReport"]] = relationship(back_populates="user")
+    profile: Mapped[UserProfile] = relationship(back_populates="user", uselist=False)
+    learning_paths: Mapped[list[LearningPath]] = relationship(back_populates="user")
+    answer_records: Mapped[list[AnswerRecord]] = relationship(back_populates="user")
+    reports: Mapped[list[LearningReport]] = relationship(back_populates="user")
 
 
 class UserProfile(Base):
@@ -102,6 +113,32 @@ class Resource(TimestampMixin, Base):
     crawl_status: Mapped[str | None] = mapped_column(String(20), nullable=True, default="pending")
     language: Mapped[str | None] = mapped_column(String(10), nullable=True, default="zh")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_status: Mapped[str] = mapped_column(String(20), default="generated")
+    audit_status: Mapped[str] = mapped_column(String(20), default="pending")
+    publish_status: Mapped[str] = mapped_column(String(20), default="draft")
+    audit_reason: Mapped[str] = mapped_column(Text, default="")
+
+
+class ResourceInteraction(Base):
+    """Authenticated learner interaction used for resource recommendations."""
+
+    __tablename__ = "resource_interactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    action: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    knowledge_point: Mapped[str] = mapped_column(String(100), default="", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+        index=True,
+    )
 
 
 class LearningPath(TimestampMixin, Base):
@@ -115,7 +152,7 @@ class LearningPath(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), default="draft")
 
     user: Mapped[User] = relationship(back_populates="learning_paths")
-    tasks: Mapped[list["LearningTask"]] = relationship(back_populates="path")
+    tasks: Mapped[list[LearningTask]] = relationship(back_populates="path")
 
 
 class LearningTask(Base):
@@ -181,6 +218,204 @@ class LearningReport(TimestampMixin, Base):
     user: Mapped[User] = relationship(back_populates="reports")
 
 
+class TranscriptImport(TimestampMixin, Base):
+    """Uploaded transcript and its normalized preview data."""
+
+    __tablename__ = "transcript_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    parse_status: Mapped[str] = mapped_column(String(20), default="parsed", nullable=False)
+    quality_score: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    field_mapping_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    normalized_rows_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    warnings_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class TranscriptScore(TimestampMixin, Base):
+    """One normalized score row extracted from a transcript."""
+
+    __tablename__ = "transcript_scores"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    import_id: Mapped[int] = mapped_column(ForeignKey("transcript_imports.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    student_no: Mapped[str] = mapped_column(String(80), default="", nullable=False, index=True)
+    student_name: Mapped[str] = mapped_column(String(120), default="", nullable=False, index=True)
+    class_name: Mapped[str] = mapped_column(String(120), default="", nullable=False, index=True)
+    subject: Mapped[str] = mapped_column(String(100), default="", nullable=False, index=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    max_score: Mapped[float] = mapped_column(Float, default=100.0, nullable=False)
+    exam_date: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    chapter: Mapped[str] = mapped_column(String(160), default="", nullable=False)
+    question_scores_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    confidence_json: Mapped[dict[str, float]] = mapped_column(JSON, default=dict)
+    raw_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class TranscriptAnalysis(TimestampMixin, Base):
+    """Persisted multi-agent transcript analysis and report."""
+
+    __tablename__ = "transcript_analyses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    import_id: Mapped[int] = mapped_column(ForeignKey("transcript_imports.id", ondelete="CASCADE"), nullable=False, index=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    scope: Mapped[str] = mapped_column(String(20), default="student", nullable=False)
+    cache_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    share_token: Mapped[str | None] = mapped_column(String(80), nullable=True, unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="completed", nullable=False)
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    report_text: Mapped[str] = mapped_column(Text, default="")
+    data_quality: Mapped[str] = mapped_column(String(20), default="sufficient", nullable=False)
+
+
+class Course(TimestampMixin, Base):
+    """A teacher-owned course that can contain one or more classes."""
+
+    __tablename__ = "courses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    subject: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    teacher_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+
+
+class Classroom(TimestampMixin, Base):
+    """Persistent teaching class with an optional backing course."""
+
+    __tablename__ = "classrooms"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    subject: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    teacher_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    teacher_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True, index=True)
+
+
+class ClassEnrollment(TimestampMixin, Base):
+    """Student membership in one class."""
+
+    __tablename__ = "class_enrollments"
+    __table_args__ = (UniqueConstraint("class_id", "student_user_id", name="uq_class_student"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classrooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+
+class Assignment(TimestampMixin, Base):
+    """Homework published by a teacher to a class."""
+
+    __tablename__ = "assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classrooms.id", ondelete="CASCADE"), nullable=False, index=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True, index=True)
+    teacher_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="published", nullable=False, index=True)
+
+
+class AssignmentSubmission(TimestampMixin, Base):
+    """One student's persisted assignment submission and teacher review."""
+
+    __tablename__ = "assignment_submissions"
+    __table_args__ = (UniqueConstraint("assignment_id", "student_user_id", name="uq_assignment_student"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    attachment_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="submitted", nullable=False, index=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"))
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    teacher_comment: Mapped[str] = mapped_column(Text, default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DiscussionThread(TimestampMixin, Base):
+    """Course/class discussion topic."""
+
+    __tablename__ = "discussion_threads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    class_id: Mapped[int | None] = mapped_column(ForeignKey("classrooms.id", ondelete="CASCADE"), nullable=True, index=True)
+    course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True, index=True)
+    author_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="open", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DiscussionReply(TimestampMixin, Base):
+    """Reply in a discussion thread."""
+
+    __tablename__ = "discussion_replies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("discussion_threads.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class Notification(TimestampMixin, Base):
+    """Persistent user notification produced by learning workflows."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(String(30), default="system", nullable=False, index=True)
+    related_type: Mapped[str] = mapped_column(String(30), default="")
+    related_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+
+
+class SystemSubject(TimestampMixin, Base):
+    """Administrator-managed subject catalog."""
+
+    __tablename__ = "system_subjects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    description: Mapped[str] = mapped_column(String(200), nullable=False)
+
+
+class SystemConfig(Base):
+    """Persistent system configuration entry."""
+
+    __tablename__ = "system_configs"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AuditLog(TimestampMixin, Base):
+    """Persistent administrator audit record."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    level: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    event: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+
+
 class TeachingScope(TimestampMixin, Base):
     """Teacher-defined learning scope delivered to a class or one learner."""
 
@@ -223,7 +458,7 @@ class ChatSession(TimestampMixin, Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    messages: Mapped[list["ChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+    messages: Mapped[list[ChatMessage]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 
 class ChatMessage(TimestampMixin, Base):

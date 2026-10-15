@@ -28,6 +28,8 @@
 ### 学习资源与路径
 
 - `POST /resources/generate`
+- `GET /resources/recommendations`：基于 User-CF、Item-CF、学习画像、知识点薄弱度和资源热度的混合推荐
+- `POST /resources/{resource_id}/interactions`：沉淀查看、下载和来源打开等隐式反馈
 - `POST /paths/generate`
 - `POST /exercises/generate`
 
@@ -49,14 +51,20 @@
 ## 目录结构
 
 ```text
+alembic/             # 数据库迁移
+artifacts/           # 本地交付物说明；大文件本身不纳入 Git
+benchmarks/          # RAG 固定查询集与性能报告
 common/
 docs/
 java-services/
+knowledge_base/      # 独立知识库：原始语料与本地向量索引
 prompts/
 scripts/
 services/
 tests/
+ui-demo/             # 早期静态 UI 参考
 web-app/
+workspace/           # 演示文稿与答辩材料源文件
 ```
 
 ## 本地启动
@@ -71,6 +79,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start_local_services.ps1
 
 - `user-service`：`8001`
 - `agent-service`：`8002`
+- `resource-service`：`8003`
 - `evaluation-service`：`8004`
 - `teacher-service`：`8005`
 - `system-service`：`8006`
@@ -82,6 +91,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start_local_services.ps1
 - 前端：`http://127.0.0.1:5175`
 - 用户服务健康检查：`http://127.0.0.1:8001/health`
 - 智能体服务健康检查：`http://127.0.0.1:8002/health`
+- 资源服务健康检查：`http://127.0.0.1:8003/health`
 
 ## 手动启动
 
@@ -113,7 +123,10 @@ python -m uvicorn services.system_service.app.main:app --host 127.0.0.1 --port 8
 
 - 系统功能与实现逻辑：[docs/system-full-guide.md](docs/system-full-guide.md)
 - 功能说明：[docs/functionality.md](docs/functionality.md)
+- 系统改进路线图：[docs/system-improvement-roadmap.md](docs/system-improvement-roadmap.md)
 - OpenAPI 草案：[docs/openapi.yaml](docs/openapi.yaml)
+- 项目目录说明：[docs/project-structure.md](docs/project-structure.md)
+- 知识库运维说明：[docs/knowledge-base-operations.md](docs/knowledge-base-operations.md)
 
 ## Recent Integration From `agent-core`
 
@@ -149,5 +162,5 @@ Third-round integration details:
 
 ## 说明
 
-- 当前仓库中存在一部分中文乱码历史内容，本轮已优先修正关键启动说明和功能文档。
-- 如果后续继续扩展接口或页面，建议同步更新 `docs/functionality.md` 和 `README.md`。
+- 本仓库说明文档已按当前 Python 多服务主链路整理，启动方式、接口入口和功能说明以本文档及 `docs/functionality.md` 为准。
+- 如果后续继续扩展接口或页面，请同步更新 `docs/functionality.md` 和 `README.md`，保持提交材料与实际功能一致。
