@@ -2,7 +2,13 @@
 
 from fastapi import APIRouter, HTTPException
 
-from common.schemas.agent import CoordinationRequest, ResourceGenerationRequest, ResourceGenerationResponse
+from common.config import get_settings
+from common.performance import set_trace_context
+from common.schemas.agent import (
+    CoordinationRequest,
+    ResourceGenerationRequest,
+    ResourceGenerationResponse,
+)
 from services.agent_service.app.agents.coordinator import CoordinatorWorkflow
 
 router = APIRouter()
@@ -12,6 +18,13 @@ router = APIRouter()
 def generate_resource(payload: ResourceGenerationRequest) -> ResourceGenerationResponse:
     """Generate a personalized resource through the multi-agent workflow."""
 
+    settings = get_settings()
+    set_trace_context(
+        user_id=payload.user_id,
+        task_type="courseware_generation",
+        deadline_seconds=settings.courseware_deadline_seconds,
+        retry_budget=settings.max_total_retries,
+    )
     result = CoordinatorWorkflow().run(
         CoordinationRequest(
             user_id=payload.user_id,

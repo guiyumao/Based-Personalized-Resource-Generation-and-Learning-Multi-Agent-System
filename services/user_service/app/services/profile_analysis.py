@@ -11,9 +11,8 @@ from __future__ import annotations
 import json
 import re
 import threading
-import time
 from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -135,6 +134,12 @@ class ProfileAnalysisService:
     def __init__(self, db: Session) -> None:
         self.db = db
         self.settings = get_settings()
+        self._auth_header: str | None = None
+
+    def _forward_auth_headers(self) -> dict[str, str]:
+        """Return the caller's Authorization header for internal service calls."""
+
+        return {"Authorization": self._auth_header} if self._auth_header else {}
 
     # ── Public API ──────────────────────────────────────────────
 
@@ -142,14 +147,18 @@ class ProfileAnalysisService:
         self,
         user_id: int,
         profile_dimensions: dict[str, str] | None = None,
+        auth_header: str | None = None,
     ) -> dict[str, Any]:
         """Return cached analysis, or launch async generation if stale/absent."""
         profile = self.db.get(UserProfile, user_id)
         if profile is None:
             raise ValueError("Profile not found")
 
+        # The generation thread outlives this request, so carry the caller's
+        # credential on the instance to keep downstream calls authorized.
+        self._auth_header = auth_header
         cached = profile.profile_analysis
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # ── Check if cached result is still valid ──
         if cached and isinstance(cached, dict) and cached.get("generated_at"):
@@ -213,7 +222,7 @@ class ProfileAnalysisService:
             profile.profile_analysis = cached
             self.db.commit()
 
-    def force_refresh(self, user_id: int) -> dict[str, Any]:
+    def force_refresh(self, user_id: int, auth_header: str | None = None) -> dict[str, Any]:
         """Force regeneration regardless of cache state."""
         profile = self.db.get(UserProfile, user_id)
         if profile is None:
@@ -224,7 +233,7 @@ class ProfileAnalysisService:
             profile.profile_analysis = None
             self.db.commit()
 
-        return self.get_or_generate(user_id)
+        return self.get_or_generate(user_id, auth_header=auth_header)
 
     # ── Internal ────────────────────────────────────────────────
 
@@ -238,10 +247,7 @@ class ProfileAnalysisService:
             # Build a rich prompt context
             context_parts = [
                 "## 学生画像维度",
-                *[
-                    f"- {PROFILE_DIMENSION_LABELS.get(k, k)}：{v}"
-                    for k, v in dims.items() if v
-                ],
+                *[f"- {PROFILE_DIMENSION_LABELS.get(k, k)}：{v}" for k, v in dims.items() if v],
                 "",
                 "## 学习风格",
                 f"编码：{profile.learning_style or '未知'}",
@@ -263,10 +269,12 @@ class ProfileAnalysisService:
             from langchain_core.messages import HumanMessage, SystemMessage
 
             model = LLMFactory(self.settings).build_chat_model(temperature=0.5)
-            result = model.invoke([
-                SystemMessage(content=ANALYSIS_PROMPT),
-                HumanMessage(content=context),
-            ])
+            result = model.invoke(
+                [
+                    SystemMessage(content=ANALYSIS_PROMPT),
+                    HumanMessage(content=context),
+                ]
+            )
 
             self._update_task(user_id, progress=80, current="正在保存分析结果…")
 
@@ -280,7 +288,7 @@ class ProfileAnalysisService:
                 if key not in parsed:
                     parsed[key] = "数据不足，暂时无法提供该维度的深度分析。"
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             analysis_doc = {
                 **parsed,
                 "generated_at": now.isoformat(),
@@ -291,6 +299,7 @@ class ProfileAnalysisService:
 
             # Write to DB — use a fresh session (background thread)
             from common.db.session import SessionLocal
+
             fresh_db = SessionLocal()
             try:
                 p = fresh_db.get(UserProfile, user_id)
@@ -300,7 +309,9 @@ class ProfileAnalysisService:
             finally:
                 fresh_db.close()
 
-            self._update_task(user_id, status="completed", analysis=self._format_analysis(analysis_doc))
+            self._update_task(
+                user_id, status="completed", analysis=self._format_analysis(analysis_doc)
+            )
 
         except Exception as exc:
             self._update_task(user_id, status="failed", error=str(exc)[:200])
@@ -309,12 +320,14 @@ class ProfileAnalysisService:
         """Collect learning behaviour from evaluation-service if available."""
         try:
             import httpx
+
             r = httpx.get(
                 f"{self.settings.evaluation_service_url}/evaluation/profiles/{user_id}/snapshot",
                 timeout=5.0,
+                headers=self._forward_auth_headers(),
             )
             if r.status_code == 200:
-                data = (r.json().get("data") or {})
+                data = r.json().get("data") or {}
                 if isinstance(data, dict):
                     return {
                         "total_answers": data.get("total_answers", 0),

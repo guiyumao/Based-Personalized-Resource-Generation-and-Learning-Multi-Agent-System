@@ -2,10 +2,42 @@
 
 from types import SimpleNamespace
 
+from common.ai_errors import AIModelInitializationTimeoutError
 from common.schemas.agent import CoordinationRequest
 from services.agent_service.app.agents import coordinator as coordinator_module
 from services.agent_service.app.agents.coordinator import CoordinatorWorkflow
-from services.evaluation_service.app.schemas.report import AnalyticsSuggestion
+
+
+def test_coordinator_preserves_learning_path_initialization_error(monkeypatch):
+    class FailingLearningPathService:
+        def __init__(self, db):
+            pass
+
+        def generate_path(self, request):
+            error = AIModelInitializationTimeoutError()
+            error.raw_message = "AI request deadline exhausted before model initialization"
+            raise error
+
+    monkeypatch.setattr(coordinator_module, "LearningPathService", FailingLearningPathService)
+    workflow = CoordinatorWorkflow(db=object())
+
+    result = workflow.run(
+        CoordinationRequest(
+            user_id=1,
+            intent="learning path plan",
+            knowledge_point="定积分",
+            payload={
+                "execute": True,
+                "force_agents": ["path_planning_agent"],
+                "subject": "数学",
+            },
+        )
+    )
+
+    output = result["outputs"]["path_planning_agent"]
+    assert output["status"] == "failed"
+    assert output["error_code"] == "AI_MODEL_INITIALIZATION_TIMEOUT"
+    assert output["error"] == "AI助教正在加载中，请稍后重试"
 
 
 def test_coordinator_selects_resource_generation_agents(monkeypatch):
@@ -91,7 +123,7 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
             }
 
     class FakeResourceGenerationService:
-        def generate_courseware_with_plan(self, request):
+        def generate_courseware_with_plan(self, request, *, snapshot=None):
             return {
                 "user_id": request.user_id,
                 "knowledge_point": request.knowledge_point,
@@ -102,7 +134,7 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
             }
 
     class FakeExerciseGenerationService:
-        def generate_exercises(self, request):
+        def generate_exercises(self, request, *, snapshot=None):
             return {
                 "user_id": request.user_id,
                 "knowledge_point": request.knowledge_point,
@@ -141,7 +173,7 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
         "path_planning_agent",
         "exercise_generation_agent",
     ]
-    assert len(published_messages) == 5
+    assert published_messages == []
     assert result["outputs"]["learner_profiling_agent"]["learner_profile"]["mastery"] == 72
     assert result["outputs"]["learner_profiling_agent"]["agent_handoff"]["resource_generation_agent"] == ["use diagrams"]
     assert result["outputs"]["learner_profiling_agent"]["profile_analysis_summaries"]["knowledgeBase"] == "基础不错但迁移偏弱"
@@ -205,3 +237,23 @@ def test_coordinator_force_agents_override_intent_routing():
 
     assert result["selected_agents"] == ["qa_agent"]
     assert "used forced agents" in result["route_reason"]
+
+
+def test_coordinator_rejects_unknown_forced_agent_without_publishing():
+    workflow = CoordinatorWorkflow(db=object())
+    published: list[tuple[str, dict]] = []
+    workflow.publisher.publish = lambda queue_name, message: published.append((queue_name, message))
+
+    result = workflow.run(
+        CoordinationRequest(
+            user_id=3,
+            intent="qa question analysis",
+            knowledge_point="Python loops",
+            payload={"force_agents": ["admin_database_agent"]},
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert result["selected_agents"] == []
+    assert result["outputs"]["coordinator"]["error_code"] == "AGENT_NOT_ALLOWED"
+    assert published == []

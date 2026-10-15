@@ -22,11 +22,18 @@ learning_system.db
 .local_queue/
 .sixth/
 .chroma/
+/knowledge_base/index/
 
 .DS_Store
 Thumbs.db
 *.log
+logs/
 .vscode/
 ~$*.docx
 .codex-artifacts/
 storage/
+
+# Local delivery artifacts and historical snapshots. Keep artifacts/README.md.
+/artifacts/media/
+/artifacts/presentations/
+/artifacts/project-snapshots/

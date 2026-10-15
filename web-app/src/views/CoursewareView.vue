@@ -51,6 +51,7 @@ const selectedVariantId = ref(snapshot.value?.selectedVariantId ?? '')
 const autoGenerating = ref(false)
 const generationProgress = ref(0)
 const progressStages = ref<ProgressStage[]>(createProgressStages())
+const pathMissing = ref(false)
 
 const coursewareVariants = computed<ResourceVariant[]>(() => snapshot.value?.resourceResult.variants ?? [])
 const activeCoursewareVariant = computed<ResourceVariant | null>(() => {
@@ -252,6 +253,7 @@ async function generateFromLatestPath() {
   }
 
   autoGenerating.value = true
+  pathMissing.value = false
   generationProgress.value = 0
   progressStages.value = createProgressStages()
   try {
@@ -259,6 +261,7 @@ async function generateFromLatestPath() {
     const pathResponse = await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)
     const path = pathResponse.data
     if (!path?.knowledge_point) {
+      pathMissing.value = true
       return
     }
 
@@ -295,6 +298,10 @@ async function generateFromLatestPath() {
     finishProgress()
     ElMessage.success('已根据最新学习路径生成课件')
   } catch (error: any) {
+    if (error?.response?.status === 404) {
+      pathMissing.value = true
+      return
+    }
     ElMessage.error(`课件生成失败：${error?.response?.data?.detail ?? error?.message ?? '未知错误'}`)
   } finally {
     autoGenerating.value = false
@@ -600,8 +607,9 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
 
     <section v-else class="workspace-panel wide">
       <div class="empty-state courseware-page-empty">
-        <strong>当前没有可展示的正式课件。</strong>
-        <p>先回到学生工作台生成课件，再进入这里查看独立页面。</p>
+        <strong>{{ pathMissing ? '当前还没有学习路径，暂时无法生成课件。' : '当前没有可展示的正式课件。' }}</strong>
+        <p>{{ pathMissing ? '先生成学习路径，系统会根据路径主题继续生成正式课件。' : '先回到学生工作台生成课件，再进入这里查看独立页面。' }}</p>
+        <el-button v-if="pathMissing" type="primary" @click="router.push('/student/learning-path')">去生成学习路径</el-button>
       </div>
     </section>
   </div>

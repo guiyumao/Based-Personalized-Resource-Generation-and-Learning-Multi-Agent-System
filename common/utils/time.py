@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def ensure_utc_datetime(value: datetime) -> datetime:
@@ -13,8 +13,8 @@ def ensure_utc_datetime(value: datetime) -> datetime:
     """
 
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def to_utc_isoformat(value: datetime) -> str:

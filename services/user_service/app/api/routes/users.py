@@ -1,24 +1,27 @@
 """User service routes."""
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from common.config import get_settings
 from common.db.session import get_db
+from common.dependencies import require_self_or_admin
 from common.models.learning import User, UserProfile
+from common.schemas.user import (
+    PROFILE_DIMENSION_KEYS as PROFILE_SCHEMA_DIMENSION_KEYS,
+)
 from common.schemas.user import (
     LearnerProfileDashboard,
     ProfileChatRequest,
     ProfileChatResponse,
-    PROFILE_DIMENSION_KEYS as PROFILE_SCHEMA_DIMENSION_KEYS,
     TokenResponse,
     UserCreate,
     UserLogin,
     UserProfileRead,
     UserProfileUpdate,
-    UserRegister,
     UserRead,
+    UserRegister,
     sanitize_profile_dimensions,
     to_user_profile_read,
     to_user_read,
@@ -30,9 +33,21 @@ from services.user_service.app.services.profile_builder import (
     PROFILE_DIMENSION_KEYS,
     ProfileBuilderService,
 )
+from services.user_service.app.services.zhishu_profile import build_user_zhishu_profile
 
 router = APIRouter()
 settings = get_settings()
+
+
+def _forwarded_auth_header(request: Request) -> dict[str, str]:
+    """Forward the caller's bearer token to an internal service call.
+
+    Downstream services enforce their own object-level authorization, so the
+    original caller's identity (not a service account) must be propagated.
+    """
+
+    authorization = request.headers.get("authorization")
+    return {"Authorization": authorization} if authorization else {}
 
 
 def _empty_learning_style(value: str | None) -> str:
@@ -111,7 +126,9 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> TokenResponse:
 
     user = db.query(User).filter(User.username == payload.username).first()
     if user is None or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
+        )
 
     return TokenResponse(
         access_token=create_access_token(str(user.id)),
@@ -129,9 +146,14 @@ def get_me(current_user: User = Depends(get_current_user)) -> UserRead:
 
 
 @router.get("/{user_id}", response_model=UserRead)
-def get_user(user_id: int, db: Session = Depends(get_db)) -> UserRead:
-    """Retrieve a user by ID."""
+def get_user(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserRead:
+    """Retrieve a user by ID. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -139,31 +161,65 @@ def get_user(user_id: int, db: Session = Depends(get_db)) -> UserRead:
 
 
 @router.get("/{user_id}/profile", response_model=UserProfileRead)
-def get_profile(user_id: int, db: Session = Depends(get_db)) -> UserProfileRead:
-    """Retrieve a learner profile by user ID."""
+def get_profile(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserProfileRead:
+    """Retrieve a learner profile by user ID. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     profile = db.get(UserProfile, user_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
-    return to_user_profile_read(profile)
+    return to_user_profile_read(profile, zhishu_profile=build_user_zhishu_profile(db, profile))
+
+
+@router.get("/{user_id}/profile/zhishu", response_model=dict[str, object])
+def get_zhishu_profile(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Return the evidence-based seven-dimension profile snapshot."""
+
+    require_self_or_admin(user_id, current_user)
+    profile = db.get(UserProfile, user_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return build_user_zhishu_profile(db, profile)
 
 
 @router.put("/{user_id}/profile", response_model=UserProfileRead)
-def update_profile(user_id: int, payload: UserProfileUpdate, db: Session = Depends(get_db)) -> UserProfileRead:
-    """Manually update a learner profile."""
+def update_profile(
+    user_id: int,
+    payload: UserProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserProfileRead:
+    """Manually update a learner profile. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     service = ProfileBuilderService(db)
     try:
-        profile = service.update_profile(user_id, payload.learning_style, payload.profile_dimensions)
+        profile = service.update_profile(
+            user_id, payload.learning_style, payload.profile_dimensions
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return to_user_profile_read(profile)
+    return to_user_profile_read(profile, zhishu_profile=build_user_zhishu_profile(db, profile))
 
 
 @router.delete("/{user_id}/profile/dimensions/{dimension_key}", response_model=UserProfileRead)
-def delete_profile_dimension(user_id: int, dimension_key: str, db: Session = Depends(get_db)) -> UserProfileRead:
-    """Delete one learner-profile dimension and refresh agent handoff context."""
+def delete_profile_dimension(
+    user_id: int,
+    dimension_key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserProfileRead:
+    """Delete one learner-profile dimension and refresh agent handoff context. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     service = ProfileBuilderService(db)
     try:
         profile = service.delete_profile_dimension(user_id, dimension_key)
@@ -171,13 +227,18 @@ def delete_profile_dimension(user_id: int, dimension_key: str, db: Session = Dep
         detail = str(exc)
         status_code = 400 if detail == "Invalid profile dimension" else 404
         raise HTTPException(status_code=status_code, detail=detail) from exc
-    return to_user_profile_read(profile)
+    return to_user_profile_read(profile, zhishu_profile=build_user_zhishu_profile(db, profile))
 
 
 @router.get("/{user_id}/profile/status", response_model=dict[str, object])
-def get_profile_status(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
-    """Check whether the learner profile is complete enough to skip setup."""
+def get_profile_status(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Check whether the learner profile is complete enough to skip setup. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     profile = db.get(UserProfile, user_id)
     if profile is None:
         return {
@@ -202,9 +263,14 @@ def get_profile_status(user_id: int, db: Session = Depends(get_db)) -> dict[str,
 
 
 @router.post("/{user_id}/profile/skip", response_model=dict[str, object])
-def skip_profile_setup(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
-    """Mark the profile setup as skipped by the user."""
+def skip_profile_setup(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Mark the profile setup as skipped by the user. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     profile = db.get(UserProfile, user_id)
     if profile is None:
         profile = _new_empty_profile(user_id)
@@ -217,9 +283,15 @@ def skip_profile_setup(user_id: int, db: Session = Depends(get_db)) -> dict[str,
 
 
 @router.post("/{user_id}/profile/chat", response_model=ProfileChatResponse)
-def chat_profile(user_id: int, payload: ProfileChatRequest, db: Session = Depends(get_db)) -> ProfileChatResponse:
-    """Build a learner profile through natural-language conversation."""
+def chat_profile(
+    user_id: int,
+    payload: ProfileChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProfileChatResponse:
+    """Build a learner profile through natural-language conversation. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     service = ProfileBuilderService(db)
     try:
         return service.chat(user_id, payload.message)
@@ -228,9 +300,15 @@ def chat_profile(user_id: int, payload: ProfileChatRequest, db: Session = Depend
 
 
 @router.get("/{user_id}/profile/dashboard", response_model=LearnerProfileDashboard)
-def get_profile_dashboard(user_id: int, db: Session = Depends(get_db)) -> LearnerProfileDashboard:
-    """Return learner dashboard data for the student workspace."""
+def get_profile_dashboard(
+    user_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> LearnerProfileDashboard:
+    """Return learner dashboard data for the student workspace. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     profile = db.get(UserProfile, user_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
@@ -261,7 +339,9 @@ def get_profile_dashboard(user_id: int, db: Session = Depends(get_db)) -> Learne
             "auditory": "听觉型",
             "kinesthetic": "动手实践型",
         }
-        habit_summary_parts.append(f"学习风格：{style_label_map.get(learning_style, learning_style)}")
+        habit_summary_parts.append(
+            f"学习风格：{style_label_map.get(learning_style, learning_style)}"
+        )
 
     radar_metrics = []
     if learning_style:
@@ -292,13 +372,16 @@ def get_profile_dashboard(user_id: int, db: Session = Depends(get_db)) -> Learne
         response = httpx.get(
             f"{settings.evaluation_service_url}/evaluation/profiles/{user_id}/snapshot",
             timeout=5.0,
+            headers=_forwarded_auth_header(request),
         )
         response.raise_for_status()
         payload = response.json()
         data = payload.get("data") or {}
         if not isinstance(data, dict):
             return base_dashboard
-        data["learning_style"] = _empty_learning_style(data.get("learning_style") or profile.learning_style)
+        data["learning_style"] = _empty_learning_style(
+            data.get("learning_style") or profile.learning_style
+        )
         if not data.get("habit_summary"):
             data["habit_summary"] = base_dashboard.habit_summary
         if not data.get("radar_metrics"):
@@ -309,40 +392,47 @@ def get_profile_dashboard(user_id: int, db: Session = Depends(get_db)) -> Learne
 
 
 @router.get("/{user_id}/profile/analysis", response_model=dict[str, object])
-def get_profile_analysis(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
-    """Return cached deep profile analysis or trigger generation."""
+def get_profile_analysis(
+    user_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Return cached deep profile analysis or trigger generation. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     service = ProfileAnalysisService(db)
     try:
-        return service.get_or_generate(user_id)
+        return service.get_or_generate(user_id, auth_header=request.headers.get("authorization"))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{user_id}/profile/analysis/status", response_model=dict[str, object])
-def get_profile_analysis_status(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
-    """Poll deep profile analysis generation status."""
+def get_profile_analysis_status(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Poll deep profile analysis generation status. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     service = ProfileAnalysisService(db)
     return service.get_status(user_id)
 
 
 @router.post("/{user_id}/profile/analysis/refresh", response_model=dict[str, object])
-def refresh_profile_analysis(user_id: int, db: Session = Depends(get_db)) -> dict[str, object]:
-    """Force refresh deep profile analysis."""
+def refresh_profile_analysis(
+    user_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Force refresh deep profile analysis. (self or admin only)"""
 
+    require_self_or_admin(user_id, current_user)
     service = ProfileAnalysisService(db)
     try:
-        return service.force_refresh(user_id)
+        return service.force_refresh(user_id, auth_header=request.headers.get("authorization"))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.post("/{user_id}/token")
-def create_user_token(user_id: int, db: Session = Depends(get_db)) -> dict[str, str]:
-    """Issue a JWT token for a known user."""
-
-    user = db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"access_token": create_access_token(str(user.id)), "token_type": "bearer"}

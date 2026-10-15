@@ -19,7 +19,14 @@ from sqlalchemy.orm import Session
 from common.config import get_settings
 from common.db.session import SessionLocal
 from common.messaging.rabbitmq import RabbitMQPublisher
-from common.models.learning import AnswerRecord, Exercise, KnowledgePoint, LearningReport, User, UserProfile
+from common.models.learning import (
+    AnswerRecord,
+    Exercise,
+    KnowledgePoint,
+    LearningReport,
+    User,
+    UserProfile,
+)
 from services.agent_service.app.services.llm_factory import LLMFactory
 from services.evaluation_service.app.schemas.report import (
     AnalyticsSuggestion,
@@ -40,6 +47,7 @@ from services.evaluation_service.app.schemas.report import (
     QAMistakeSubmission,
     RemedialExerciseItem,
     RemedialExerciseSet,
+    ReportDashboardResponse,
     ReportDetail,
     ReportEvidence,
     ReportSummary,
@@ -524,6 +532,14 @@ class ReportService:
         """Compatibility detailed stage report."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_stage_report_detail(user_id, traces, profile)
+
+    def _build_stage_report_detail(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> ReportDetail:
         chapter_id = self._latest_chapter_id(traces)
         chapter_traces = self._select_latest_stage_traces(traces, chapter_id)
         if not chapter_traces:
@@ -568,6 +584,14 @@ class ReportService:
         """Compatibility monthly detail report."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_comprehensive_report_detail(user_id, traces, profile)
+
+    def _build_comprehensive_report_detail(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> ReportDetail:
         now = datetime.now(UTC)
         start = now - timedelta(days=30)
         month_traces = [item for item in traces if item.created_at >= start]
@@ -606,6 +630,14 @@ class ReportService:
         """Return the learner mistake notebook."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_mistake_notebook(user_id, traces, profile)
+
+    def _build_mistake_notebook(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> MistakeNotebook:
         wrong_traces = self._filter_active_mistake_traces(traces, profile)
         items = [
             MistakeItem(
@@ -686,6 +718,14 @@ class ReportService:
         """Return a learner dashboard snapshot using only persisted data."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_profile_snapshot(user_id, traces, profile)
+
+    def _build_profile_snapshot(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> dict[str, object]:
         mastery_json = profile.mastery_json if isinstance(profile.mastery_json, dict) else {}
         mastery_values = [
             float(value.get("score", 0))
@@ -730,6 +770,14 @@ class ReportService:
         """Return personalized suggestions distilled from real traces."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_learning_suggestions(user_id, traces, profile)
+
+    def _build_learning_suggestions(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> AnalyticsSuggestion:
         weak_points = self._find_still_weak(traces, profile)
         avg_time = round(sum(item.time_spent for item in traces) / len(traces), 2) if traces else 0.0
         suggestions: list[str] = []
@@ -760,6 +808,18 @@ class ReportService:
             suggestions=suggestions,
             focus_areas=focus_areas,
             recommended_action=recommended_action,
+        )
+
+    async def generate_dashboard(self, user_id: int) -> ReportDashboardResponse:
+        """Build all report-page data from one consistent database snapshot."""
+
+        traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return ReportDashboardResponse(
+            stage_report=self._build_stage_report_detail(user_id, traces, profile),
+            comprehensive_report=self._build_comprehensive_report_detail(user_id, traces, profile),
+            profile_snapshot=self._build_profile_snapshot(user_id, traces, profile),
+            learning_suggestions=self._build_learning_suggestions(user_id, traces, profile),
+            mistake_notebook=self._build_mistake_notebook(user_id, traces, profile),
         )
 
     async def _evaluate_submission(self, prepared: PreparedSubmission) -> EvaluationOutcome:
@@ -1035,20 +1095,19 @@ class ReportService:
 
     def _get_user_traces(self, session: Session, user_id: int) -> list[AnswerTrace]:
         query = (
-            session.query(AnswerRecord, Exercise)
+            session.query(AnswerRecord, Exercise, KnowledgePoint)
             .join(Exercise, Exercise.id == AnswerRecord.exercise_id)
+            .outerjoin(KnowledgePoint, KnowledgePoint.id == Exercise.knowledge_point_id)
             .filter(AnswerRecord.user_id == user_id)
             .order_by(AnswerRecord.created_at.asc(), AnswerRecord.id.asc())
         )
         traces: list[AnswerTrace] = []
-        for answer_record, exercise in query.all():
+        for answer_record, exercise, knowledge_point in query.all():
             metadata = answer_record.evaluation_json if isinstance(answer_record.evaluation_json, dict) else {}
             content = self._parse_exercise_content(exercise.content)
             knowledge_point_ids = metadata.get("knowledge_point_ids") or content.get("knowledge_point_ids") or []
-            if not knowledge_point_ids:
-                knowledge_point = session.get(KnowledgePoint, exercise.knowledge_point_id)
-                if knowledge_point is not None:
-                    knowledge_point_ids = [knowledge_point.name]
+            if not knowledge_point_ids and knowledge_point is not None:
+                knowledge_point_ids = [knowledge_point.name]
             question_type = normalize_exercise_type(
                 str(metadata.get("exercise_type") or content.get("exercise_type") or exercise.type or "choice")
             )

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 import re
+import time
+from datetime import datetime
 from typing import Any
 
+from sqlalchemy import or_
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from common.config import get_settings
 from common.models.learning import ChatMessage, ChatSession
+from common.performance import traced_invoke
 from common.schemas.agent import (
     ChatMessageInput,
     ChatMessageItem,
@@ -27,6 +31,8 @@ from services.agent_service.app.services.llm_factory import LLMFactory
 
 class ChatService:
     """Manage continuous conversations with large-small model collaboration."""
+
+    _DB_WRITE_RETRIES = 3
 
 
     def __init__(self, db: Session) -> None:
@@ -53,7 +59,10 @@ class ChatService:
 
     def get_session(self, session_id: int, user_id: int | None = None) -> ChatSessionDetail | None:
         """Get a chat session with its message history."""
-        query = self.db.query(ChatSession).filter(ChatSession.id == session_id)
+        query = self.db.query(ChatSession).filter(
+            ChatSession.id == session_id,
+            ChatSession.is_active.is_(True),
+        )
         if user_id is not None:
             query = query.filter(ChatSession.user_id == user_id)
 
@@ -64,15 +73,23 @@ class ChatService:
         self._repair_session_title(session)
         return self._session_to_detail(session)
 
-    def list_sessions(self, user_id: int, limit: int = 50) -> list[ChatSessionSummary]:
-        """List all chat sessions for a user."""
-        sessions = (
-            self.db.query(ChatSession)
-            .filter(ChatSession.user_id == user_id)
-            .order_by(ChatSession.last_message_at.desc())
-            .limit(limit)
-            .all()
+    def list_sessions(self, user_id: int, limit: int = 50, keyword: str = "") -> list[ChatSessionSummary]:
+        """List sessions, optionally matching titles, subjects, or any message."""
+        query = self.db.query(ChatSession).filter(
+            ChatSession.user_id == user_id,
+            ChatSession.is_active.is_(True),
         )
+        normalized_keyword = keyword.strip()
+        if normalized_keyword:
+            pattern = f"%{normalized_keyword}%"
+            query = query.filter(
+                or_(
+                    ChatSession.title.ilike(pattern),
+                    ChatSession.subject.ilike(pattern),
+                    ChatSession.messages.any(ChatMessage.content.ilike(pattern)),
+                )
+            )
+        sessions = query.order_by(ChatSession.last_message_at.desc()).limit(limit).all()
 
         return [self._session_to_summary(session) for session in sessions]
 
@@ -82,6 +99,7 @@ class ChatService:
         session = self.db.query(ChatSession).filter(
             ChatSession.id == request.session_id,
             ChatSession.user_id == request.user_id,
+            ChatSession.is_active.is_(True),
         ).first()
 
         if session is None:
@@ -89,7 +107,12 @@ class ChatService:
 
         self._repair_session_title(session, fallback_question=request.content)
 
-        # Save user message
+        # Read history before inserting the current question. Otherwise the
+        # same question is sent once as history and once as the current prompt.
+        history = self._get_message_history(request.session_id, limit=10)
+
+        # Save user message before calling the model so the question is not
+        # lost when the upstream model fails.
         user_message = ChatMessage(
             session_id=request.session_id,
             role="user",
@@ -99,9 +122,6 @@ class ChatService:
         )
         self.db.add(user_message)
         self.db.commit()
-
-        # Get conversation history
-        history = self._get_message_history(request.session_id, limit=10)
 
         # Step 1: Small model searches knowledge base
         kb_result = self._search_knowledge_base(request.content)
@@ -156,24 +176,42 @@ class ChatService:
 
     def delete_session(self, session_id: int, user_id: int) -> bool:
         """Delete a chat session and all its messages."""
-        session = self.db.query(ChatSession).filter(
-            ChatSession.id == session_id,
-            ChatSession.user_id == user_id,
-        ).first()
+        for attempt in range(self._DB_WRITE_RETRIES):
+            try:
+                session = self.db.query(ChatSession).filter(
+                    ChatSession.id == session_id,
+                    ChatSession.user_id == user_id,
+                    ChatSession.is_active.is_(True),
+                ).first()
 
-        if session is None:
-            return False
+                if session is None:
+                    return False
 
-        self.db.delete(session)
-        self.db.commit()
-        return True
+                # Bulk-delete children first so the transaction does not need
+                # to load the whole relationship before deleting the parent.
+                self.db.query(ChatMessage).filter(
+                    ChatMessage.session_id == session_id,
+                ).delete(synchronize_session=False)
+                self.db.query(ChatSession).filter(
+                    ChatSession.id == session_id,
+                    ChatSession.user_id == user_id,
+                ).delete(synchronize_session=False)
+                self.db.commit()
+                return True
+            except OperationalError as exc:
+                self.db.rollback()
+                if not self._is_sqlite_lock_error(exc) or attempt == self._DB_WRITE_RETRIES - 1:
+                    raise
+                time.sleep(0.1 * (2 ** attempt))
+
+        return False
 
     def _get_message_history(self, session_id: int, limit: int = 10) -> list[dict[str, str]]:
         """Get recent message history for context."""
         messages = (
             self.db.query(ChatMessage)
             .filter(ChatMessage.session_id == session_id)
-            .order_by(ChatMessage.created_at.desc())
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
             .limit(limit)
             .all()
         )
@@ -267,7 +305,7 @@ class ChatService:
 
         prompt = ChatPromptTemplate.from_messages(messages)
         chain = prompt | llm | StrOutputParser()
-        response = chain.invoke({})
+        response = traced_invoke(chain, {}, stage="generation")
         return response.strip(), "small_model"
 
     def _generate_with_large_model(
@@ -308,7 +346,7 @@ class ChatService:
 
         prompt = ChatPromptTemplate.from_messages(messages)
         chain = prompt | llm | StrOutputParser()
-        response = chain.invoke({})
+        response = traced_invoke(chain, {}, stage="generation")
         return response.strip(), "large_model"
 
     def _analyze_with_small_model(self, question: str, response: str) -> dict[str, Any]:
@@ -334,21 +372,11 @@ class ChatService:
             ])
 
             chain = prompt | llm | StrOutputParser()
-            result = chain.invoke({})
+            result = traced_invoke(chain, {}, stage="generation")
 
-            # Try to parse JSON
-            try:
-                # Extract JSON from response
-                import re
-                json_match = re.search(r'\{.*\}', result, re.DOTALL)
-                if json_match:
-                    analysis = json.loads(json_match.group())
-                    return {
-                        "source": "large_model_with_analysis",
-                        "analysis": analysis,
-                    }
-            except Exception:
-                pass
+            analysis = self._parse_analysis_json(result)
+            if analysis is not None:
+                return {"source": "large_model_with_analysis", "analysis": analysis}
 
             return {
                 "source": "large_model",
@@ -360,6 +388,30 @@ class ChatService:
                 "source": "large_model",
                 "confidence": "medium",
             }
+
+    @staticmethod
+    def _parse_analysis_json(result: str) -> dict[str, Any] | None:
+        """Parse one JSON object without accepting a greedy invalid slice."""
+
+        text = (result or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE).strip()
+
+        decoder = json.JSONDecoder()
+        for index, character in enumerate(text):
+            if character != "{":
+                continue
+            try:
+                candidate, _ = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                return candidate
+        return None
+
+    @staticmethod
+    def _is_sqlite_lock_error(exc: OperationalError) -> bool:
+        return "database is locked" in str(exc).lower()
 
     def _session_to_detail(self, session: ChatSession) -> ChatSessionDetail:
         """Convert session to detail response."""

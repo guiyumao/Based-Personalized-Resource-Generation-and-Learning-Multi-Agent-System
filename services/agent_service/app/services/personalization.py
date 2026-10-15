@@ -10,6 +10,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from common.models.learning import AnswerRecord, Exercise, UserProfile
+from common.profile_scoring import normalize_answer_row
+from services.agent_service.app.services.profile_mapping import build_zhishu_profile_view
 
 
 @dataclass
@@ -66,6 +68,7 @@ class PersonalizationService:
             **fallback_profile,
             "learning_style": learning_style,
             "profile_dimensions": profile_dimensions,
+            "profile_fact_sources": habits.get("profile_fact_sources", {}) if isinstance(habits.get("profile_fact_sources"), dict) else {},
             "profile_analysis": profile_analysis,
             "profile_analysis_summaries": profile_analysis_summaries,
             "agent_collaboration_context": collaboration_context,
@@ -84,6 +87,14 @@ class PersonalizationService:
             "recent_mistakes": recent_mistakes,
             "weak_question_types": weakest_types,
         }
+        learner_profile["zhishu_profile"] = build_zhishu_profile_view(
+            learner_profile=learner_profile,
+            mastery_score=int(explicit_mastery),
+            answered_count=answered_count,
+            correct_rate=correct_rate,
+            recent_mistakes=recent_mistakes,
+            records=records,
+        )
 
         return LearnerPersonalizationSnapshot(
             learner_profile=learner_profile,
@@ -124,7 +135,10 @@ class PersonalizationService:
                 speed_bonus = max(-10, min(8, 20 - item["time_spent"]))
             else:
                 speed_bonus = 0
-            difficulty_bonus = {"foundation": 0, "intermediate": 4, "advanced": 8}.get(item["difficulty"], 0)
+            difficulty_bonus = {"foundation": 0, "intermediate": 4, "advanced": 8}.get(
+                item.get("difficulty"),
+                0,
+            )
             scores.append(max(0, min(100, base + speed_bonus + difficulty_bonus)))
         return int(round(mean(scores)))
 
@@ -142,20 +156,17 @@ class PersonalizationService:
             exercise_knowledge = str(exercise_payload.get("knowledge_point") or knowledge_point)
             if normalized not in exercise_knowledge.strip().lower() and exercise_knowledge.strip().lower() not in normalized:
                 continue
-            records.append(
+            record = normalize_answer_row(answer_record, exercise)
+            record.update(
                 {
-                    "exercise_id": exercise.id,
                     "knowledge_point": exercise_knowledge,
-                    "question_type": str(exercise_payload.get("question_type") or exercise.type),
                     "difficulty": self._map_difficulty(exercise.difficulty),
-                    "prompt": str(exercise_payload.get("prompt") or ""),
+                    "difficulty_level": exercise.difficulty,
                     "correct_answer": exercise.answer,
                     "analysis": exercise.analysis,
-                    "user_answer": answer_record.user_answer,
-                    "is_correct": bool(answer_record.is_correct),
-                    "time_spent": answer_record.time_spent,
                 }
             )
+            records.append(record)
         return records
 
     def _parse_exercise_payload(self, content: str) -> dict[str, Any]:

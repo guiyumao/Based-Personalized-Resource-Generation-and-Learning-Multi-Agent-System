@@ -7,6 +7,8 @@ import {
   agentApi,
   teacherApi,
   type ApiEnvelope,
+  type AssignmentItem,
+  type AssignmentSubmissionItem,
   type HomeworkAssignPayload,
   type KnowledgeBaseArticle,
   type KnowledgeBaseListResponse,
@@ -109,6 +111,10 @@ const reviewForm = reactive<HomeworkReviewPayload>({
   comment: '',
 })
 const reviewSubmissionId = ref(0)
+const assignments = ref<AssignmentItem[]>([])
+const submissions = ref<AssignmentSubmissionItem[]>([])
+const selectedAssignmentId = ref(0)
+const enrollmentStudentId = ref(0)
 const scopeKnowledgeText = ref('')
 const selectedScopeKnowledgePoints = ref<string[]>([])
 const selectedScopeDirectionTemplate = ref('')
@@ -135,6 +141,7 @@ const loading = reactive({
   scopes: false,
   analytics: false,
   knowledgeBase: false,
+  homework: false,
 })
 
 const assignResult = ref<Record<string, unknown> | null>(null)
@@ -567,11 +574,52 @@ async function assignHomework() {
   try {
     const { data } = await teacherApi.post<ApiEnvelope<Record<string, unknown>>>('/teacher/homework/assign', homeworkForm)
     assignResult.value = data.data
+    await fetchAssignments()
     ElMessage.success('作业布置成功')
   } catch {
     ElMessage.error('作业布置失败')
   } finally {
     loading.assign = false
+  }
+}
+
+async function fetchAssignments() {
+  loading.homework = true
+  try {
+    const { data } = await teacherApi.get<ApiEnvelope<AssignmentItem[]>>('/teacher/homework')
+    assignments.value = data.data
+  } catch {
+    assignments.value = []
+    ElMessage.error('获取作业列表失败')
+  } finally {
+    loading.homework = false
+  }
+}
+
+async function fetchSubmissions(assignmentId: number) {
+  selectedAssignmentId.value = assignmentId
+  try {
+    const { data } = await teacherApi.get<ApiEnvelope<AssignmentSubmissionItem[]>>(
+      `/teacher/homework/${assignmentId}/submissions`,
+    )
+    submissions.value = data.data
+    if (submissions.value.length) reviewSubmissionId.value = submissions.value[0].id
+  } catch {
+    submissions.value = []
+    ElMessage.error('获取提交记录失败')
+  }
+}
+
+async function enrollStudent() {
+  if (!selectedClassId.value || !enrollmentStudentId.value) return ElMessage.warning('请选择班级并填写学生用户 ID')
+  try {
+    await teacherApi.post(`/teacher/classes/${selectedClassId.value}/enrollments`, {
+      student_user_id: enrollmentStudentId.value,
+    })
+    ElMessage.success('学生已加入班级')
+    await fetchClasses()
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail ?? '加入班级失败')
   }
 }
 
@@ -587,6 +635,7 @@ async function reviewHomework() {
       reviewForm,
     )
     reviewResult.value = data.data
+    if (selectedAssignmentId.value) await fetchSubmissions(selectedAssignmentId.value)
     ElMessage.success('作业批改成功')
   } catch {
     ElMessage.error('作业批改失败')
@@ -612,23 +661,25 @@ onMounted(() => {
     void fetchTeachingAnalytics(selectedClassId.value)
   })
   void fetchTeacherKnowledgeBase()
+  void fetchAssignments()
 })
 </script>
 
 <template>
   <div class="role-shell teacher-role-shell">
     <div class="role-card large teacher-console-card">
-      <div class="login-kicker">Teacher Console</div>
-      <h1>{{ currentTeacherPage.title }}</h1>
-      <p>
-        {{ currentTeacherPage.description }}
-      </p>
-
-      <div class="role-meta">
-        <span>用户：{{ authStore.user?.username }}</span>
-        <span>角色：{{ authStore.user?.role }}</span>
-        <span>当前班级：{{ selectedClassId || '未选择' }}</span>
-      </div>
+      <header class="teacher-page-header">
+        <div>
+          <div class="login-kicker">TEACHING WORKSPACE</div>
+          <h1>{{ currentTeacherPage.title }}</h1>
+          <p>{{ currentTeacherPage.description }}</p>
+        </div>
+        <div class="role-meta">
+          <span>{{ authStore.user?.username }}</span>
+          <span>教师</span>
+          <span>当前班级：{{ selectedClassId || '未选择' }}</span>
+        </div>
+      </header>
 
       <section v-if="isTeacherPage('overview')" class="workspace-panel wide teacher-overview-panel">
         <div class="panel-heading">
@@ -691,6 +742,10 @@ onMounted(() => {
           <div class="action-row">
             <el-button type="primary" :loading="loading.create" @click="createClass">创建班级</el-button>
             <el-button :loading="loading.classes" @click="fetchClasses">刷新列表</el-button>
+          </div>
+          <div v-if="selectedClassId" class="action-row">
+            <el-input-number v-model="enrollmentStudentId" :min="1" placeholder="学生用户 ID" />
+            <el-button plain @click="enrollStudent">加入当前班级</el-button>
           </div>
           <div v-if="classes.length" class="list-stack">
             <button
@@ -1027,8 +1082,10 @@ onMounted(() => {
             </div>
           </div>
           <el-form :model="homeworkForm" label-position="top">
-            <el-form-item label="班级 ID">
-              <el-input-number v-model="homeworkForm.class_id" :min="1" />
+            <el-form-item label="班级">
+              <el-select v-model="homeworkForm.class_id" style="width:100%" placeholder="请选择班级">
+                <el-option v-for="item in classes" :key="item.id" :label="`${item.name}（${item.student_count} 人）`" :value="item.id" />
+              </el-select>
             </el-form-item>
             <el-form-item label="作业标题">
               <el-input v-model="homeworkForm.title" placeholder="请输入作业标题" />
@@ -1036,11 +1093,20 @@ onMounted(() => {
             <el-form-item label="作业描述">
               <el-input v-model="homeworkForm.description" type="textarea" :rows="4" placeholder="请输入作业要求、范围和提交说明" />
             </el-form-item>
+            <el-form-item label="截止时间（可选）">
+              <el-date-picker v-model="homeworkForm.due_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="选择截止时间" style="width:100%" />
+            </el-form-item>
           </el-form>
           <div class="action-row">
             <el-button type="success" :loading="loading.assign" @click="assignHomework">布置作业</el-button>
           </div>
           <pre v-if="assignResult" class="result-box">{{ JSON.stringify(assignResult, null, 2) }}</pre>
+          <div v-if="assignments.length" class="list-stack" style="margin-top:16px">
+            <button v-for="item in assignments" :key="item.id" class="list-card" type="button" @click="fetchSubmissions(item.id)">
+              <strong>{{ item.title }}</strong>
+              <span>班级 #{{ item.class_id }} · {{ item.submission_count }} 份提交 · {{ item.status }}</span>
+            </button>
+          </div>
         </section>
 
         <section v-if="isTeacherPage('homework')" class="workspace-panel">
@@ -1051,6 +1117,12 @@ onMounted(() => {
             </div>
           </div>
           <el-form :model="reviewForm" label-position="top">
+            <div v-if="selectedAssignmentId" class="empty-state" style="margin-bottom:14px">当前作业 #{{ selectedAssignmentId }}，共 {{ submissions.length }} 份提交</div>
+            <div v-if="submissions.length" class="list-stack" style="margin-bottom:14px">
+              <button v-for="item in submissions" :key="item.id" class="list-card" type="button" @click="reviewSubmissionId = item.id">
+                <strong>{{ item.student_name }} · 提交 #{{ item.id }}</strong><span>{{ item.content }}</span>
+              </button>
+            </div>
             <el-form-item label="提交记录 ID">
               <el-input-number v-model="reviewSubmissionId" :min="1" />
             </el-form-item>
