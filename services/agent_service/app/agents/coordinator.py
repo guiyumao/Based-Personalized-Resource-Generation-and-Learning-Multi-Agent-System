@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
+from collections.abc import Callable
+from contextlib import nullcontext
 from typing import Any, TypedDict
 
 from sqlalchemy.orm import Session
 
+from common.ai_errors import AIServiceError
 from common.db.session import SessionLocal
 from common.messaging.rabbitmq import RabbitMQPublisher
+from common.performance import get_current_trace
 from common.schemas.agent import (
     CoordinationRequest,
     ExerciseGenerationRequest,
@@ -31,6 +37,18 @@ from services.evaluation_service.app.services.report_service import ReportServic
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_AGENTS = (
+    "learner_profiling_agent",
+    "knowledge_graph_agent",
+    "knowledge_base_agent",
+    "path_planning_agent",
+    "resource_generation_agent",
+    "exercise_generation_agent",
+    "qa_agent",
+    "evaluation_feedback_agent",
+)
+AGENT_VERSIONS = {name: "coordinator-local-v1" for name in SUPPORTED_AGENTS}
+
 
 class CoordinatorState(TypedDict, total=False):
     """State flowing through the coordinator graph."""
@@ -43,6 +61,20 @@ class CoordinatorState(TypedDict, total=False):
     route_reason: str
     outputs: dict[str, Any]
     status: str
+    task_id: str
+    session_id: str
+    intent_params: dict[str, Any]
+    learner_profile: dict[str, Any]
+    learning_evidence: list[dict[str, Any]]
+    task_plan: list[dict[str, Any]]
+    agent_handoff: dict[str, Any]
+    intermediate_results: dict[str, Any]
+    citations: list[dict[str, Any]]
+    validation_results: list[dict[str, Any]]
+    progress: float
+    current_step: str
+    error: str | None
+    agent_calls: list[dict[str, Any]]
 
 
 class CoordinatorWorkflow:
@@ -78,6 +110,26 @@ class CoordinatorWorkflow:
 
         if forced_agents:
             deduped_agents = list(dict.fromkeys(forced_agents))
+            invalid_agents = [name for name in deduped_agents if name not in SUPPORTED_AGENTS]
+            if invalid_agents:
+                return {
+                    **state,
+                    "selected_agents": [],
+                    "outputs": {
+                        "coordinator": {
+                            "status": "failed",
+                            "error_code": "AGENT_NOT_ALLOWED",
+                            "error": "Requested agent is not exposed by this service.",
+                            "invalid_agents": invalid_agents,
+                        }
+                    },
+                    "status": "failed",
+                    "error": "AGENT_NOT_ALLOWED",
+                    "route_reason": (
+                        f"Intent '{state['intent']}' requested unsupported agents: "
+                        f"{', '.join(invalid_agents)}."
+                    ),
+                }
             return {
                 **state,
                 "selected_agents": deduped_agents,
@@ -138,21 +190,51 @@ class CoordinatorWorkflow:
     def _dispatch_tasks(self, state: CoordinatorState) -> CoordinatorState:
         """Publish selected tasks for asynchronous workers while preserving local output metadata."""
 
-        outputs: dict[str, Any] = {}
-        for agent_name in state["selected_agents"]:
-            message = {
-                "user_id": state["user_id"],
-                "agent": agent_name,
-                "knowledge_point": state.get("knowledge_point"),
-                "payload": state.get("payload", {}),
-            }
-            self.publisher.publish(queue_name=agent_name, message=message)
-            outputs[agent_name] = {
-                "queue": agent_name,
-                "message": "task dispatched",
+        if state.get("status") == "failed" or state.get("error"):
+            # Validation failures from intent analysis must not reach a queue.
+            return {
+                **state,
+                "outputs": state.get("outputs", {}),
+                "intermediate_results": state.get("outputs", {}),
+                "agent_calls": [],
+                "current_step": "任务校验失败，未分发",
             }
 
-        return {**state, "outputs": outputs, "status": "partial"}
+        outputs: dict[str, Any] = {}
+        agent_calls: list[dict[str, Any]] = []
+        synchronous = state.get("payload", {}).get("execute") is True
+        for agent_name in state["selected_agents"]:
+            call = {
+                "agent": agent_name,
+                "version": AGENT_VERSIONS.get(agent_name, "unknown"),
+                "input_summary": self._safe_input_summary(state.get("payload", {})),
+                "output_status": "queued" if not synchronous else "pending",
+                "elapsed_ms": 0,
+                "retries": 0,
+                "error_code": None,
+            }
+            agent_calls.append(call)
+            if synchronous:
+                outputs[agent_name] = {"message": "synchronous execution pending"}
+            else:
+                message = {
+                    "user_id": state["user_id"],
+                    "agent": agent_name,
+                    "knowledge_point": state.get("knowledge_point"),
+                    "payload": state.get("payload", {}),
+                }
+                self.publisher.publish(queue_name=agent_name, message=message)
+                outputs[agent_name] = {"queue": agent_name, "message": "task dispatched"}
+
+        return {
+            **state,
+            "outputs": outputs,
+            "intermediate_results": outputs,
+            "agent_calls": agent_calls,
+            "status": "partial",
+            "progress": 0.15,
+            "current_step": "任务已分发",
+        }
 
     def _resolve_conflicts(self, state: CoordinatorState) -> CoordinatorState:
         """Resolve simple agent ordering conflicts."""
@@ -162,7 +244,19 @@ class CoordinatorWorkflow:
         route_reason = state["route_reason"]
         if "resource_generation_agent" in selected and "evaluation_feedback_agent" in selected:
             route_reason += " Coordinator scheduled evaluation after generation to avoid race conditions."
-        return {**state, "status": status, "route_reason": route_reason}
+        return {
+            **state,
+            "status": state.get("status") if state.get("error") else status,
+            "route_reason": route_reason,
+            "task_plan": [
+                {
+                    "agent": agent,
+                    "status": "pending",
+                    "depends_on": self._agent_dependencies(agent, selected),
+                }
+                for agent in selected
+            ],
+        }
 
     def run(self, payload: CoordinationRequest) -> dict[str, Any]:
         """Invoke the workflow and optionally execute selected agents synchronously."""
@@ -172,6 +266,20 @@ class CoordinatorWorkflow:
             "intent": payload.intent,
             "knowledge_point": payload.knowledge_point,
             "payload": payload.payload,
+            "task_id": str(payload.payload.get("task_id") or uuid.uuid4()),
+            "session_id": str(payload.payload.get("session_id") or ""),
+            "intent_params": dict(payload.payload.get("intent_params") or {}),
+            "learner_profile": dict(payload.payload.get("learner_profile") or {}),
+            "learning_evidence": [],
+            "task_plan": [],
+            "agent_handoff": {},
+            "intermediate_results": {},
+            "citations": [],
+            "validation_results": [],
+            "progress": 0.0,
+            "current_step": "准备任务",
+            "error": None,
+            "agent_calls": [],
         }
         if self.graph is not None:
             result = self.graph.invoke(state)
@@ -183,6 +291,10 @@ class CoordinatorWorkflow:
             "selected_agents": result["selected_agents"],
             "route_reason": result["route_reason"],
             "outputs": result["outputs"],
+            "task_id": result.get("task_id"),
+            "session_id": result.get("session_id", ""),
+            "task_state": self._build_task_state(result),
+            "agent_calls": result.get("agent_calls", []),
         }
         if payload.payload.get("execute") is True:
             response = self._execute_agents(payload, response)
@@ -192,6 +304,8 @@ class CoordinatorWorkflow:
         """Run selected services in dependency order and return their outputs."""
 
         selected = set(result.get("selected_agents", []))
+        if not selected:
+            return result
         knowledge_point = self._resolve_knowledge_point(payload)
         knowledge_required_agents = selected - {"qa_agent", "evaluation_feedback_agent", "knowledge_base_agent"}
         if knowledge_required_agents and not knowledge_point:
@@ -203,10 +317,12 @@ class CoordinatorWorkflow:
 
         context = dict(payload.payload or {})
         outputs = dict(result.get("outputs", {}))
+        agent_calls: list[dict[str, Any]] = []
         session = self.db or SessionLocal()
         owns_session = self.db is None
         plan_parts: list[str] = []
         resource_result: dict[str, Any] | None = None
+        snapshot: Any | None = None
         learner_profile = dict(context.get("learner_profile") or {})
         teacher_scope = context.get("teacher_scope")
         if isinstance(teacher_scope, dict):
@@ -214,38 +330,60 @@ class CoordinatorWorkflow:
 
         try:
             if "learner_profiling_agent" in selected:
-                snapshot = PersonalizationService(session).build_snapshot(
-                    user_id=payload.user_id,
-                    knowledge_point=knowledge_point,
-                    fallback_profile=learner_profile,
+                snapshot_result = self._run_isolated(
+                    "learner_profiling_agent",
+                    lambda: self._build_profile_snapshot(
+                        session=session,
+                        user_id=payload.user_id,
+                        knowledge_point=knowledge_point,
+                        fallback_profile=learner_profile,
+                    ),
+                    context,
+                    agent_calls,
                 )
-                learner_profile = snapshot.learner_profile
-                outputs["learner_profiling_agent"] = {
-                    "status": "completed",
-                    "mastery_score": snapshot.mastery_score,
-                    "correct_rate": snapshot.correct_rate,
-                    "answered_count": snapshot.answered_count,
-                    "weak_question_types": learner_profile.get("weak_question_types", []),
-                    "recent_mistakes": snapshot.recent_mistakes,
-                    "basis": self._build_profile_basis(snapshot),
-                    "agent_handoff": learner_profile.get("agent_handoff", {}),
-                    "profile_dimensions": learner_profile.get("profile_dimensions", {}),
-                    "profile_analysis_summaries": learner_profile.get("profile_analysis_summaries", {}),
-                    "profile_analysis": learner_profile.get("profile_analysis", {}),
-                    "preferred_resource_modes": learner_profile.get("preferred_resource_modes", []),
-                    "learner_profile": learner_profile,
-                }
+                if isinstance(snapshot_result, dict) and snapshot_result.get("status") == "failed":
+                    outputs["learner_profiling_agent"] = snapshot_result
+                    snapshot = None
+                else:
+                    snapshot = snapshot_result
+                    learner_profile = snapshot.learner_profile
+                    outputs["learner_profiling_agent"] = {
+                        "status": "completed",
+                        "mastery_score": snapshot.mastery_score,
+                        "correct_rate": snapshot.correct_rate,
+                        "answered_count": snapshot.answered_count,
+                        "weak_question_types": learner_profile.get("weak_question_types", []),
+                        "recent_mistakes": snapshot.recent_mistakes,
+                        "basis": self._build_profile_basis(snapshot),
+                        "agent_handoff": learner_profile.get("agent_handoff", {}),
+                        "profile_dimensions": learner_profile.get("profile_dimensions", {}),
+                        "profile_analysis_summaries": learner_profile.get("profile_analysis_summaries", {}),
+                        "profile_analysis": learner_profile.get("profile_analysis", {}),
+                        "preferred_resource_modes": learner_profile.get("preferred_resource_modes", []),
+                        "learner_profile": learner_profile,
+                    }
                 plan_parts.append("画像")
 
             if "knowledge_graph_agent" in selected:
-                outputs["knowledge_graph_agent"] = self._run_graph_agent(knowledge_point, context)
+                outputs["knowledge_graph_agent"] = self._run_isolated(
+                    "knowledge_graph_agent",
+                    lambda: self._run_graph_agent_with_trace(knowledge_point, context),
+                    context,
+                    agent_calls,
+                )
                 plan_parts.append("知识图谱")
 
             if "knowledge_base_agent" in selected:
-                outputs["knowledge_base_agent"] = self._run_knowledge_base_agent(context)
+                outputs["knowledge_base_agent"] = self._run_isolated(
+                    "knowledge_base_agent",
+                    lambda: self._run_knowledge_base_agent(context),
+                    context,
+                    agent_calls,
+                )
                 plan_parts.append("knowledge-base")
 
             if "path_planning_agent" in selected:
+                started = time.perf_counter()
                 path_request = LearningPathRequest(
                     user_id=payload.user_id,
                     subject=str(context.get("subject") or knowledge_point or ""),
@@ -260,6 +398,20 @@ class CoordinatorWorkflow:
                         "learning_path": LearningPathService(session).generate_path(path_request),
                         "profile_handoff": profile_handoff,
                     }
+                except AIServiceError as exc:
+                    raw_error = getattr(exc, "raw_message", str(exc))
+                    logger.warning(
+                        "path_planning_agent_ai_failure code=%s raw_error=%s",
+                        exc.code,
+                        raw_error[:500],
+                    )
+                    outputs["path_planning_agent"] = {
+                        "status": "failed",
+                        "error_code": exc.code,
+                        "error": exc.user_message,
+                        "user_message": exc.user_message,
+                        "profile_handoff": profile_handoff,
+                    }
                 except Exception as exc:
                     logger.warning("Path planning agent failed: %s", exc)
                     outputs["path_planning_agent"] = {
@@ -267,49 +419,67 @@ class CoordinatorWorkflow:
                         "error": str(exc),
                         "profile_handoff": profile_handoff,
                     }
+                self._record_agent_call(agent_calls, "path_planning_agent", outputs["path_planning_agent"], started, context)
                 plan_parts.append("学习路径")
 
             if "resource_generation_agent" in selected:
+                started = time.perf_counter()
                 outputs["resource_generation_agent"], resource_result = self._run_resource_agent(
                     payload=payload,
                     knowledge_point=knowledge_point,
                     learner_profile=learner_profile,
                     context=context,
+                    snapshot=snapshot,
                 )
                 if knowledge_point and resource_result:
                     try:
                         KnowledgeGraphRepository().sync_courseware_to_graph(knowledge_point)
                     except Exception as exc:
                         logger.warning("Graph sync after resource generation failed: %s", exc)
+                self._record_agent_call(agent_calls, "resource_generation_agent", outputs["resource_generation_agent"], started, context)
                 plan_parts.append("课件资源")
 
             if "exercise_generation_agent" in selected or context.get("include_exercises"):
-                outputs["exercise_generation_agent"] = self._run_exercise_agent(
-                    payload=payload,
-                    knowledge_point=knowledge_point,
-                    learner_profile=learner_profile,
-                    context=context,
-                    resource_result=resource_result,
+                outputs["exercise_generation_agent"] = self._run_isolated(
+                    "exercise_generation_agent",
+                    lambda: self._run_exercise_agent(
+                        payload=payload,
+                        knowledge_point=knowledge_point,
+                        learner_profile=learner_profile,
+                        context=context,
+                        resource_result=resource_result,
+                        snapshot=snapshot,
+                    ),
+                    context,
+                    agent_calls,
                 )
                 plan_parts.append("配套练习")
 
             if "qa_agent" in selected:
+                started = time.perf_counter()
                 outputs["qa_agent"] = self._run_qa_agent(
                     payload=payload,
                     knowledge_point=knowledge_point,
                     learner_profile=learner_profile,
                     context=context,
                     session=session,
+                    snapshot=snapshot,
                 )
+                self._record_agent_call(agent_calls, "qa_agent", outputs["qa_agent"], started, context)
                 plan_parts.append("qa")
 
             if "evaluation_feedback_agent" in selected:
-                outputs["evaluation_feedback_agent"] = self._run_evaluation_agent(
-                    payload=payload,
-                    context=context,
-                    learner_profile=learner_profile,
-                    all_outputs=outputs,
-                    knowledge_point=knowledge_point,
+                outputs["evaluation_feedback_agent"] = self._run_isolated(
+                    "evaluation_feedback_agent",
+                    lambda: self._run_evaluation_agent(
+                        payload=payload,
+                        context=context,
+                        learner_profile=learner_profile,
+                        all_outputs=outputs,
+                        knowledge_point=knowledge_point,
+                    ),
+                    context,
+                    agent_calls,
                 )
                 plan_parts.append("evaluation")
 
@@ -330,14 +500,27 @@ class CoordinatorWorkflow:
                     f"{'、'.join(plan_parts) or 'no local agent'}."
                 ),
                 "outputs": outputs,
+                "agent_calls": agent_calls,
+                "task_state": {
+                    "task_id": result.get("task_id"),
+                    "status": status,
+                    "progress": 1.0,
+                    "current_step": "任务完成" if status == "success" else "任务部分完成",
+                    "error": None,
+                },
             }
         finally:
             if owns_session:
                 session.close()
 
     def _run_graph_agent(self, knowledge_point: str, context: dict[str, Any]) -> dict[str, Any]:
-        repository = KnowledgeGraphRepository()
+        # The repository is constructed *inside* the try block: building it can itself
+        # fail (unreachable Neo4j, missing driver, bad configuration). Letting that
+        # escape would abort the whole coordinated run instead of failing just this
+        # stage, which is exactly what _run_isolated() guarantees must not happen.
+        repository: KnowledgeGraphRepository | None = None
         try:
+            repository = KnowledgeGraphRepository()
             # 1. Sync any existing courseware content into graph relations
             try:
                 repository.sync_courseware_to_graph(knowledge_point)
@@ -378,7 +561,66 @@ class CoordinatorWorkflow:
                 "warnings": warnings,
             }
         finally:
-            repository.close()
+            if repository is not None:
+                repository.close()
+
+    def _build_profile_snapshot(
+        self,
+        *,
+        session: Session,
+        user_id: int,
+        knowledge_point: str,
+        fallback_profile: dict[str, Any],
+    ) -> Any:
+        trace = get_current_trace()
+        stage = trace.stage("learner_profile") if trace is not None else nullcontext()
+        with stage:
+            return PersonalizationService(session).build_snapshot(
+                user_id=user_id,
+                knowledge_point=knowledge_point,
+                fallback_profile=fallback_profile,
+            )
+
+    def _run_graph_agent_with_trace(
+        self,
+        knowledge_point: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        trace = get_current_trace()
+        stage = trace.stage("knowledge_graph") if trace is not None else nullcontext()
+        with stage:
+            return self._run_graph_agent(knowledge_point, context)
+
+    def _run_isolated(
+        self,
+        agent_name: str,
+        operation: Callable[[], Any],
+        context: dict[str, Any],
+        calls: list[dict[str, Any]],
+    ) -> Any:
+        """Run one stage without allowing an exception to abort sibling stages."""
+
+        started = time.perf_counter()
+        try:
+            output = operation()
+        except AIServiceError as exc:
+            logger.warning("%s_ai_failure code=%s", agent_name, exc.code)
+            output = {
+                "status": "failed",
+                "error_code": exc.code,
+                "error": exc.user_message,
+                "user_message": exc.user_message,
+            }
+        except Exception as exc:
+            logger.exception("%s_failed", agent_name)
+            output = {
+                "status": "failed",
+                "error_code": "AGENT_EXECUTION_FAILED",
+                "error": str(exc)[:500],
+                "user_message": "该学习步骤暂时失败，其他可用结果仍会继续返回。",
+            }
+        self._record_agent_call(calls, agent_name, output, started, context)
+        return output
 
     def _run_knowledge_base_agent(self, context: dict[str, Any]) -> dict[str, Any]:
         service = KnowledgeBaseService()
@@ -388,16 +630,56 @@ class CoordinatorWorkflow:
         top_k = int(context.get("top_k") or 6)
 
         if operation == "search":
-            articles = service.list_articles()[:top_k] if not query.strip() else service.search_by_keywords(query, top_k=top_k)
+            if not query.strip():
+                items = [
+                    service.article_to_dict(article)
+                    for article in service.list_articles(subject=str(subject) if subject else None)[:top_k]
+                ]
+            else:
+                curated = [
+                    service.article_to_dict(article)
+                    for article in service.search_by_keywords(
+                        query,
+                        top_k=top_k,
+                        subject=str(subject) if subject else None,
+                    )
+                ]
+                search_filters = {
+                    key: context.get(key)
+                    for key in (
+                        "subject", "course", "chapter", "difficulty", "university",
+                        "source", "source_site", "language", "license",
+                    )
+                    if context.get(key) not in (None, "")
+                }
+                indexed = service.search_indexed(
+                    query,
+                    top_k=top_k,
+                    filters=search_filters,
+                    retrieval_mode=str(context.get("retrieval_mode") or "hybrid"),
+                )
+                items = []
+                seen_titles: set[str] = set()
+                for item in [*curated, *indexed]:
+                    title = str(item.get("title") or "")
+                    if title and title not in seen_titles:
+                        seen_titles.add(title)
+                        items.append(item)
+                    if len(items) >= top_k:
+                        break
             return {
                 "status": "completed",
                 "operation": operation,
                 "query": query,
-                "items": [service.article_to_dict(article) for article in articles],
+                "items": items,
             }
 
         if operation == "article":
             article_id = str(context.get("article_id") or "")
+            if article_id.startswith("indexed-"):
+                indexed_article = service.get_indexed_article(article_id)
+                if indexed_article is not None:
+                    return {"status": "completed", "operation": operation, "article": indexed_article}
             for article in service.list_articles():
                 payload = service.article_to_dict(article)
                 if payload["id"] == article_id:
@@ -419,6 +701,7 @@ class CoordinatorWorkflow:
         knowledge_point: str,
         learner_profile: dict[str, Any],
         context: dict[str, Any],
+        snapshot: Any | None,
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         request = ResourceGenerationRequest(
             user_id=payload.user_id,
@@ -427,9 +710,16 @@ class CoordinatorWorkflow:
             resource_type=str(context.get("resource_type") or "courseware"),  # type: ignore[arg-type]
             learner_profile=learner_profile,
             request_text=str(context.get("request_text") or f"围绕 {knowledge_point} 生成可独立阅读的正式课件"),
+            performance_mode=str(context.get("performance_mode") or "balanced"),  # type: ignore[arg-type]
+            subject=str(context.get("subject") or ""),
+            grade=str(context.get("grade") or ""),
+            chapter=str(context.get("chapter") or ""),
+            section=str(context.get("section") or ""),
+            knowledge_point_id=str(context.get("knowledge_point_id") or ""),
+            teaching_scope_id=str(context.get("teaching_scope_id") or ""),
         )
         try:
-            resource = ResourceGenerationService().generate_courseware_with_plan(request)
+            resource = ResourceGenerationService().generate_courseware_with_plan(request, snapshot=snapshot)
         except ResourceGenerationError as exc:
             return {"status": "failed", "error": str(exc)}, None
         return {
@@ -446,6 +736,7 @@ class CoordinatorWorkflow:
         learner_profile: dict[str, Any],
         context: dict[str, Any],
         resource_result: dict[str, Any] | None,
+        snapshot: Any | None,
     ) -> dict[str, Any]:
         courseware_content = str((resource_result or {}).get("content") or context.get("courseware_content") or "")
         request = ExerciseGenerationRequest(
@@ -457,10 +748,18 @@ class CoordinatorWorkflow:
             question_type_counts=dict(context.get("question_type_counts") or {}),
             generation_mode=str(context.get("generation_mode") or "self_test"),  # type: ignore[arg-type]
             courseware_content=courseware_content,
+            performance_mode=str(context.get("performance_mode") or "balanced"),  # type: ignore[arg-type]
+            subject=str(context.get("subject") or ""),
+            grade=str(context.get("grade") or ""),
+            chapter=str(context.get("chapter") or ""),
+            section=str(context.get("section") or ""),
+            knowledge_point_id=str(context.get("knowledge_point_id") or ""),
+            teaching_scope_id=str(context.get("teaching_scope_id") or ""),
+            retrieval_context=dict((resource_result or {}).get("retrieval_context") or {}),
         )
         return {
             "status": "completed",
-            "exercise_set": ExerciseGenerationService().generate_exercises(request),
+            "exercise_set": ExerciseGenerationService().generate_exercises(request, snapshot=snapshot),
             "profile_handoff": self._agent_handoff(learner_profile, "exercise_generation_agent"),
         }
 
@@ -472,6 +771,7 @@ class CoordinatorWorkflow:
         learner_profile: dict[str, Any],
         context: dict[str, Any],
         session: Session,
+        snapshot: Any | None,
     ) -> dict[str, Any]:
         current_points = context.get("current_knowledge_points")
         if not isinstance(current_points, list):
@@ -498,10 +798,23 @@ class CoordinatorWorkflow:
         try:
             return {
                 "status": "completed",
-                "qa": QAService(session).analyze_question(request),
+                "qa": QAService(session, personalization_snapshot=snapshot).analyze_question(request),
                 "profile_handoff": self._agent_handoff(learner_profile, "qa_agent"),
             }
+        except AIServiceError as exc:
+            logger.warning(
+                "qa_agent_ai_failure code=%s raw_error=%s",
+                exc.code,
+                getattr(exc, "raw_message", str(exc))[:500],
+            )
+            return {
+                "status": "failed",
+                "error_code": exc.code,
+                "error": getattr(exc, "raw_message", str(exc)),
+                "user_message": exc.user_message,
+            }
         except Exception as exc:
+            logger.exception("qa_agent_failed raw_error=%s", str(exc)[:500])
             return {"status": "failed", "error": str(exc)}
 
     def _run_evaluation_agent(
@@ -526,26 +839,21 @@ class CoordinatorWorkflow:
 
         service = ReportService()
         synthesis_service = FeedbackSynthesisService()
-
+        dashboard = self._run_async(service.generate_dashboard(payload.user_id))
+        mistake_notebook = dashboard.mistake_notebook
         evaluation_data: dict[str, Any] = {
-            "suggestions": self._to_plain_data(
-                self._run_async(service.generate_learning_suggestions(payload.user_id))
-            ),
-            "profile_snapshot": self._to_plain_data(
-                self._run_async(service.generate_profile_snapshot(payload.user_id))
-            ),
-            "mistake_statistics": self._to_plain_data(
-                self._run_async(service.get_mistake_statistics(payload.user_id))
-            ),
+            "suggestions": self._to_plain_data(dashboard.learning_suggestions),
+            "profile_snapshot": self._to_plain_data(dashboard.profile_snapshot),
+            "mistake_statistics": {
+                "user_id": payload.user_id,
+                "mistake_count": mistake_notebook.mistake_count,
+                "exercise_ids": [item.exercise_id for item in mistake_notebook.items],
+            },
         }
         if context.get("include_stage_report"):
-            evaluation_data["stage_report"] = self._to_plain_data(
-                self._run_async(service.generate_stage_report_detail(payload.user_id))
-            )
+            evaluation_data["stage_report"] = self._to_plain_data(dashboard.stage_report)
         if context.get("include_comprehensive_report"):
-            evaluation_data["comprehensive_report"] = self._to_plain_data(
-                self._run_async(service.generate_comprehensive_report_detail(payload.user_id))
-            )
+            evaluation_data["comprehensive_report"] = self._to_plain_data(dashboard.comprehensive_report)
 
         try:
             synthesis = synthesis_service.synthesize_from_agents(
@@ -595,6 +903,66 @@ class CoordinatorWorkflow:
     def _resolve_knowledge_point(self, payload: CoordinationRequest) -> str:
         context = payload.payload or {}
         return str(payload.knowledge_point or context.get("knowledge_point") or "").strip()
+
+    def _safe_input_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Summarize inputs without logging prompts, answers, tokens or secrets."""
+
+        return {
+            "keys": sorted(str(key) for key in payload.keys() if str(key) not in {"prompt", "token", "authorization"}),
+            "has_learner_profile": bool(payload.get("learner_profile")),
+            "has_teacher_scope": bool(payload.get("teacher_scope")),
+        }
+
+    def _record_agent_call(
+        self,
+        calls: list[dict[str, Any]],
+        agent_name: str,
+        output: Any,
+        started: float,
+        context: dict[str, Any],
+    ) -> None:
+        if isinstance(output, tuple) and output and isinstance(output[0], dict):
+            payload = output[0]
+        else:
+            payload = output if isinstance(output, dict) else {}
+        output_status = payload.get("status") if isinstance(payload, dict) else None
+        if not output_status:
+            output_status = "completed"
+        calls.append(
+            {
+                "agent": agent_name,
+                "version": AGENT_VERSIONS.get(agent_name, "unknown"),
+                "input_summary": self._safe_input_summary(context),
+                "output_status": output_status,
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                "retries": 0,
+                "error_code": payload.get("error_code"),
+            }
+        )
+
+    def _agent_dependencies(self, agent_name: str, selected: list[str]) -> list[str]:
+        dependencies = {
+            "path_planning_agent": ["learner_profiling_agent", "knowledge_graph_agent"],
+            "resource_generation_agent": ["learner_profiling_agent", "knowledge_base_agent"],
+            "exercise_generation_agent": ["learner_profiling_agent", "resource_generation_agent"],
+            "qa_agent": ["learner_profiling_agent", "knowledge_graph_agent"],
+            "evaluation_feedback_agent": list(selected),
+        }
+        return [name for name in dependencies.get(agent_name, []) if name in selected and name != agent_name]
+
+    def _build_task_state(self, state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "task_id": state.get("task_id"),
+            "session_id": state.get("session_id", ""),
+            "intent": state.get("intent", ""),
+            "intent_params": state.get("intent_params", {}),
+            "selected_agents": state.get("selected_agents", []),
+            "task_plan": state.get("task_plan", []),
+            "status": state.get("status", "pending"),
+            "progress": state.get("progress", 0.0),
+            "current_step": state.get("current_step", ""),
+            "error": state.get("error"),
+        }
 
     def _build_profile_basis(self, snapshot: Any) -> list[str]:
         basis: list[str] = []

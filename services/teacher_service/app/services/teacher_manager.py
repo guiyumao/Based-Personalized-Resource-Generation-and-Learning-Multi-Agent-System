@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import Counter, defaultdict
+from datetime import datetime
 from statistics import mean
 
 import httpx
@@ -12,16 +13,42 @@ from sqlalchemy.orm import Session
 
 from common.config import get_settings
 from common.db.session import SessionLocal
-from common.models.learning import AnswerRecord, Exercise, KnowledgePoint, LearningPath, TeachingScope, User, UserProfile
+from common.models.learning import (
+    AnswerRecord,
+    Assignment,
+    AssignmentSubmission,
+    ClassEnrollment,
+    Classroom,
+    Course,
+    DiscussionReply,
+    DiscussionThread,
+    Exercise,
+    KnowledgePoint,
+    LearningPath,
+    Notification,
+    TeachingScope,
+    User,
+    UserProfile,
+)
 from services.teacher_service.app.schemas.teacher import (
+    AssignmentItem,
     ClassCreate,
     ClassItem,
+    DiscussionCreate,
+    DiscussionItem,
+    DiscussionReplyCreate,
+    DiscussionReplyItem,
+    HomeworkAssign,
     KnowledgePointMistakeStat,
     MistakeNotebookItem,
+    NotificationItem,
+    ReviewPayload,
     StudentInsight,
     StudentLearningDetail,
-    TeacherTeachingAnalytics,
+    SubmissionCreate,
+    SubmissionItem,
     TeacherReportDetail,
+    TeacherTeachingAnalytics,
     TeachingScopeCreate,
     TeachingScopeItem,
 )
@@ -34,20 +61,70 @@ class TeacherManager:
 
     def __init__(self) -> None:
         self._settings = get_settings()
-        self._classes: list[ClassItem] = []
 
-    def list_classes(self) -> list[ClassItem]:
-        """Return all classes."""
+    def list_classes(self, user_id: int, role: str) -> list[ClassItem]:
+        """Return persisted classes owned by the teacher, or all for an admin."""
 
-        return self._classes
+        with SessionLocal() as db:
+            query = db.query(Classroom)
+            if role != "admin":
+                query = query.filter(Classroom.teacher_user_id == user_id)
+            records = query.order_by(Classroom.id.desc()).all()
+            return [self._class_to_item(db, record) for record in records]
 
-    def create_class(self, payload: ClassCreate) -> ClassItem:
-        """Create a class entry."""
+    def create_class(self, payload: ClassCreate, teacher_user_id: int) -> ClassItem:
+        """Create a persisted course and class owned by the current teacher."""
 
-        next_id = max((item.id for item in self._classes), default=0) + 1
-        item = ClassItem(id=next_id, **self._to_dict(payload))
-        self._classes.append(item)
-        return item
+        with SessionLocal() as db:
+            course = Course(
+                title=payload.name,
+                subject=payload.subject,
+                description=f"{payload.name}课程",
+                teacher_user_id=teacher_user_id,
+            )
+            db.add(course)
+            db.flush()
+            record = Classroom(
+                name=payload.name,
+                subject=payload.subject,
+                teacher_name=payload.teacher_name,
+                teacher_user_id=teacher_user_id,
+                course_id=course.id,
+            )
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            return self._class_to_item(db, record)
+
+    def enroll_student(
+        self, class_id: int, student_user_id: int, teacher_user_id: int
+    ) -> ClassItem:
+        """Enroll an existing active student in a teacher-owned class."""
+
+        with SessionLocal() as db:
+            classroom = self._teacher_class(db, class_id, teacher_user_id)
+            student = db.get(User, student_user_id)
+            if student is None or student.role != "student" or not student.is_active:
+                raise ValueError("Student account not found or inactive.")
+            existing = (
+                db.query(ClassEnrollment)
+                .filter_by(class_id=class_id, student_user_id=student_user_id)
+                .first()
+            )
+            if existing is None:
+                db.add(ClassEnrollment(class_id=class_id, student_user_id=student_user_id))
+                db.add(
+                    Notification(
+                        user_id=student_user_id,
+                        title="你已加入新班级",
+                        content=f"已加入 {classroom.name}，后续作业和讨论将在班级空间展示。",
+                        type="class",
+                        related_type="class",
+                        related_id=class_id,
+                    )
+                )
+                db.commit()
+            return self._class_to_item(db, classroom)
 
     def get_student_progress(self, class_id: int) -> dict[str, object]:
         """Return progress snapshot derived from real answer records."""
@@ -60,12 +137,265 @@ class TeacherManager:
             "average_mastery": analytics.correct_rate,
         }
 
+    def create_assignment(self, payload: HomeworkAssign, teacher_user_id: int) -> AssignmentItem:
+        """Publish homework and notify every enrolled learner."""
+
+        with SessionLocal() as db:
+            classroom = self._teacher_class(db, payload.class_id, teacher_user_id)
+            record = Assignment(
+                class_id=payload.class_id,
+                course_id=classroom.course_id,
+                teacher_user_id=teacher_user_id,
+                title=payload.title.strip(),
+                description=payload.description.strip(),
+                due_at=payload.due_at,
+            )
+            db.add(record)
+            db.flush()
+            enrollments = db.query(ClassEnrollment).filter_by(class_id=payload.class_id).all()
+            for enrollment in enrollments:
+                db.add(
+                    Notification(
+                        user_id=enrollment.student_user_id,
+                        title=f"新作业：{record.title}",
+                        content=record.description,
+                        type="assignment",
+                        related_type="assignment",
+                        related_id=record.id,
+                    )
+                )
+            db.commit()
+            db.refresh(record)
+            return self._assignment_to_item(db, record)
+
+    def list_teacher_assignments(self, teacher_user_id: int, role: str) -> list[AssignmentItem]:
+        with SessionLocal() as db:
+            query = db.query(Assignment)
+            if role != "admin":
+                query = query.filter(Assignment.teacher_user_id == teacher_user_id)
+            return [
+                self._assignment_to_item(db, item)
+                for item in query.order_by(Assignment.id.desc()).all()
+            ]
+
+    def list_student_assignments(self, student_user_id: int) -> list[AssignmentItem]:
+        with SessionLocal() as db:
+            class_ids = [
+                row.class_id
+                for row in db.query(ClassEnrollment)
+                .filter_by(student_user_id=student_user_id)
+                .all()
+            ]
+            if not class_ids:
+                return []
+            records = (
+                db.query(Assignment)
+                .filter(Assignment.class_id.in_(class_ids))
+                .order_by(Assignment.id.desc())
+                .all()
+            )
+            return [self._assignment_to_item(db, item) for item in records]
+
+    def submit_assignment(
+        self,
+        assignment_id: int,
+        payload: SubmissionCreate,
+        student_user_id: int,
+    ) -> SubmissionItem:
+        """Create or update one student's submission while preserving cutoff checks."""
+
+        with SessionLocal() as db:
+            assignment = db.get(Assignment, assignment_id)
+            if assignment is None or assignment.status != "published":
+                raise ValueError("Assignment not found or closed.")
+            enrolled = (
+                db.query(ClassEnrollment)
+                .filter_by(
+                    class_id=assignment.class_id,
+                    student_user_id=student_user_id,
+                )
+                .first()
+            )
+            if enrolled is None:
+                raise PermissionError("You are not enrolled in this class.")
+            if assignment.due_at and datetime.utcnow() > assignment.due_at:
+                raise RuntimeError("Assignment deadline has passed.")
+            record = (
+                db.query(AssignmentSubmission)
+                .filter_by(
+                    assignment_id=assignment_id,
+                    student_user_id=student_user_id,
+                )
+                .first()
+            )
+            if record is None:
+                record = AssignmentSubmission(
+                    assignment_id=assignment_id,
+                    student_user_id=student_user_id,
+                    content=payload.content.strip(),
+                    attachment_url=payload.attachment_url,
+                )
+                db.add(record)
+            else:
+                record.content = payload.content.strip()
+                record.attachment_url = payload.attachment_url
+                record.status = "submitted"
+                record.submitted_at = datetime.utcnow()
+                record.score = None
+                record.teacher_comment = ""
+                record.reviewed_at = None
+            db.commit()
+            db.refresh(record)
+            return self._submission_to_item(db, record)
+
+    def list_submissions(
+        self, assignment_id: int, teacher_user_id: int, role: str
+    ) -> list[SubmissionItem]:
+        with SessionLocal() as db:
+            assignment = db.get(Assignment, assignment_id)
+            if assignment is None or (
+                role != "admin" and assignment.teacher_user_id != teacher_user_id
+            ):
+                raise ValueError("Assignment not found.")
+            records = (
+                db.query(AssignmentSubmission)
+                .filter_by(assignment_id=assignment_id)
+                .order_by(AssignmentSubmission.submitted_at.desc())
+                .all()
+            )
+            return [self._submission_to_item(db, item) for item in records]
+
+    def review_submission(
+        self, submission_id: int, payload: ReviewPayload, teacher_user_id: int
+    ) -> SubmissionItem:
+        with SessionLocal() as db:
+            record = db.get(AssignmentSubmission, submission_id)
+            assignment = db.get(Assignment, record.assignment_id) if record else None
+            if (
+                record is None
+                or assignment is None
+                or assignment.teacher_user_id != teacher_user_id
+            ):
+                raise ValueError("Submission not found.")
+            record.score = payload.score
+            record.teacher_comment = payload.comment.strip()
+            record.status = "reviewed"
+            record.reviewed_at = datetime.utcnow()
+            db.add(
+                Notification(
+                    user_id=record.student_user_id,
+                    title=f"作业已批改：{assignment.title}",
+                    content=f"得分 {payload.score:g}。{payload.comment.strip()}",
+                    type="review",
+                    related_type="assignment",
+                    related_id=assignment.id,
+                )
+            )
+            db.commit()
+            db.refresh(record)
+            return self._submission_to_item(db, record)
+
+    def list_discussions(self, user_id: int, role: str) -> list[DiscussionItem]:
+        with SessionLocal() as db:
+            query = db.query(DiscussionThread)
+            if role == "student":
+                class_ids = [
+                    row.class_id
+                    for row in db.query(ClassEnrollment).filter_by(student_user_id=user_id).all()
+                ]
+                query = (
+                    query.filter(DiscussionThread.class_id.in_(class_ids))
+                    if class_ids
+                    else query.filter(False)
+                )
+            elif role == "teacher":
+                class_ids = [
+                    row.id for row in db.query(Classroom).filter_by(teacher_user_id=user_id).all()
+                ]
+                query = (
+                    query.filter(DiscussionThread.class_id.in_(class_ids))
+                    if class_ids
+                    else query.filter(False)
+                )
+            return [
+                self._discussion_to_item(db, item)
+                for item in query.order_by(DiscussionThread.updated_at.desc()).all()
+            ]
+
+    def create_discussion(
+        self, payload: DiscussionCreate, user_id: int, role: str
+    ) -> DiscussionItem:
+        with SessionLocal() as db:
+            if payload.class_id is not None:
+                self._ensure_class_access(db, payload.class_id, user_id, role)
+            record = DiscussionThread(
+                class_id=payload.class_id,
+                author_user_id=user_id,
+                title=payload.title.strip(),
+                content=payload.content.strip(),
+            )
+            db.add(record)
+            db.commit()
+            db.refresh(record)
+            return self._discussion_to_item(db, record)
+
+    def reply_discussion(
+        self, thread_id: int, payload: DiscussionReplyCreate, user_id: int, role: str
+    ) -> DiscussionItem:
+        with SessionLocal() as db:
+            thread = db.get(DiscussionThread, thread_id)
+            if thread is None:
+                raise ValueError("Discussion not found.")
+            if thread.class_id is not None:
+                self._ensure_class_access(db, thread.class_id, user_id, role)
+            db.add(
+                DiscussionReply(
+                    thread_id=thread_id, author_user_id=user_id, content=payload.content.strip()
+                )
+            )
+            thread.updated_at = datetime.utcnow()
+            if thread.author_user_id != user_id:
+                db.add(
+                    Notification(
+                        user_id=thread.author_user_id,
+                        title=f"讨论有新回复：{thread.title}",
+                        content=payload.content.strip(),
+                        type="discussion",
+                        related_type="discussion",
+                        related_id=thread.id,
+                    )
+                )
+            db.commit()
+            db.refresh(thread)
+            return self._discussion_to_item(db, thread)
+
+    def list_notifications(self, user_id: int) -> list[NotificationItem]:
+        with SessionLocal() as db:
+            records = (
+                db.query(Notification)
+                .filter_by(user_id=user_id)
+                .order_by(Notification.id.desc())
+                .limit(100)
+                .all()
+            )
+            return [self._notification_to_item(item) for item in records]
+
+    def mark_notification_read(self, notification_id: int, user_id: int) -> NotificationItem:
+        with SessionLocal() as db:
+            record = db.query(Notification).filter_by(id=notification_id, user_id=user_id).first()
+            if record is None:
+                raise ValueError("Notification not found.")
+            record.is_read = True
+            db.commit()
+            db.refresh(record)
+            return self._notification_to_item(record)
+
     def list_student_insights(self, class_id: int) -> list[StudentInsight]:
         """Return teacher-facing learner insight cards."""
 
         _ = class_id
         with SessionLocal() as db:
-            students = self._list_students(db)
+            students = self._list_students(db, class_id)
             return [self._build_student_insight(db, student) for student in students]
 
     def create_teaching_scope(self, payload: TeachingScopeCreate) -> TeachingScopeItem:
@@ -92,23 +422,38 @@ class TeacherManager:
             return [self._scope_to_item(record) for record in records]
 
     def list_student_teaching_scopes(self, user_id: int) -> list[TeachingScopeItem]:
-        """Return scopes visible to one student, including class-wide scopes."""
+        """Return targeted scopes plus class-wide scopes for enrolled classes only."""
 
         with SessionLocal() as db:
+            class_ids = [
+                row.class_id
+                for row in db.query(ClassEnrollment).filter_by(student_user_id=user_id).all()
+            ]
+            visibility = TeachingScope.student_user_id == user_id
+            if class_ids:
+                visibility = visibility | (
+                    TeachingScope.student_user_id.is_(None) & TeachingScope.class_id.in_(class_ids)
+                )
             records = (
-                db.query(TeachingScope)
-                .filter((TeachingScope.student_user_id.is_(None)) | (TeachingScope.student_user_id == user_id))
-                .order_by(TeachingScope.id.desc())
-                .all()
+                db.query(TeachingScope).filter(visibility).order_by(TeachingScope.id.desc()).all()
             )
             return [self._scope_to_item(record) for record in records]
+
+    def ensure_teacher_class_access(self, class_id: int, user_id: int, role: str) -> None:
+        """Enforce class ownership for teachers while allowing administrators."""
+
+        if role == "admin":
+            return
+        with SessionLocal() as db:
+            if db.query(Classroom).filter_by(id=class_id, teacher_user_id=user_id).first() is None:
+                raise PermissionError("You do not have access to this class.")
 
     def get_teaching_analytics(self, class_id: int) -> TeacherTeachingAnalytics:
         """Aggregate real mistakes and answer statistics for teacher decisions."""
 
         _ = class_id
         with SessionLocal() as db:
-            students = self._list_students(db)
+            students = self._list_students(db, class_id)
             student_ids = [student.id for student in students]
             if not student_ids:
                 return TeacherTeachingAnalytics(
@@ -119,7 +464,9 @@ class TeacherManager:
                     correct_rate=None,
                     total_mistakes=0,
                     weak_knowledge_points=[],
-                    teaching_suggestions=["当前还没有学生学习数据，建议先组织一次诊断练习再划定教学方向。"],
+                    teaching_suggestions=[
+                        "当前还没有学生学习数据，建议先组织一次诊断练习再划定教学方向。"
+                    ],
                 )
 
             records = db.query(AnswerRecord).filter(AnswerRecord.user_id.in_(student_ids)).all()
@@ -127,9 +474,13 @@ class TeacherManager:
             answered_students = len({record.user_id for record in records})
             correct_records = [record for record in records if record.is_correct is True]
             wrong_records = [record for record in records if record.is_correct is False]
-            correct_rate = round((len(correct_records) / total_answers) * 100) if total_answers else None
+            correct_rate = (
+                round((len(correct_records) / total_answers) * 100) if total_answers else None
+            )
             weak_points = self._build_weak_point_stats(db, wrong_records)
-            suggestions = self._build_teaching_suggestions(correct_rate, weak_points, answered_students, len(students))
+            suggestions = self._build_teaching_suggestions(
+                correct_rate, weak_points, answered_students, len(students)
+            )
 
             return TeacherTeachingAnalytics(
                 class_id=class_id,
@@ -142,7 +493,9 @@ class TeacherManager:
                 teaching_suggestions=suggestions,
             )
 
-    async def get_student_learning_detail(self, class_id: int, user_id: int) -> StudentLearningDetail:
+    async def get_student_learning_detail(
+        self, class_id: int, user_id: int, auth_header: str | None = None
+    ) -> StudentLearningDetail:
         """Aggregate one learner's mistake notebook and reports for teachers."""
 
         insight = self._find_student_insight(class_id, user_id)
@@ -156,12 +509,15 @@ class TeacherManager:
             ),
             "mistakes": f"{self._settings.evaluation_service_url}/evaluation/mistakes/{user_id}/teacher-detail",
         }
+        # The evaluation service enforces its own authorization, so the teacher's
+        # bearer token must be propagated on these internal calls.
+        forward_headers = {"Authorization": auth_header} if auth_header else {}
 
         async with httpx.AsyncClient(timeout=6.0) as client:
             stage_response, comprehensive_response, mistakes_response = await asyncio.gather(
-                client.get(endpoints["stage"]),
-                client.get(endpoints["comprehensive"]),
-                client.get(endpoints["mistakes"]),
+                client.get(endpoints["stage"], headers=forward_headers),
+                client.get(endpoints["comprehensive"], headers=forward_headers),
+                client.get(endpoints["mistakes"], headers=forward_headers),
             )
 
         stage_report = self._parse_report_response(stage_response)
@@ -178,18 +534,19 @@ class TeacherManager:
     def _find_student_insight(self, class_id: int, user_id: int) -> StudentInsight | None:
         """Return one student insight by class and user id."""
 
-        return next((item for item in self.list_student_insights(class_id) if item.user_id == user_id), None)
-
-    def _list_students(self, db: Session) -> list[User]:
-        """Return active student users from the shared user table."""
-
-        return (
-            db.query(User)
-            .filter(User.role == "student")
-            .filter(User.is_active.is_(True))
-            .order_by(User.id.asc())
-            .all()
+        return next(
+            (item for item in self.list_student_insights(class_id) if item.user_id == user_id), None
         )
+
+    def _list_students(self, db: Session, class_id: int | None = None) -> list[User]:
+        """Return enrolled students, or all active students for legacy unscoped publishing."""
+
+        query = db.query(User).filter(User.role == "student", User.is_active.is_(True))
+        if class_id is not None and db.get(Classroom, class_id) is not None:
+            query = query.join(ClassEnrollment, ClassEnrollment.student_user_id == User.id).filter(
+                ClassEnrollment.class_id == class_id
+            )
+        return query.order_by(User.id.asc()).all()
 
     def _build_student_insight(self, db: Session, student: User) -> StudentInsight:
         """Build one student card from real profile and answer records."""
@@ -205,7 +562,9 @@ class TeacherManager:
         wrong_records = [record for record in records if record.is_correct is False]
         mastery = self._estimate_student_mastery(db, student.id, records)
         recent_focus = self._resolve_recent_focus(db, records)
-        report_summary = self._build_student_report_summary(total, correct, len(wrong_records), recent_focus)
+        report_summary = self._build_student_report_summary(
+            total, correct, len(wrong_records), recent_focus
+        )
 
         return StudentInsight(
             user_id=student.id,
@@ -216,11 +575,15 @@ class TeacherManager:
             report_summary=report_summary,
         )
 
-    def _estimate_student_mastery(self, db: Session, user_id: int, records: list[AnswerRecord]) -> int:
+    def _estimate_student_mastery(
+        self, db: Session, user_id: int, records: list[AnswerRecord]
+    ) -> int:
         """Estimate mastery from profile first, then real answer correctness."""
 
         profile = db.get(UserProfile, user_id)
-        mastery_json = profile.mastery_json if profile and isinstance(profile.mastery_json, dict) else {}
+        mastery_json = (
+            profile.mastery_json if profile and isinstance(profile.mastery_json, dict) else {}
+        )
         scores = [
             float(value.get("score"))
             for value in mastery_json.values()
@@ -246,7 +609,9 @@ class TeacherManager:
                 return knowledge_point.name
         return ""
 
-    def _build_student_report_summary(self, total: int, correct: int, mistakes: int, recent_focus: str) -> str:
+    def _build_student_report_summary(
+        self, total: int, correct: int, mistakes: int, recent_focus: str
+    ) -> str:
         """Create a concise teacher-facing summary without fabricated data."""
 
         if total == 0:
@@ -254,7 +619,9 @@ class TeacherManager:
         correct_rate = round((correct / total) * 100)
         if mistakes == 0:
             return f"已完成 {total} 次作答，正确率 {correct_rate}%，可围绕 {recent_focus} 提升迁移应用。"
-        return f"已完成 {total} 次作答，正确率 {correct_rate}%，建议优先复盘 {recent_focus} 相关错题。"
+        return (
+            f"已完成 {total} 次作答，正确率 {correct_rate}%，建议优先复盘 {recent_focus} 相关错题。"
+        )
 
     def _build_weak_point_stats(
         self,
@@ -281,12 +648,16 @@ class TeacherManager:
                 knowledge_point=name,
                 mistake_count=count,
                 affected_students=len(affected_students[name]),
-                suggested_direction=self._suggest_direction_for_weak_point(name, count, len(affected_students[name])),
+                suggested_direction=self._suggest_direction_for_weak_point(
+                    name, count, len(affected_students[name])
+                ),
             )
             for name, count in mistake_counts.most_common(5)
         ]
 
-    def _suggest_direction_for_weak_point(self, knowledge_point: str, mistake_count: int, affected_count: int) -> str:
+    def _suggest_direction_for_weak_point(
+        self, knowledge_point: str, mistake_count: int, affected_count: int
+    ) -> str:
         """Build a teacher action suggestion for one weak knowledge point."""
 
         if affected_count >= 3 or mistake_count >= 5:
@@ -324,10 +695,118 @@ class TeacherManager:
         """Serialize a pydantic model across v1 and v2 runtimes."""
 
         if hasattr(model, "model_dump"):
-            return getattr(model, "model_dump")()
+            return model.model_dump()
         if hasattr(model, "dict"):
-            return getattr(model, "dict")()
+            return model.dict()
         raise TypeError(f"Unsupported model type: {type(model)!r}")
+
+    def _teacher_class(self, db: Session, class_id: int, teacher_user_id: int) -> Classroom:
+        record = db.query(Classroom).filter_by(id=class_id, teacher_user_id=teacher_user_id).first()
+        if record is None:
+            raise ValueError("Class not found or not owned by the current teacher.")
+        return record
+
+    def _ensure_class_access(self, db: Session, class_id: int, user_id: int, role: str) -> None:
+        if role == "admin":
+            return
+        if (
+            role == "teacher"
+            and db.query(Classroom).filter_by(id=class_id, teacher_user_id=user_id).first()
+        ):
+            return
+        if (
+            role == "student"
+            and db.query(ClassEnrollment)
+            .filter_by(class_id=class_id, student_user_id=user_id)
+            .first()
+        ):
+            return
+        raise PermissionError("You do not have access to this class.")
+
+    def _class_to_item(self, db: Session, record: Classroom) -> ClassItem:
+        return ClassItem(
+            id=record.id,
+            name=record.name,
+            subject=record.subject,
+            teacher_name=record.teacher_name,
+            course_id=record.course_id,
+            student_count=db.query(ClassEnrollment).filter_by(class_id=record.id).count(),
+        )
+
+    def _assignment_to_item(self, db: Session, record: Assignment) -> AssignmentItem:
+        return AssignmentItem(
+            id=record.id,
+            class_id=record.class_id,
+            title=record.title,
+            description=record.description,
+            due_at=record.due_at,
+            status=record.status,
+            created_at=record.created_at,
+            submission_count=db.query(AssignmentSubmission)
+            .filter_by(assignment_id=record.id)
+            .count(),
+        )
+
+    def _submission_to_item(self, db: Session, record: AssignmentSubmission) -> SubmissionItem:
+        student = db.get(User, record.student_user_id)
+        return SubmissionItem(
+            id=record.id,
+            assignment_id=record.assignment_id,
+            student_user_id=record.student_user_id,
+            student_name=student.username if student else f"用户 {record.student_user_id}",
+            content=record.content,
+            attachment_url=record.attachment_url,
+            status=record.status,
+            submitted_at=record.submitted_at,
+            score=record.score,
+            teacher_comment=record.teacher_comment or "",
+            reviewed_at=record.reviewed_at,
+        )
+
+    def _discussion_to_item(self, db: Session, record: DiscussionThread) -> DiscussionItem:
+        author = db.get(User, record.author_user_id)
+        replies = (
+            db.query(DiscussionReply)
+            .filter_by(thread_id=record.id)
+            .order_by(DiscussionReply.id.asc())
+            .all()
+        )
+        return DiscussionItem(
+            id=record.id,
+            class_id=record.class_id,
+            author_user_id=record.author_user_id,
+            author_name=author.username if author else f"用户 {record.author_user_id}",
+            title=record.title,
+            content=record.content,
+            status=record.status,
+            created_at=record.created_at,
+            replies=[
+                DiscussionReplyItem(
+                    id=item.id,
+                    author_user_id=item.author_user_id,
+                    author_name=(
+                        db.get(User, item.author_user_id).username
+                        if db.get(User, item.author_user_id)
+                        else f"用户 {item.author_user_id}"
+                    ),
+                    content=item.content,
+                    created_at=item.created_at,
+                )
+                for item in replies
+            ],
+        )
+
+    def _notification_to_item(self, record: Notification) -> NotificationItem:
+        return NotificationItem(
+            id=record.id,
+            title=record.title,
+            content=record.content,
+            type=record.type,
+            related_type=record.related_type,
+            related_id=record.related_id,
+            is_read=record.is_read,
+            created_at=record.created_at,
+        )
 
     def _scope_to_item(self, record: TeachingScope) -> TeachingScopeItem:
         """Serialize a persisted teaching scope."""
@@ -349,7 +828,7 @@ class TeacherManager:
         if scope.student_user_id is not None:
             students = [db.get(User, scope.student_user_id)]
         else:
-            students = self._list_students(db)
+            students = self._list_students(db, scope.class_id)
 
         for student in [item for item in students if item is not None and item.role == "student"]:
             payload = self._build_scope_learning_path(scope, student.id)

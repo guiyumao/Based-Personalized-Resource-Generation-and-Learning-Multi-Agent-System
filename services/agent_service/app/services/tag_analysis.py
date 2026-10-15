@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from common.config import Settings, get_settings
+from common.performance import traced_invoke
 from services.agent_service.app.services.llm_factory import LLMFactory
 
 TAG_SYSTEM_PROMPT = """你是教育资源标签分析器。分析给定内容，返回 3-6 个标签。
@@ -87,13 +87,15 @@ class TagAnalysisService:
         Returns a list like ["Python","循环结构","while","基础","概念讲解"].
         Falls back to keyword matching if LLM is unavailable.
         """
-        # ── Try LLM first ──
-        try:
-            llm_tags = self._analyze_with_llm(content, title)
-            if llm_tags:
-                return list(dict.fromkeys(llm_tags))  # dedupe preserving order
-        except Exception:
-            pass
+        # Indexing defaults to deterministic tags.  An LLM call per source file
+        # is available for curated imports, but must be explicitly enabled.
+        if self.settings.rag_index_use_llm_tags:
+            try:
+                llm_tags = self._analyze_with_llm(content, title)
+                if llm_tags:
+                    return list(dict.fromkeys(llm_tags))
+            except Exception:
+                pass
 
         # ── Keyword fallback ──
         return self._analyze_with_keywords(content, title, subject)
@@ -104,10 +106,10 @@ class TagAnalysisService:
         prompt = f"标题：{title}\n\n内容摘录：\n{excerpt}"
         try:
             llm = LLMFactory(self.settings).build_chat_model(temperature=0.1)
-            result = llm.invoke([
+            result = traced_invoke(llm, [
                 {"role": "system", "content": TAG_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
-            ])
+            ], stage="generation")
             raw = self._coerce_llm_text(result.content)
             parsed = self._extract_json_array(raw)
             if isinstance(parsed, list) and len(parsed) >= 2:

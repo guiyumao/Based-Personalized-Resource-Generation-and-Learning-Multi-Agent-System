@@ -7,8 +7,8 @@ import pytest
 
 from common.db.session import SessionLocal
 from common.models.learning import LearningPath, TeachingScope
-from services.teacher_service.app.services.teacher_manager import TeacherManager
 from services.teacher_service.app.schemas.teacher import TeachingScopeCreate
+from services.teacher_service.app.services.teacher_manager import TeacherManager
 
 
 def test_teacher_manager_returns_student_insights() -> None:
@@ -44,6 +44,7 @@ def test_teacher_manager_uses_teacher_mistake_detail_endpoint() -> None:
     manager = TeacherManager()
 
     requested_urls: list[str] = []
+    forwarded_headers: list[dict] = []
 
     class DummyResponse:
         def __init__(self, payload):
@@ -62,8 +63,9 @@ def test_teacher_manager_uses_teacher_mistake_detail_endpoint() -> None:
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        async def get(self, url: str):
+        async def get(self, url: str, headers: dict | None = None):
             requested_urls.append(url)
+            forwarded_headers.append(headers or {})
             if url.endswith("/teacher-detail"):
                 return DummyResponse({"data": {"user_id": 1, "mistake_count": 0, "items": []}})
             return DummyResponse(
@@ -85,6 +87,57 @@ def test_teacher_manager_uses_teacher_mistake_detail_endpoint() -> None:
 
     assert isinstance(detail.mistake_notebook, list)
     assert any(url.endswith("/evaluation/mistakes/1/teacher-detail") for url in requested_urls)
+
+
+def test_teacher_manager_forwards_caller_token_to_evaluation() -> None:
+    """Evaluation-service calls must carry the teacher's bearer token."""
+
+    manager = TeacherManager()
+    forwarded: list[dict] = []
+
+    class DummyResponse:
+        def __init__(self, url: str) -> None:
+            self._url = url
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self):
+            if self._url.endswith("/teacher-detail"):
+                return {"data": {"user_id": 1, "mistake_count": 0, "items": []}}
+            return {
+                "data": {
+                    "report_type": "stage" if "/stage/" in self._url else "comprehensive",
+                    "user_id": 1,
+                    "title": "ok",
+                    "summary": "ok",
+                    "strengths": [],
+                    "weaknesses": [],
+                    "next_actions": [],
+                }
+            }
+
+    class DummyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url: str, headers: dict | None = None):
+            forwarded.append(headers or {})
+            return DummyResponse(url)
+
+    with patch(
+        "services.teacher_service.app.services.teacher_manager.httpx.AsyncClient",
+        return_value=DummyClient(),
+    ):
+        asyncio.run(
+            manager.get_student_learning_detail(1, 1, auth_header="Bearer teacher-token")
+        )
+
+    assert forwarded, "no internal evaluation call was made"
+    assert all(h.get("Authorization") == "Bearer teacher-token" for h in forwarded)
 
 
 def test_teacher_scope_is_visible_to_target_student(test_user) -> None:

@@ -41,6 +41,22 @@ function createHttpClient(baseURL: string) {
     return config
   })
 
+  client.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const status = error?.response?.status
+      const requestUrl = String(error?.config?.url ?? '')
+      const isAuthRequest = requestUrl.includes('/login') || requestUrl.includes('/register')
+      if (status === 401 && !isAuthRequest && typeof window !== 'undefined') {
+        localStorage.removeItem('learning-system-auth')
+        if (window.location.pathname !== '/login') {
+          window.location.assign('/login?reason=session-expired')
+        }
+      }
+      return Promise.reject(error)
+    },
+  )
+
   return client
 }
 

@@ -60,9 +60,9 @@ export async function createChatSession(data: ChatSessionCreate): Promise<ChatSe
   return response.data
 }
 
-export async function listChatSessions(userId: number, limit: number = 50): Promise<ChatSessionSummary[]> {
+export async function listChatSessions(userId: number, limit: number = 50, keyword = ''): Promise<ChatSessionSummary[]> {
   const response = await agentApi.get<ChatSessionSummary[]>('/chat/sessions', {
-    params: { user_id: userId, limit },
+    params: { user_id: userId, limit, keyword: keyword.trim() || undefined },
   })
   return response.data
 }

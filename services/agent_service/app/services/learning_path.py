@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 import logging
+from copy import deepcopy
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from common.ai_errors import AIServiceError
 from common.config import get_settings
 from common.models.learning import LearningPath
+from common.performance import traced_invoke
 from common.schemas.agent import LearningPathAdjustRequest, LearningPathRequest
 from services.agent_service.app.services.llm_factory import LLMFactory
-
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +44,12 @@ class LearningPathService:
             settings = get_settings()
             llm = LLMFactory(settings).build_chat_model(temperature=0.25)
             prompt = self._build_llm_prompt(request, teacher_scope)
-            result = llm.invoke(prompt)
+            result = traced_invoke(llm, prompt, stage="generation")
             content = self._coerce_llm_text(getattr(result, "content", result))
             payload = self._parse_llm_json(content)
             return self._normalize_llm_path(request, payload, teacher_scope)
+        except AIServiceError:
+            raise
         except Exception as exc:
             logger.warning("LLM learning path generation failed: %s", exc)
             raise RuntimeError("LLM learning path generation failed") from exc

@@ -21,6 +21,10 @@ class CoordinationResponse(BaseModel):
     selected_agents: list[str]
     route_reason: str
     outputs: dict[str, Any]
+    task_id: str | None = None
+    session_id: str = ""
+    task_state: dict[str, Any] = Field(default_factory=dict)
+    agent_calls: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ResourceGenerationRequest(BaseModel):
@@ -33,6 +37,14 @@ class ResourceGenerationRequest(BaseModel):
     learner_profile: dict[str, Any] = Field(default_factory=dict)
     request_text: str = ""
     preferred_word_count: int | None = Field(default=None, ge=300, le=6000)
+    performance_mode: Literal["fast", "balanced", "quality"] = "balanced"
+    subject: str = ""
+    grade: str = ""
+    chapter: str = ""
+    section: str = ""
+    knowledge_point_id: str = ""
+    teaching_scope_id: str = ""
+    retrieval_context: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
 
 class ResourceGenerationPlan(BaseModel):
@@ -73,6 +85,10 @@ class ResourceGenerationResponse(BaseModel):
     personalization: dict[str, Any] = Field(default_factory=dict)
     content: str
     variants: list[ResourceVariant] = Field(default_factory=list)
+    generation_status: Literal["queued", "generating", "generated", "failed"] = "generated"
+    audit_status: Literal["pending", "passed", "rejected", "unavailable"] = "pending"
+    publish_status: Literal["draft", "published", "archived"] = "draft"
+    audit_reason: str = ""
 
 
 class GraphQueryRequest(BaseModel):
@@ -171,6 +187,14 @@ class ExerciseGenerationRequest(BaseModel):
     question_type_counts: dict[str, int] = Field(default_factory=dict)
     generation_mode: Literal["practice", "self_test", "remedial"] = "practice"
     courseware_content: str = ""
+    performance_mode: Literal["fast", "balanced", "quality"] = "balanced"
+    subject: str = ""
+    grade: str = ""
+    chapter: str = ""
+    section: str = ""
+    knowledge_point_id: str = ""
+    teaching_scope_id: str = ""
+    retrieval_context: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
 
 class ExerciseItem(BaseModel):
@@ -194,6 +218,9 @@ class ExerciseGenerationResponse(BaseModel):
     summary: str
     personalization: dict[str, Any] = Field(default_factory=dict)
     exercises: list[ExerciseItem]
+    generation_status: Literal["generated", "failed"] = "generated"
+    audit_status: Literal["passed", "rejected", "unavailable"] = "passed"
+    audit_reason: str = ""
 
 
 class QARequest(BaseModel):

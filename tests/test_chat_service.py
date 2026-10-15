@@ -6,9 +6,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from sqlalchemy.orm import Session
 from common.db.session import get_db
-from common.schemas.agent import ChatSessionCreate, ChatMessageInput
+from common.schemas.agent import ChatMessageInput, ChatSessionCreate
 from services.agent_service.app.services.chat_service import ChatService
 
 
@@ -42,7 +41,7 @@ def test_chat_flow():
             context={}
         )
         response1 = service.send_message(simple_question)
-        print(f"✓ Response received:")
+        print("✓ Response received:")
         print(f"  Model used: {response1.model_used}")
         print(f"  Content preview: {response1.content[:100]}...")
         print(f"  Metadata: {response1.metadata}")
@@ -56,7 +55,7 @@ def test_chat_flow():
             context={}
         )
         response2 = service.send_message(complex_question)
-        print(f"✓ Response received:")
+        print("✓ Response received:")
         print(f"  Model used: {response2.model_used}")
         print(f"  Content preview: {response2.content[:100]}...")
         print(f"  Metadata: {response2.metadata}")
@@ -71,7 +70,7 @@ def test_chat_flow():
         # Step 5: Get session detail
         print("\n5. Getting session detail...")
         detail = service.get_session(session.id, user_id=1)
-        print(f"✓ Session detail retrieved:")
+        print("✓ Session detail retrieved:")
         print(f"  Messages: {detail.message_count}")
         for msg in detail.messages[-4:]:  # Show last 4 messages
             print(f"  - [{msg.role}] {msg.content[:50]}...")

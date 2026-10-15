@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Collection, Key, Setting, Tickets } from '@element-plus/icons-vue'
 
 import {
   systemApi,
@@ -51,6 +52,12 @@ const loading = reactive({
 
 const configKeys = computed(() => configs.value.map((item) => item.key))
 const visibleLogs = computed(() => logs.value)
+const adminStats = computed<{ label: string; value: number; icon: Component; hint: string }[]>(() => [
+  { label: '学科数量', value: subjects.value.length, icon: Collection, hint: '当前已配置学科' },
+  { label: '系统配置', value: configs.value.length, icon: Setting, hint: '可在线维护参数' },
+  { label: '审计记录', value: logs.value.length, icon: Tickets, hint: '当前筛选范围' },
+  { label: '角色管理', value: 3, icon: Key, hint: '学生、教师、管理员' },
+])
 
 async function assignRole() {
   loading.role = true
@@ -165,14 +172,21 @@ onMounted(async () => {
 <template>
   <div class="role-shell">
     <div class="role-card large">
-      <div class="login-kicker">Admin Console</div>
-      <h1>管理员系统</h1>
-      <p>管理员端现在已经从只读展示升级为可管理工作台，支持角色分配、学科创建、系统配置更新和审计日志筛选。</p>
+      <header class="console-hero">
+        <div>
+          <div class="login-kicker">SYSTEM ADMINISTRATION</div>
+          <h1>管理控制台</h1>
+          <p>统一管理角色、学科、系统配置与审计日志，所有操作继续使用现有系统服务接口。</p>
+        </div>
+        <div class="role-meta"><span>{{ authStore.user?.username }}</span><span>管理员</span></div>
+      </header>
 
-      <div class="role-meta">
-        <span>用户：{{ authStore.user?.username }}</span>
-        <span>角色：{{ authStore.user?.role }}</span>
-      </div>
+      <section class="admin-stat-grid">
+        <article v-for="item in adminStats" :key="item.label">
+          <span><component :is="item.icon" /></span>
+          <div><small>{{ item.label }}</small><strong>{{ item.value }}</strong><p>{{ item.hint }}</p></div>
+        </article>
+      </section>
 
       <div class="workspace-grid teacher-grid">
         <section class="workspace-panel">
@@ -225,6 +239,8 @@ onMounted(async () => {
               <strong>{{ item.name }}</strong>
               <span>{{ item.description }}</span>
             </div>
+            <div v-if="loading.subjects" class="empty-state">正在加载学科...</div>
+            <div v-else-if="!subjects.length" class="empty-state">暂无学科，可使用上方表单新增。</div>
           </div>
         </section>
 
@@ -254,6 +270,8 @@ onMounted(async () => {
               <strong>{{ item.key }}</strong>
               <span>{{ item.value }}</span>
             </div>
+            <div v-if="loading.configs" class="empty-state">正在加载配置...</div>
+            <div v-else-if="!configs.length" class="empty-state">暂无可维护的系统配置。</div>
           </div>
         </section>
 
@@ -277,9 +295,20 @@ onMounted(async () => {
               <strong>{{ item.level }} / {{ item.event }}</strong>
               <span>{{ item.message }}</span>
             </div>
+            <div v-if="loading.logs" class="empty-state">正在加载审计日志...</div>
+            <div v-else-if="!visibleLogs.length" class="empty-state">当前筛选条件下暂无审计记录。</div>
           </div>
         </section>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.console-hero { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:20px; padding:28px; border:1px solid color-mix(in srgb,var(--accent) 16%,var(--line)); border-radius:18px; background:linear-gradient(135deg,var(--panel),color-mix(in srgb,var(--accent) 7%,var(--panel))); box-shadow:var(--shadow-soft); }
+.console-hero h1 { margin:8px 0 7px; color:var(--text); font-size:32px; letter-spacing:-.04em; }.console-hero p { max-width:760px; margin:0; color:var(--muted); line-height:1.75; }.role-meta { display:flex; flex-wrap:wrap; gap:7px; }.role-meta span { padding:7px 10px; border-radius:8px; color:var(--accent); background:var(--accent-soft); font-size:11px; font-weight:700; }
+.admin-stat-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:20px; }.admin-stat-grid article { display:grid; grid-template-columns:42px 1fr; gap:13px; padding:18px; border:1px solid var(--line); border-radius:15px; background:var(--panel); box-shadow:var(--shadow-soft); }.admin-stat-grid article > span { width:42px; height:42px; display:grid; place-items:center; border-radius:11px; color:var(--accent); background:var(--accent-soft); }.admin-stat-grid small,.admin-stat-grid strong,.admin-stat-grid p { display:block; }.admin-stat-grid small { color:var(--muted); font-size:11px; }.admin-stat-grid strong { margin-top:2px; color:var(--text); font-size:24px; }.admin-stat-grid p { margin:3px 0 0; color:var(--muted); font-size:10px; }
+:deep(.workspace-grid) { margin-top:0; align-items:start; }:deep(.workspace-panel) { min-height:420px; }
+@media (max-width:1100px) { .admin-stat-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:680px) { .console-hero { align-items:flex-start; flex-direction:column; padding:21px; }.admin-stat-grid { grid-template-columns:1fr; } }
+</style>

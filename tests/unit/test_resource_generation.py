@@ -1,5 +1,7 @@
 """Unit tests for the resource generation service."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from common.schemas.agent import ResourceGenerationRequest
@@ -16,17 +18,41 @@ def test_generate_courseware_with_stubbed_llm(monkeypatch):
 
     monkeypatch.setattr(
         service.retriever,
-        "retrieve",
-        lambda query, top_k=3: [
-            {
+        "build_context",
+        lambda **kwargs: SimpleNamespace(
+            retrieved_chunks=[{
                 "id": "1",
                 "content": "Loops can be implemented with for and while in Python.",
                 "metadata": {"source": "seed"},
-            }
-        ],
+            }],
+            model_dump=lambda: {
+                "context_id": "test-context",
+                "knowledge_point_id": "Python loops",
+                "knowledge_base_version": service.settings.knowledge_base_version,
+                "retrieved_chunks": [],
+                "source_ids": [],
+            },
+        ),
     )
 
-    monkeypatch.setattr(service, "_invoke_llm", lambda _: "# Python loops\n\n- for\n- while")
+    generated_markdown = """# Python loops
+
+## 学习目标
+理解 for 和 while 循环的使用条件。
+
+## 知识讲解
+for 适合遍历已知序列，while 适合按条件重复执行。
+
+## 示例讲解
+`for item in items` 会依次取出每个元素。
+
+## 课堂小结
+根据是否已知迭代对象选择循环结构。
+
+## 学完后自测
+说明两种循环的适用场景。
+"""
+    monkeypatch.setattr(service, "_invoke_llm", lambda _, **kwargs: generated_markdown)
 
     response = service.generate_courseware_with_plan(
         ResourceGenerationRequest(

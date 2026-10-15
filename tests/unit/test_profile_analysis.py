@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from services.user_service.app.main import app
 
 
-def test_profile_analysis_endpoints_return_completed_payload(test_user) -> None:
+def test_profile_analysis_endpoints_return_completed_payload(test_user, auth_headers) -> None:
     """Profile analysis endpoints should expose generated analysis content."""
 
     client = TestClient(app)
@@ -19,15 +19,22 @@ def test_profile_analysis_endpoints_return_completed_payload(test_user) -> None:
                 "goalOrientation": "求职实习",
             },
         },
+        headers=auth_headers,
     )
     assert update_response.status_code == 200
 
-    response = client.get(f"/users/{test_user.id}/profile/analysis")
+    response = client.get(
+        f"/users/{test_user.id}/profile/analysis",
+        headers=auth_headers,
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] in {"processing", "completed"}
 
-    status_response = client.get(f"/users/{test_user.id}/profile/analysis/status")
+    status_response = client.get(
+        f"/users/{test_user.id}/profile/analysis/status",
+        headers=auth_headers,
+    )
     assert status_response.status_code == 200
     status_payload = status_response.json()
     if status_payload["status"] == "completed":
@@ -36,7 +43,7 @@ def test_profile_analysis_endpoints_return_completed_payload(test_user) -> None:
       assert analysis["goalOrientation"]
 
 
-def test_profile_analysis_cache_marked_stale_after_profile_change(test_user) -> None:
+def test_profile_analysis_cache_marked_stale_after_profile_change(test_user, auth_headers) -> None:
     """Updating the learner profile should mark cached deep analysis as stale."""
 
     client = TestClient(app)
@@ -50,10 +57,14 @@ def test_profile_analysis_cache_marked_stale_after_profile_change(test_user) -> 
                 "goalOrientation": "完成项目",
             },
         },
+        headers=auth_headers,
     )
     assert first_update.status_code == 200
 
-    first_analysis = client.get(f"/users/{test_user.id}/profile/analysis")
+    first_analysis = client.get(
+        f"/users/{test_user.id}/profile/analysis",
+        headers=auth_headers,
+    )
     assert first_analysis.status_code == 200
 
     second_update = client.put(
@@ -64,16 +75,20 @@ def test_profile_analysis_cache_marked_stale_after_profile_change(test_user) -> 
                 "learningSpeed": "适中",
             },
         },
+        headers=auth_headers,
     )
     assert second_update.status_code == 200
 
-    status_response = client.get(f"/users/{test_user.id}/profile/analysis/status")
+    status_response = client.get(
+        f"/users/{test_user.id}/profile/analysis/status",
+        headers=auth_headers,
+    )
     assert status_response.status_code == 200
     payload = status_response.json()
     assert payload["status"] in {"processing", "completed", "idle"}
 
 
-def test_profile_analysis_refresh_endpoint_available(test_user) -> None:
+def test_profile_analysis_refresh_endpoint_available(test_user, auth_headers) -> None:
     """Refresh endpoint should accept requests and restart or return analysis."""
 
     client = TestClient(app)
@@ -87,10 +102,14 @@ def test_profile_analysis_refresh_endpoint_available(test_user) -> None:
                 "goalOrientation": "长期兴趣",
             },
         },
+        headers=auth_headers,
     )
     assert update_response.status_code == 200
 
-    response = client.post(f"/users/{test_user.id}/profile/analysis/refresh", json={})
+    response = client.post(
+        f"/users/{test_user.id}/profile/analysis/refresh", json={},
+        headers=auth_headers,
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] in {"processing", "completed"}

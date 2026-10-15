@@ -371,3 +371,28 @@ def test_teacher_mistake_notebook_ignores_student_side_clear_visibility(test_use
         assert teacher_notebook.items[0].knowledge_point == f"graph-{test_user.id}"
 
     asyncio.run(run())
+
+
+def test_report_dashboard_loads_user_context_once(test_user, monkeypatch) -> None:
+    """The report page bundle must reuse one answer-history snapshot."""
+
+    async def run() -> None:
+        service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
+        original = service._load_user_context
+        calls = 0
+
+        def counting_load(user_id: int):
+            nonlocal calls
+            calls += 1
+            return original(user_id)
+
+        monkeypatch.setattr(service, "_load_user_context", counting_load)
+        dashboard = await service.generate_dashboard(test_user.id)
+
+        assert calls == 1
+        assert dashboard.stage_report.user_id == test_user.id
+        assert dashboard.comprehensive_report.user_id == test_user.id
+        assert dashboard.profile_snapshot["user_id"] == test_user.id
+        assert dashboard.mistake_notebook.user_id == test_user.id
+
+    asyncio.run(run())

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Generate the final Word document with database tables, ER diagram, and flowchart."""
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from docx import Document
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 from PIL import Image, ImageDraw, ImageFont
-
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = ROOT / "docs"

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import ast
+import os
 from dataclasses import dataclass
 from datetime import datetime
-import os
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

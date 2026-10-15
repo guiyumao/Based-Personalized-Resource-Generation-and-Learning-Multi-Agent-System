@@ -1,32 +1,43 @@
-"""Content audit agent — validates AI-generated output against user-requested topics."""
+"""Rule-first content audit with conditional semantic review."""
 
 from __future__ import annotations
 
 import json
-from typing import Any
+import re
+import time
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from common.config import Settings, get_settings
+from common.performance import get_current_trace, traced_invoke
 from services.agent_service.app.services.llm_factory import LLMFactory
 
-AUDIT_SYSTEM_PROMPT = """你是教育内容审核员。检查 AI 生成的内容是否与用户指定的主题匹配。
+AUDIT_SYSTEM_PROMPT = """你是教育内容审核员。检查生成内容是否与用户指定主题匹配。
+只在以下严重情况 REJECT：学科完全跑偏、明显学术错误、严重逻辑冲突。
+中文编号和正常的题目格式不是错误。
+只回复 JSON：{"verdict":"PASS"|"REJECT","reason":"一句话原因"}。"""
 
-审核标准（只在以下严重情况下 REJECT）：
-1. **学科跑偏**：输出内容与用户需求完全不相符，例如用户要"算法"，结果给了"微积分"或完全不相关的内容。
-2. **明显学术错误**：关键概念定义完全错误、因果关系颠倒。
-3. **空内容/乱码**：输出为空、全是乱码、或无可读内容。
+AUDIT_TIMEOUT = 15
+AuditStatus = Literal["passed", "rejected", "unavailable"]
 
-注意：以下情况应该 PASS：
-- 中文编号格式（如"第1题"、"第X题"）是正常的题目格式，不是模板错误。
-- 只要核心概念围绕用户指定的知识点，细微偏差不影响通过。
-- 题目形式（选择题/填空题/判断题）只要可作答即可。
 
-只回复一个 JSON：{"verdict": "PASS"|"REJECT", "reason": "一句话原因"}"""
+@dataclass(frozen=True)
+class AuditDecision:
+    passed: bool
+    status: AuditStatus
+    reason: str
+    method: Literal["rule", "llm"]
 
-AUDIT_TIMEOUT = 15  # seconds — keep it fast
+    def __iter__(self) -> Iterator[Any]:
+        """Keep existing ``passed, reason = decision`` callers compatible."""
+
+        yield self.passed
+        yield self.reason
 
 
 class AuditService:
-    """Validate generated content relevance and quality before returning to user."""
+    """Validate structure in code and reserve LLM review for semantic ambiguity."""
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -35,22 +46,30 @@ class AuditService:
         self,
         knowledge_point: str,
         exercises: list[dict[str, Any]],
-    ) -> tuple[bool, str]:
-        """Check if generated exercises match the requested knowledge point.
-
-        Returns (passed, reason).
-        """
+        *,
+        mode: str = "balanced",
+    ) -> AuditDecision:
+        started = time.perf_counter()
         if not exercises:
-            return False, "exercises list is empty"
+            return self._rule_decision(started, False, "exercises list is empty")
 
-        # Build a concise summary for audit
-        prompts = [str(e.get("prompt", ""))[:120] for e in exercises[:3]]
-        answers = [str(e.get("answer", ""))[:80] for e in exercises[:3]]
-        summary = (
-            f"知识点：{knowledge_point}\n"
-            f"题目：{' | '.join(prompts)}\n"
-            f"答案：{' | '.join(answers)}"
-        )
+        required_fields = ("prompt", "answer", "analysis", "question_type", "difficulty")
+        for index, exercise in enumerate(exercises, 1):
+            missing = [field for field in required_fields if not str(exercise.get(field) or "").strip()]
+            if missing:
+                return self._rule_decision(
+                    started, False, f"exercise {index} missing fields: {', '.join(missing)}"
+                )
+            if exercise.get("question_type") == "choice" and len(exercise.get("options") or []) < 2:
+                return self._rule_decision(started, False, f"exercise {index} has insufficient options")
+
+        prompts = [str(item.get("prompt", ""))[:160] for item in exercises[:5]]
+        answers = [str(item.get("answer", ""))[:100] for item in exercises[:5]]
+        summary = f"知识点：{knowledge_point}\n题目：{' | '.join(prompts)}\n答案：{' | '.join(answers)}"
+        topic_matched = self._topic_matches(knowledge_point, summary)
+        if topic_matched and mode != "quality":
+            return self._rule_decision(started, True, "rule_audit_passed")
+        self._record_rule_time(started)
         return self._call_auditor(knowledge_point, summary)
 
     def audit_courseware(
@@ -58,35 +77,81 @@ class AuditService:
         knowledge_point: str,
         content: str,
         title: str = "",
-    ) -> tuple[bool, str]:
-        """Check if generated courseware matches the requested knowledge point."""
-        if not content or len(content) < 50:
-            return False, "courseware content is too short"
-        summary = f"标题：{title}\n内容摘要：{content[:800]}"
+        *,
+        mode: str = "balanced",
+    ) -> AuditDecision:
+        started = time.perf_counter()
+        stripped = content.strip()
+        if len(stripped) < 80:
+            return self._rule_decision(started, False, "courseware content is too short")
+        lowered = stripped.lower()
+        if any(marker in lowered[:300] for marker in ("error:", "traceback", "无法生成", "生成失败")):
+            return self._rule_decision(started, False, "courseware contains generation failure text")
+
+        heading_groups = (
+            ("学习目标", "教学目标"),
+            ("知识讲解", "核心概念", "核心定义"),
+            ("示例", "例题", "案例"),
+            ("小结", "总结"),
+            ("自测", "练习"),
+        )
+        covered = sum(1 for group in heading_groups if any(item in stripped for item in group))
+        if covered < 3:
+            return self._rule_decision(started, False, "courseware required sections are incomplete")
+
+        summary = f"标题：{title}\n内容摘要：{stripped[:1200]}"
+        topic_matched = self._topic_matches(knowledge_point, f"{title}\n{stripped}")
+        if topic_matched and mode != "quality":
+            return self._rule_decision(started, True, "rule_audit_passed")
+        self._record_rule_time(started)
         return self._call_auditor(knowledge_point, summary)
 
-    def _call_auditor(self, knowledge_point: str, content_summary: str) -> tuple[bool, str]:
-        """Call the audit LLM and return (passed, reason)."""
+    def _rule_decision(self, started: float, passed: bool, reason: str) -> AuditDecision:
+        self._record_rule_time(started)
+        return AuditDecision(passed, "passed" if passed else "rejected", reason, "rule")
+
+    def _record_rule_time(self, started: float) -> None:
+        trace = get_current_trace()
+        if trace is not None:
+            trace.add_stage("audit", (time.perf_counter() - started) * 1000)
+
+    def _topic_matches(self, knowledge_point: str, content: str) -> bool:
+        topic = re.sub(r"\s+", "", knowledge_point).casefold()
+        normalized_content = re.sub(r"\s+", "", content).casefold()
+        if topic and topic in normalized_content:
+            return True
+        tokens = [
+            token.casefold()
+            for token in re.split(r"[^0-9A-Za-z_\u4e00-\u9fff]+", knowledge_point)
+            if len(token.strip()) >= 2
+        ]
+        return bool(tokens) and any(token in content.casefold() for token in tokens)
+
+    def _call_auditor(self, knowledge_point: str, content_summary: str) -> AuditDecision:
         try:
             llm = LLMFactory(self.settings).build_chat_model(temperature=0.0)
-            result = llm.invoke(
+            result = traced_invoke(
+                llm,
                 [
                     {"role": "system", "content": AUDIT_SYSTEM_PROMPT},
                     {
                         "role": "user",
-                        "content": (
-                            f"用户请求的主题：{knowledge_point}\n\n"
-                            f"AI 生成的内容：\n{content_summary[:1200]}"
-                        ),
+                        "content": f"用户请求的主题：{knowledge_point}\n\nAI 生成的内容：\n{content_summary[:1400]}",
                     },
                 ],
+                stage="audit",
                 timeout=AUDIT_TIMEOUT,
             )
             parsed = self._parse_audit_response(self._coerce_text(result.content))
-            return parsed["verdict"] == "PASS", parsed.get("reason", "unknown")
+            passed = parsed["verdict"] == "PASS"
+            return AuditDecision(
+                passed=passed,
+                status="passed" if passed else "rejected",
+                reason=parsed.get("reason", "unknown"),
+                method="llm",
+            )
         except Exception as exc:
-            # Audit failed → let it through with a warning flag
-            return True, f"audit_unavailable: {str(exc)[:60]}"
+            return AuditDecision(True, "unavailable", f"audit_unavailable: {str(exc)[:100]}", "llm")
 
     def _coerce_text(self, content: Any) -> str:
         if isinstance(content, str):
@@ -103,11 +168,11 @@ class AuditService:
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3].strip()
         try:
-            return json.loads(cleaned)
+            payload = json.loads(cleaned)
+            if isinstance(payload, dict):
+                return {"verdict": str(payload.get("verdict", "PASS")).upper(), "reason": str(payload.get("reason", ""))}
         except json.JSONDecodeError:
-            # Fallback: scan for verdict keywords
-            if "PASS" in cleaned.upper():
-                return {"verdict": "PASS", "reason": "keyword_match"}
-            if "REJECT" in cleaned.upper():
-                return {"verdict": "REJECT", "reason": f"keyword_match: {cleaned[:100]}"}
-            return {"verdict": "PASS", "reason": "parse_fallback"}
+            pass
+        if "REJECT" in cleaned.upper():
+            return {"verdict": "REJECT", "reason": f"keyword_match: {cleaned[:100]}"}
+        return {"verdict": "PASS", "reason": "parse_fallback"}

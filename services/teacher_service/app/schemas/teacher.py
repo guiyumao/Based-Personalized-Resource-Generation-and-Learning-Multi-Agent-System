@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -17,6 +19,8 @@ class ClassItem(ClassCreate):
     """Class response model."""
 
     id: int
+    course_id: int | None = None
+    student_count: int = 0
 
 
 class HomeworkAssign(BaseModel):
@@ -25,6 +29,7 @@ class HomeworkAssign(BaseModel):
     class_id: int
     title: str
     description: str
+    due_at: datetime | None = None
 
 
 class ReviewPayload(BaseModel):
@@ -32,6 +37,77 @@ class ReviewPayload(BaseModel):
 
     score: float = Field(ge=0, le=100)
     comment: str
+
+
+class EnrollmentCreate(BaseModel):
+    student_user_id: int = Field(gt=0)
+
+
+class AssignmentItem(HomeworkAssign):
+    id: int
+    status: str
+    created_at: datetime
+    submission_count: int = 0
+
+
+class SubmissionCreate(BaseModel):
+    content: str = Field(min_length=1)
+    attachment_url: str | None = None
+
+
+class SubmissionItem(BaseModel):
+    id: int
+    assignment_id: int
+    student_user_id: int
+    student_name: str
+    content: str
+    attachment_url: str | None = None
+    status: str
+    submitted_at: datetime
+    score: float | None = None
+    teacher_comment: str = ""
+    reviewed_at: datetime | None = None
+
+
+class DiscussionCreate(BaseModel):
+    class_id: int | None = Field(default=None, gt=0)
+    title: str = Field(min_length=2, max_length=160)
+    content: str = Field(min_length=1)
+
+
+class DiscussionReplyCreate(BaseModel):
+    content: str = Field(min_length=1)
+
+
+class DiscussionReplyItem(BaseModel):
+    id: int
+    author_user_id: int
+    author_name: str
+    content: str
+    created_at: datetime
+
+
+class DiscussionItem(BaseModel):
+    id: int
+    class_id: int | None
+    author_user_id: int
+    author_name: str
+    title: str
+    content: str
+    status: str
+    created_at: datetime
+    replies: list[DiscussionReplyItem] = Field(default_factory=list)
+
+
+class NotificationItem(BaseModel):
+    id: int
+    title: str
+    content: str
+    type: str
+    related_type: str
+    related_id: int | None
+    is_read: bool
+    created_at: datetime
 
 
 class TeachingScopeCreate(BaseModel):

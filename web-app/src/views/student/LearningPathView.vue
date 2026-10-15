@@ -9,6 +9,8 @@ import {
   type ApiEnvelope,
   type CoordinationResponse,
   type ExerciseGenerationResponse,
+  type KnowledgeSubjectCatalogResponse,
+  type KnowledgeSubjectOption,
   type LearningPathPayload,
   type LearningPathResponse,
   type LearningTaskItem,
@@ -22,6 +24,7 @@ import {
   sameWorkspaceTopic,
   writeStudentWorkspaceContext,
 } from '../../utils/studentWorkspace'
+import LearningAtmosphere from '../../components/LearningAtmosphere.vue'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -41,7 +44,11 @@ const pathError = ref('')
 const coordination = ref<CoordinationResponse | null>(null)
 const teachingScopes = ref<TeachingScopeItem[]>([])
 const scopeLoading = ref(false)
+const knowledgeSubjects = ref<KnowledgeSubjectOption[]>([])
+const knowledgeSubjectsLoading = ref(false)
+const selectedKnowledgeSubject = ref('')
 const selectedTeachingScopeId = ref<number | null>(null)
+const generateCompanionResources = ref(false)
 
 const selectedAgents = computed(() => coordination.value?.selected_agents ?? [])
 const selectedTeachingScope = computed(() =>
@@ -94,10 +101,25 @@ async function fetchTeachingScopes() {
   }
 }
 
+async function fetchKnowledgeSubjects() {
+  knowledgeSubjectsLoading.value = true
+  try {
+    const { data } = await agentApi.get<KnowledgeSubjectCatalogResponse>('/knowledge-base/subjects')
+    knowledgeSubjects.value = data.subjects.filter((subject) => subject.value.trim() && subject.label.trim())
+  } catch {
+    knowledgeSubjects.value = []
+    ElMessage.error('暂时无法读取知识库学科，请刷新后重试')
+  } finally {
+    knowledgeSubjectsLoading.value = false
+  }
+}
+
 function applyTeachingScope(scope: TeachingScopeItem) {
   selectedTeachingScopeId.value = scope.id
   pathForm.knowledge_point = scope.knowledge_points[0] ?? ''
-  pathForm.subject = scope.courseware_title
+  if (scope.courseware_title.trim()) {
+    pathForm.subject = scope.courseware_title.trim()
+  }
   pathForm.learner_profile = {
     ...pathForm.learner_profile,
     teacher_scope_id: scope.id,
@@ -159,12 +181,17 @@ function persistTeacherScopeCourseware(scope: TeachingScopeItem, path: LearningP
 }
 
 onMounted(async () => {
-  await fetchTeachingScopes()
+  await Promise.all([fetchTeachingScopes(), fetchKnowledgeSubjects()])
   try {
     const { data } = await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)
     if (data?.stages?.length) {
       learningPath.value = data
-      pathForm.subject = data.subject
+      pathForm.subject = knowledgeSubjects.value.find(
+        (subject) => subject.label === data.subject || subject.value === data.subject,
+      )?.label ?? data.subject
+      selectedKnowledgeSubject.value = knowledgeSubjects.value.find(
+        (subject) => subject.label === data.subject || subject.value === data.subject,
+      )?.label ?? ''
       pathForm.knowledge_point = data.knowledge_point
       syncTeacherScopeFromPath(data)
     }
@@ -174,7 +201,12 @@ onMounted(async () => {
 })
 
 async function generateLearningPath() {
+  pathForm.subject = pathForm.subject.trim()
   const requestedTopic = pathForm.knowledge_point.trim()
+  if (!pathForm.subject) {
+    ElMessage.warning('请输入或选择学科')
+    return
+  }
   if (!requestedTopic) {
     ElMessage.warning('请先输入学习主题')
     return
@@ -217,12 +249,17 @@ async function requestCoordination() {
   const teacherScope = selectedTeachingScope.value
   const { data } = await agentApi.post<CoordinationResponse>('/agents/coordinate', {
     user_id: user.userId,
-    intent: `Generate a personalized learning path, courseware, and exercises for ${pathForm.subject || 'the current subject'}: ${pathForm.knowledge_point}`,
+    intent: generateCompanionResources.value
+      ? `Generate a personalized learning path, courseware, and exercises for ${pathForm.subject || 'the current subject'}: ${pathForm.knowledge_point}`
+      : `Generate a personalized learning path for ${pathForm.subject || 'the current subject'}: ${pathForm.knowledge_point}`,
     knowledge_point: pathForm.knowledge_point,
     payload: {
       ...pathForm,
       execute: true,
-      include_exercises: true,
+      include_exercises: generateCompanionResources.value,
+      force_agents: generateCompanionResources.value
+        ? ['learner_profiling_agent', 'knowledge_graph_agent', 'path_planning_agent', 'resource_generation_agent', 'exercise_generation_agent']
+        : ['learner_profiling_agent', 'knowledge_graph_agent', 'path_planning_agent'],
       resource_type: 'courseware',
       resource_style: 'interactive',
       generation_mode: 'self_test',
@@ -276,6 +313,10 @@ function describeAgentFailure(output: Record<string, unknown> | undefined) {
 }
 
 function notifyGenerationResult() {
+  if (hasPathResult.value && !generateCompanionResources.value) {
+    ElMessage.success('学习路径已生成；课件和练习可在任务中按需生成')
+    return
+  }
   if (hasPathResult.value && hasCoursewareResult.value && hasExerciseResult.value) {
     ElMessage.success('学习路径、课件和练习已生成')
     return
@@ -398,17 +439,38 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
       <div>
         <div class="panel-kicker">Multi-Agent Plan</div>
         <h2>学习路径</h2>
-        <p>由画像、知识图谱、路径规划、资源生成和练习生成智能体联合作用。</p>
+        <p>默认只生成路径；课件与练习可按需生成，避免一次请求触发多个大模型任务。</p>
       </div>
+      <LearningAtmosphere class="path-atmosphere" variant="path" />
     </header>
 
     <section class="path-layout">
       <main class="path-main">
         <div class="path-form">
-          <input v-model="pathForm.subject" placeholder="学科" />
+          <select
+            v-model="selectedKnowledgeSubject"
+            aria-label="选择知识库已有学科"
+            :disabled="knowledgeSubjectsLoading || !knowledgeSubjects.length"
+            @change="pathForm.subject = selectedKnowledgeSubject"
+          >
+            <option value="">知识库学科（可选）</option>
+            <option v-for="subject in knowledgeSubjects" :key="subject.value" :value="subject.label">
+              {{ subject.label }}
+            </option>
+          </select>
+          <input
+            v-model="pathForm.subject"
+            aria-label="输入学科"
+            placeholder="自定义学科（可选）"
+            @input="selectedKnowledgeSubject = ''"
+          />
           <input v-model="pathForm.knowledge_point" placeholder="知识点 / 主题" />
+          <label class="companion-option">
+            <input v-model="generateCompanionResources" type="checkbox" />
+            同时生成课件与练习
+          </label>
           <button :disabled="loading" @click="generateLearningPath">
-            {{ loading ? '协同生成中...' : '协同生成路径' }}
+            {{ loading ? '正在生成...' : '生成学习路径' }}
           </button>
         </div>
 
@@ -450,7 +512,7 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
         </div>
 
         <div v-else-if="!pathError" class="empty-state">
-          输入学科和知识点后，系统会一次性生成路径、课件和练习。
+          输入或选择学科及知识点后生成路径；若知识库暂无该学科，仍可由模型生成内容。
         </div>
       </main>
 
@@ -524,6 +586,15 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
 
 .path-header {
   padding: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 480px);
+  align-items: center;
+  gap: 20px;
+}
+
+.path-atmosphere {
+  width: 100%;
+  opacity: .9;
 }
 
 .path-header h2 {
@@ -557,7 +628,8 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
   margin-bottom: 18px;
 }
 
-.path-form input {
+.path-form input,
+.path-form select {
   min-width: 140px;
   flex: 1;
   border: 1px solid var(--line);
@@ -566,6 +638,11 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
   color: var(--text);
   padding: 11px 14px;
   font: inherit;
+}
+
+.path-form select:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
 .path-form button,
@@ -659,6 +736,20 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
   background: var(--panel);
   cursor: pointer;
   transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.path-form .companion-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.path-form .companion-option input {
+  min-width: auto;
+  flex: none;
 }
 
 .task-chip.done {
@@ -833,6 +924,10 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
 }
 
 @media (max-width: 1000px) {
+  .path-header {
+    grid-template-columns: 1fr;
+  }
+
   .path-layout {
     grid-template-columns: 1fr;
   }

@@ -20,11 +20,11 @@ def stub_realtime_qa_llm(monkeypatch):
             parts.append("已生成习题。")
         return "\n".join(parts)
 
-    def fake_study_suggestions(self, **kwargs):
-        return ["模型生成：先复盘本轮关键概念。", "模型生成：再用练习检验理解。"]
+    def fake_answer_bundle(self, **kwargs):
+        answer = fake_learning_response(self, **kwargs)
+        return answer, ["模型生成：先复盘本轮关键概念。", "模型生成：再用练习检验理解。"]
 
-    monkeypatch.setattr(QAService, "_generate_learning_response_with_llm", fake_learning_response)
-    monkeypatch.setattr(QAService, "_generate_study_suggestions_with_llm", fake_study_suggestions)
+    monkeypatch.setattr(QAService, "_generate_learning_answer_bundle_with_llm", fake_answer_bundle)
 
 
 def test_qa_fallback_includes_context_snippets_and_confidence() -> None:
@@ -49,7 +49,7 @@ def test_qa_generates_resource_and_exercises_when_requested(monkeypatch) -> None
     """QA should return structured courseware and exercise payloads together."""
 
     class FakeResourceGenerationService:
-        def generate_courseware_with_plan(self, request):
+        def generate_courseware_with_plan(self, request, *, snapshot=None):
             return {
                 "user_id": request.user_id,
                 "knowledge_point": request.knowledge_point,
@@ -74,7 +74,7 @@ def test_qa_generates_resource_and_exercises_when_requested(monkeypatch) -> None
             }
 
     class FakeExerciseGenerationService:
-        def generate_exercises(self, request):
+        def generate_exercises(self, request, *, snapshot=None):
             return {
                 "user_id": request.user_id,
                 "knowledge_point": request.knowledge_point,
@@ -126,7 +126,7 @@ def test_qa_recognizes_generate_practice_wording(monkeypatch) -> None:
     """Common wording like '生成配套练习' should trigger exercise generation."""
 
     class FakeExerciseGenerationService:
-        def generate_exercises(self, request):
+        def generate_exercises(self, request, *, snapshot=None):
             return {
                 "user_id": request.user_id,
                 "knowledge_point": request.knowledge_point,
