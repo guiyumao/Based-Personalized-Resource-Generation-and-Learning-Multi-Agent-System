@@ -8,13 +8,17 @@ from sqlalchemy.orm import sessionmaker
 
 from common.db.base import Base
 from common.models.learning import AuditLog, Resource, SystemConfig
-from common.models.media import ResourceRevision
+from common.models.media import ResourceIllustration, ResourceRevision
 from services.agent_service.app.services import resource_editor
 from services.agent_service.app.services.resource_editor import (
+    _insert_image_markdown,
     apply_resource_content,
     illustrate_resource,
     image_provider_status,
+    insert_illustration,
+    list_illustrations,
     resource_sections,
+    review_illustration,
     rewrite_resource,
     set_image_provider,
 )
@@ -78,14 +82,88 @@ def test_set_image_provider_records_metadata_and_audit(editor_db):
         assert db.query(AuditLog).filter_by(event="image_provider.updated").count() == 1
 
 
+def test_image_provider_invalid_when_key_without_url_or_model(editor_db, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        resource_editor,
+        "get_settings",
+        lambda: SimpleNamespace(
+            image_provider_api_key="secret", image_provider_base_url="", image_provider_model=""
+        ),
+    )
+    factory, _ = editor_db
+    with factory() as db:
+        status = image_provider_status(db)
+        assert status["status"] == "invalid"
+        assert status["configured"] is False
+        assert status["enabled"] is True
+
+
+def test_image_provider_disabled_flag(editor_db, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        resource_editor,
+        "get_settings",
+        lambda: SimpleNamespace(
+            image_provider_api_key="secret",
+            image_provider_base_url="https://img.example",
+            image_provider_model="dall-e-3",
+        ),
+    )
+    factory, _ = editor_db
+    with factory() as db:
+        db.add(SystemConfig(key="image_provider.enabled", value="false"))
+        db.commit()
+        status = image_provider_status(db)
+        assert status["status"] == "disabled"
+        assert status["configured"] is False
+
+
+def test_image_provider_configured_when_complete(editor_db, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        resource_editor,
+        "get_settings",
+        lambda: SimpleNamespace(
+            image_provider_api_key="secret",
+            image_provider_base_url="https://img.example",
+            image_provider_model="dall-e-3",
+        ),
+    )
+    factory, _ = editor_db
+    with factory() as db:
+        status = image_provider_status(db)
+        assert status["status"] == "configured"
+        assert status["configured"] is True
+        assert status["health"] == "unknown"
+
+
 def test_rewrite_resource_blocked_without_model(editor_db, monkeypatch):
     monkeypatch.setattr(resource_editor, "LLMFactory", _NoCredentialLLMFactory)
+    # Authorize paid calls so this test reaches the "no model" branch, not the gate.
+    monkeypatch.setenv("RUN_LIVE_LLM", "1")
+    monkeypatch.setenv("DEEPSEEK_LIVE_PAID_ACK", "1")
     factory, make_resource = editor_db
     resource_id = make_resource()
     with factory() as db:
         result = rewrite_resource(db, resource_id, instruction="简化语言", style="plain")
         assert result["resource_id"] == resource_id
         assert result["status"] == "blocked"
+        assert result["rewritten_content"] == ""
+
+
+def test_rewrite_blocked_without_paid_authorization(editor_db, monkeypatch):
+    monkeypatch.delenv("RUN_LIVE_LLM", raising=False)
+    monkeypatch.delenv("DEEPSEEK_LIVE_PAID_ACK", raising=False)
+    factory, make_resource = editor_db
+    resource_id = make_resource()
+    with factory() as db:
+        result = rewrite_resource(db, resource_id, instruction="简化语言", style="plain")
+        assert result["status"] == "blocked"
+        assert "授权" in result["reason"]
         assert result["rewritten_content"] == ""
 
 
@@ -128,6 +206,56 @@ def test_illustrate_resource_blocked(editor_db):
     factory, make_resource = editor_db
     resource_id = make_resource()
     with factory() as db:
-        result = illustrate_resource(db, resource_id, section_title="概念", prompt="")
+        result = illustrate_resource(db, resource_id, section_title="概念", prompt="", admin_id=1)
         assert result["status"] == "blocked"
         assert result["reason"]
+
+
+def test_insert_image_markdown_after_heading():
+    content = "# 标题\n\n## 概念\n正文 A\n\n## 示例\n正文 B"
+    out = _insert_image_markdown(content, "概念", "![概念](/storage/illustrations/x.png)")
+    assert "![概念](/storage/illustrations/x.png)" in out
+    # The image lands right after the "## 概念" heading, before the body.
+    assert out.index("## 概念") < out.index("![概念]") < out.index("正文 A")
+
+
+def test_insert_image_markdown_appends_when_section_missing():
+    content = "# 标题\n\n## 其他\n正文"
+    out = _insert_image_markdown(content, "概念", "![概念](/storage/illustrations/x.png)")
+    assert "## 概念" in out
+    assert "![概念](/storage/illustrations/x.png)" in out
+
+
+def test_illustration_review_and_insert(editor_db):
+    factory, make_resource = editor_db
+    resource_id = make_resource()
+    with factory() as db:
+        db.add(
+            ResourceIllustration(
+                id="ill-1",
+                resource_id=resource_id,
+                section_title="概念",
+                model="dall-e-3",
+                prompt="教学配图",
+                status="pending",
+                storage_path="illustrations/ill-1.png",
+                version="",
+                created_by=1,
+            )
+        )
+        db.commit()
+
+        assert list_illustrations(db, resource_id)[0]["status"] == "pending"
+
+        # Not approved -> insert rejected.
+        with pytest.raises(ValueError):
+            insert_illustration(db, "ill-1", admin_id=1)
+
+        review_illustration(db, "ill-1", approve=True, admin_id=1)
+        assert list_illustrations(db, resource_id)[0]["status"] == "approved"
+
+        result = insert_illustration(db, "ill-1", admin_id=1)
+        assert result["resource_id"] == resource_id
+        assert "![概念](/storage/illustrations/ill-1.png)" in db.get(Resource, resource_id).content
+        # Insertion snapshots the previous body as a revision.
+        assert db.query(ResourceRevision).filter_by(resource_id=resource_id).count() == 1

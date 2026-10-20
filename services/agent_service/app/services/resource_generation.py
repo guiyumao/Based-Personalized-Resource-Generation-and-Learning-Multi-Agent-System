@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
+
 from sqlalchemy.exc import IntegrityError
 
 from common.config import get_settings
@@ -23,8 +22,11 @@ from common.schemas.agent import (
     VideoScriptChapter,
     VideoScriptResource,
 )
+from services.agent_service.app.services.assistant_execution import (
+    ensure_execution_active,
+    ensure_write_allowed,
+)
 from services.agent_service.app.services.audit_service import AuditService
-from services.agent_service.app.services.assistant_execution import ensure_execution_active, ensure_write_allowed
 from services.agent_service.app.services.content_validation import validate_generated_resource
 from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.llm_factory import LLMFactory
@@ -32,15 +34,12 @@ from services.agent_service.app.services.personalization import (
     LearnerPersonalizationSnapshot,
     PersonalizationService,
 )
+from services.agent_service.app.services.prompt_registry import (
+    load_prompt_template as _load_prompt_template,
+)
 from services.agent_service.app.services.rag import ChromaRetriever
 
 logger = logging.getLogger(__name__)
-
-
-@lru_cache(maxsize=1)
-def _load_prompt_template(filename: str) -> str:
-    prompt_path = Path(__file__).resolve().parents[4] / "prompts" / filename
-    return prompt_path.read_text(encoding="utf-8")
 
 
 #: A ``{name}`` placeholder the prompt author declared on purpose.

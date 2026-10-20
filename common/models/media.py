@@ -33,3 +33,24 @@ class ResourceRevision(Base):
     content: Mapped[str] = mapped_column(Text)
     structured_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ResourceIllustration(Base):
+    """A generated illustration for one resource section, kept out of the live
+    resource until an administrator approves and inserts it."""
+
+    __tablename__ = "resource_illustrations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"), index=True)
+    section_title: Mapped[str] = mapped_column(String(200), index=True)
+    knowledge_point_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    task_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model: Mapped[str] = mapped_column(String(160))
+    prompt: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    storage_path: Mapped[str] = mapped_column(String(240))
+    version: Mapped[str] = mapped_column(String(64), default="")
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[int | None] = mapped_column(Integer, nullable=True)

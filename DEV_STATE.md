@@ -1,5 +1,50 @@
 # 当前开发状态
 
+## 最新 学生端自主学科建设 P0-1：知识覆盖门禁由阻断式改为建设式（2026-10-20）
+
+按新任务（学生端自主学科建设/知识补全/计划全链路）先落地 P0-1：`SUBJECT_MISSING` 不再终止学生请求。
+
+- 新增 `plan_knowledge.assess_plan_knowledge`：返回 `mode`（public / personal_draft），缺失时仍记录缺口但**不抛 409**，并改写 message 为“将生成个人学习知识草稿”。
+- 三处门禁改为建设式：`coordinator._execute_agents`（path_planning_agent 前置覆盖检查）、`LearningPathService.generate_path`（try require→fallback assess）、`/paths/preflight` 与 `/paths/generate` 路由。
+- `generate_path` 在 personal_draft 模式：空检索上下文、不写 `subject_id`、标 `knowledge_scope="personal_draft"` 与 `knowledge_gap_reason/gap_id`，**不冒充公共正式知识**。
+- 前端 `LearningPathView.checkKnowledge()` 对 personal_draft 继续生成（info 提示），不再因 not-ready 直接 return。
+- 证据：`test_plan_knowledge_p1.py` 更新断言（未知学科→personal_draft 计划、不建公共 SystemSubject、缺口=1）10 passed；受影响 coordinator/路由/助手/反馈测试合计 **89 passed**；改动文件 Ruff 通过（coordinator.py 两处 I001 为改动前既有导入排序问题）；前端 build 退出 0。
+- **P0-1 已完成并隔离测试通过**；P0-2（自动建学科大纲+个人知识持久化）、P0-3（搜索抓取）、P0-4~P0-8（个人空间/自动续接/反馈确认/前端真实进度/E2E）未做。运行中 8002 仍是 20:07 旧构建，需重启才加载本改动；不冒充场景 A 已全链通过。
+
+## 最新 AI 内容编排真实可用性修复（2026-10-20；提示词/Provider/改写接口已 LIVE_VERIFIED）
+
+本轮定位并修复管理员端截图中的"提示词列表获取失败 / Provider 状态失败 / AI 改写失败 / 章节配图只有读取入口"：
+
+- **根因**：agent_service 8002 仍跑 P1-07 之前的旧代码，前端 5175 已热加载新导航但后端 `/admin/prompts`、`/admin/image-provider`、`/admin/resources/{id}/rewrite|sections|illustrations` 全部 404。已按 `artifacts/local-start-20261019/start.ps1` 同款 runtime.sqlite + env 重启 8002（`--lifespan off`），openapi 现含全部 admin 路由；真实 HTTP 验证 prompts=200/11 模板、image-provider=blocked、sections=9 节、rewrite=blocked(未授权)、illustrations=blocked(未配置)。
+- **提示词统一加载**：`resource_generation/exercise_generation/feedback_synthesis` 三处 `_load_prompt_template` 的 lru_cache 改为 `prompt_registry.load_prompt_template`（按文件 mtime 失效），管理员编辑后新生成无需重启即生效。
+- **提示词版本生命周期**：`prompt_registry` 新增 `.history/` 文件式快照 + `list_prompt_versions/read_prompt_version/restore_prompt`；新增路由 `/admin/prompts/{name}/versions[/{version}][/restore]` + 前端 prompts.vue 版本列表/恢复 UI；`.history/` 已加入 .gitignore。
+- **图片 Provider 状态细分**：`image_provider_status` 增加 `enabled/health` 与 `blocked/invalid/disabled/configured` 四态；`PUT /admin/image-provider` 支持 `enabled`；前端类型/展示同步。
+- **AI 改写付费闸门**：`rewrite_resource` 增加 `RUN_LIVE_LLM=1` 且 `DEEPSEEK_LIVE_PAID_ACK=1` 双闸门，未授权返回 blocked"需要授权"，杜绝后台误触发付费调用（此前会因 runtime.sqlite 缺 `model_calls` 表在 begin_call 处崩溃）。
+
+验证：相关单测 53 passed（test_prompt_admin/test_resource_editor/test_learning_prompt_templates/test_plan_feedback/test_resource_generation/test_structured_resource_generation）；改动 Python 文件 Ruff 通过；前端 `npm run build` 退出 0。真实付费调用 0。未提交、未迁移共享库、未重启 8001/8003–8007/5175。
+
+下一步/阻塞：runtime.sqlite 缺 P1-06 台账表（`model_calls` 等 0030/0031 五表），授权后改写与真实生成需先补齐（共享 SQLite 无可信 Alembic 基线，须先基线审计再定向补表，禁止空库迁移）；孤儿模板 coordinator/knowledge_graph/learner_profile/path_planning/qa 无生成消费方，需接线或移出白名单；图片生成后端接入仍属 P1-08。详见 ADMIN_FUNCTION_FUSION_MATRIX.md 本轮注记。
+
+### 续：补齐台账表 + 打通真实改写调用（用户授权后）
+
+- **补齐 12 张缺失表**：runtime.sqlite 经 ORM 对照缺 0026–0031 的 `model_calls/worker_instances/task_attempts/resource_revisions/resource_artifacts/study_sessions/study_activities/learning_contexts/context_exercises/learning_knowledge_gaps/knowledge_documents/knowledge_document_points` 共 12 表。已用 `Base.metadata.create_all`（幂等，只建缺失表）补齐，改前用 sqlite3 backup API 备份至 `artifacts/local-start-20261019/runtime-before-tables-20261020-200640.sqlite`。
+- **打通真实 AI 改写**：8002 以 `RUN_LIVE_LLM=1`+`DEEPSEEK_LIVE_PAID_ACK=1` 重启后，`POST /admin/resources/220/rewrite` 真实调用 deepseek-chat 返回 `status=generated`（改写 2810 字符），台账 `model_calls` 记录 LIVE/SUCCEEDED/KNOWN，input 1597 / output 1535 tokens。`PUT /admin/resources/{id}/content` 应用改写成功，`resource_revisions` 写入旧版本快照（resource 220 已用快照回滚还原，无残留）。用户已授权本轮真实调用预算。
+- **剩余真实调用缺口**：章节配图/图片生成后端未接入（无图片 Provider 凭据），需用户提供 `IMAGE_PROVIDER_API_KEY/BASE_URL/MODEL` 才能接真实图片生成；否则保持 blocked 安全态。授权环境变量需在重启 8002 时一并注入，否则改写回到 blocked。
+
+### 续2：清理 5 个孤儿提示词模板
+
+`coordinator/knowledge_graph/learner_profile/path_planning/qa` 五个模板无任何加载方（coordinator/qa_service 仍硬编码 inline prompt；PPT slide10 的「加载 prompts/*.md」是设计稿而非实现），已从 `prompt_registry.ALLOWED_PROMPTS` 移除，管理端「提示词模板维护」现只显示 6 个真实被生成链消费的模板（resource_gen/exercise_gen/evaluation_feedback/mind_map_gen/code_case_gen/video_script_gen）。文件保留在 `prompts/` 未删除；接线统一（把 inline prompt 迁到模板加载）是 61KB coordinator 的独立重构，记为后续任务而非隐藏。单测 25 passed、Ruff 通过；8002 已重启加载新白名单，`GET /admin/prompts` 现返回 6 条。
+
+## 最新 学习计划反馈闭环 + 两个 API 错误修复（2026-10-20；总体仍PARTIAL）
+
+本轮完成“计划生成→预览→自然语言反馈→AI调整→差异预览→确认”的计划制定反馈闭环，并定位两个 API 错误根因。
+
+- 两个 API 错误根因：运行中 8002 agent/8004 evaluation 是旧进程（10-19 23:43 启动，早于路由提交），且共享 `learning_system.db` 无 Alembic 基线、缺 0026/0028/0029 表。源码路由均在，隔离“最新代码+`upgrade head`(0031)”验证 `learning/contexts/*`、`overview/me` 由 404→401 且 openapi 可见。**未迁移共享库/未重启共享进程**（无基线，禁止直接 upgrade）；上线需一次性基线审计+备份+定向补表（沿用 runtime.sqlite 副本补列模式）。
+- 新增 `plan_feedback.py`（PlanFeedbackService + compute_plan_diff）、`task_feedback.py`（TaskFeedbackService，8 类任务级执行反馈，确定性改稿无需 LLM）；路由 `POST /paths/feedback/preview`、`POST /paths/feedback/{id}/confirm`、`POST /paths/task-feedback/preview`；复用 path_revision CAS + applied_feedback 幂等，确认保留已完成任务、删除已完成任务记入 removed_completed_history，无凭据 503、真无变化 no_change。
+- 前端 `PlanFeedbackPanel.vue`（计划级）+ `TaskFeedbackButton.vue`（每任务反馈弹层）接入 `LearningPathView.vue`。
+- 证据：test_plan_feedback.py 7 + test_task_feedback.py 7 + test_path_adaptation 5 = **19 passed**、Ruff 通过、前端 build 退出0。真实付费 DeepSeek 0。报告 `docs/aura-full-integration/13-plan-feedback-loop.md`。
+- 共享环境现状（20:22 复核，**两个 API 错误均已解除**）：8002 由同期 P1-07 会话重启、8004 evaluation 由本会话重启（均 runtime.sqlite+`--lifespan off`），`learning/contexts/*` 与 `/evaluation/overview/me` openapi 可见、均 404→401；端到端真实断言注册 api-verify 用户 → `/evaluation/overview/me` Bearer 返回 HTTP 200 真实数据（active_plans=[]/due_cards=0/study_seconds=0）。剩余：真实 LLM 修订验收、任务级反馈浏览器 E2E、进度/画像全链 A–E。工作树另含 P1-07 未提交改动（非本任务）。
+
 ## 最新P1-07 管理员Prompt优化/改写/图文编排（2026-10-20；总体仍PARTIAL）
 
 本轮实现 P1-07 管理员专用 AI 内容编排子链：

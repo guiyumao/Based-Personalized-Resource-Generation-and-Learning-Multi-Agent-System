@@ -1,6 +1,24 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useAdminWorkspace } from '../../composables/useAdminWorkspace'
-const { prompts, selectedPromptName, promptContent, promptPlaceholders, imageProvider, imageProviderForm, loading, fetchPrompts, loadPrompt, savePrompt, fetchImageProvider, updateImageProvider } = useAdminWorkspace('prompts')
+const { prompts, selectedPromptName, promptContent, promptPlaceholders, promptVersions, imageProvider, imageProviderForm, loading, fetchPrompts, loadPrompt, savePrompt, fetchImageProvider, updateImageProvider, loadPromptVersions, restorePromptVersion } = useAdminWorkspace('prompts')
+
+const providerStatusLabel = computed(() => {
+  switch (imageProvider.value?.status) {
+    case 'configured': return '已配置'
+    case 'invalid': return '配置无效'
+    case 'disabled': return '已停用'
+    case 'blocked': return 'BLOCKED'
+    default: return '未知'
+  }
+})
+const providerStatusColor = computed(() => {
+  switch (imageProvider.value?.status) {
+    case 'configured': return 'var(--accent)'
+    case 'blocked': return 'var(--danger, #c0392b)'
+    default: return 'var(--danger, #c0392b)'
+  }
+})
 </script>
 <template>
 <div class="admin-module">
@@ -32,6 +50,19 @@ const { prompts, selectedPromptName, promptContent, promptPlaceholders, imagePro
         <el-button type="primary" @click="savePrompt">保存提示词</el-button>
         <el-button @click="fetchPrompts">刷新列表</el-button>
       </div>
+
+      <div class="panel-heading" style="margin-top:12px"><div><h3>版本历史</h3></div></div>
+      <p class="admin-evidence-note">每次保存都会保留上一版本；恢复会把当前内容再存档一份，可安全回退。</p>
+      <div v-if="promptVersions.length" class="list-stack">
+        <div v-for="v in promptVersions" :key="v.version" class="list-card static admin-user-row">
+          <div>
+            <strong>{{ v.version }}</strong>
+            <span>{{ v.chars }} 字符 · 占位符 {{ v.placeholders.length ? v.placeholders.join('、') : '无' }}</span>
+          </div>
+          <div class="action-row"><el-button size="small" @click="restorePromptVersion(selectedPromptName, v.version)">恢复</el-button></div>
+        </div>
+      </div>
+      <div v-else class="empty-state">暂无历史版本（保存后会自动生成）。</div>
     </template>
   </section>
 
@@ -46,9 +77,9 @@ const { prompts, selectedPromptName, promptContent, promptPlaceholders, imagePro
     <div v-if="imageProvider" class="result-box">
       <p>
         状态：
-        <strong :style="{ color: imageProvider.status === 'blocked' ? 'var(--danger, #c0392b)' : 'var(--accent)' }">{{ imageProvider.status === 'blocked' ? 'BLOCKED' : '已配置' }}</strong>
+        <strong :style="{ color: providerStatusColor }">{{ providerStatusLabel }}</strong>
       </p>
-      <p v-if="imageProvider.status === 'blocked'" class="admin-evidence-note" style="margin:0">{{ imageProvider.reason }}</p>
+      <p class="admin-evidence-note" style="margin:0">{{ imageProvider.reason }}</p>
     </div>
     <el-form label-position="top">
       <el-form-item label="Provider 名称">

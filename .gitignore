@@ -46,5 +46,8 @@ storage/
 /artifacts/*
 !/artifacts/README.md
 
+# Runtime prompt-template version snapshots (created by admin edits, not source).
+/prompts/.history/
+
 # Frontend deployment build flags (non-secret env files).
 web-app/.env.sakurafrp

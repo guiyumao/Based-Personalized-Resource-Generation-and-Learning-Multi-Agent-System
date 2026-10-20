@@ -5,34 +5,33 @@ from __future__ import annotations
 import json
 import random
 import re
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from common.config import get_settings
 from common.db.session import SessionLocal
 from common.models.learning import Exercise, KnowledgePoint
 from common.performance import get_current_trace, traced_invoke
 from common.schemas.agent import ExerciseGenerationRequest
+from services.agent_service.app.services.assistant_execution import (
+    ExecutionStopped,
+    ensure_execution_active,
+    ensure_write_allowed,
+)
 from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
-from services.agent_service.app.services.assistant_execution import ExecutionStopped, ensure_execution_active, ensure_write_allowed
 from services.agent_service.app.services.llm_factory import LLMFactory
 from services.agent_service.app.services.personalization import (
     LearnerPersonalizationSnapshot,
     PersonalizationService,
 )
+from services.agent_service.app.services.prompt_registry import (
+    load_prompt_template as _load_prompt_template,
+)
 
 QUESTION_TYPE_SEQUENCE = ["choice", "blank", "judge", "short_answer", "programming"]
 DEFAULT_QUESTION_TYPE_COUNTS = {"choice": 5, "judge": 3, "blank": 2}
-
-
-@lru_cache(maxsize=8)
-def _load_prompt_template(filename: str) -> str:
-    prompt_path = Path(__file__).resolve().parents[4] / "prompts" / filename
-    return prompt_path.read_text(encoding="utf-8")
 
 
 class ExerciseGenerationService:

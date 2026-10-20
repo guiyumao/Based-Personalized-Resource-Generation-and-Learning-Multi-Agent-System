@@ -12,7 +12,10 @@ from services.agent_service.app.services.resource_editor import (
     apply_resource_content,
     illustrate_resource,
     image_provider_status,
+    insert_illustration,
+    list_illustrations,
     resource_sections,
+    review_illustration,
     rewrite_resource,
     set_image_provider,
 )
@@ -33,6 +36,7 @@ class ApplyContentRequest(BaseModel):
 class ImageProviderUpdate(BaseModel):
     provider: str = Field(default="", max_length=80)
     model: str = Field(default="", max_length=120)
+    enabled: bool | None = None
 
 
 class IllustrateRequest(BaseModel):
@@ -51,7 +55,7 @@ def put_image_provider(
     admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ) -> dict:
-    return set_image_provider(db, admin.id, payload.provider, payload.model)
+    return set_image_provider(db, admin.id, payload.provider, payload.model, payload.enabled)
 
 
 @router.post("/resources/{resource_id}/rewrite")
@@ -106,9 +110,56 @@ def list_sections(resource_id: int, db: Session = Depends(get_db)) -> dict:
 def illustrate(
     resource_id: int,
     payload: IllustrateRequest,
+    admin: User = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ) -> dict:
     try:
-        return illustrate_resource(db, resource_id, payload.section_title, payload.prompt)
+        return illustrate_resource(db, resource_id, payload.section_title, payload.prompt, admin.id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/resources/{resource_id}/illustrations")
+def get_illustrations(resource_id: int, db: Session = Depends(get_db)) -> dict:
+    return {"resource_id": resource_id, "illustrations": list_illustrations(db, resource_id)}
+
+
+@router.post("/resources/{resource_id}/illustrations/{illustration_id}/approve")
+def approve_illustration(
+    resource_id: int,
+    illustration_id: str,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        return review_illustration(db, illustration_id, approve=True, admin_id=admin.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/resources/{resource_id}/illustrations/{illustration_id}/reject")
+def reject_illustration(
+    resource_id: int,
+    illustration_id: str,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        return review_illustration(db, illustration_id, approve=False, admin_id=admin.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/resources/{resource_id}/illustrations/{illustration_id}/insert")
+def insert_illustration_route(
+    resource_id: int,
+    illustration_id: str,
+    admin: User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+) -> dict:
+    try:
+        return insert_illustration(db, illustration_id, admin.id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

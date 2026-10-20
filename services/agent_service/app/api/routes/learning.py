@@ -33,6 +33,8 @@ from services.agent_service.app.services.learning_path import (
     LearningPathService,
 )
 from services.agent_service.app.services.path_adaptation import PathAdaptationService
+from services.agent_service.app.services.plan_feedback import PlanFeedbackService
+from services.agent_service.app.services.task_feedback import TaskFeedbackService
 
 router = APIRouter()
 
@@ -44,8 +46,9 @@ class PlanPreflightRequest(BaseModel):
 
 @router.post("/paths/preflight")
 def check_plan_knowledge(payload: PlanPreflightRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    from services.agent_service.app.services.plan_knowledge import plan_preflight
-    return {key: value for key, value in plan_preflight(db, user.id, payload.subject, payload.knowledge_point).items() if key != "usable_chunks"}
+    from services.agent_service.app.services.plan_knowledge import assess_plan_knowledge
+    result = assess_plan_knowledge(db, user.id, payload.subject, payload.knowledge_point)
+    return {key: value for key, value in result.items() if key != "usable_chunks"}
 
 
 class PlanAdaptationPreview(BaseModel):
@@ -66,6 +69,43 @@ def confirm_plan_adaptation(proposal_id: str, db: Session = Depends(get_db),
                             user: User = Depends(get_current_user)) -> dict:
     try:
         return PathAdaptationService(db).confirm(user.id, proposal_id)
+    except LearningPathRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class PlanFeedbackRequest(BaseModel):
+    feedback_text: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/paths/feedback/preview")
+def preview_plan_feedback(payload: PlanFeedbackRequest, db: Session = Depends(get_db),
+                          user: User = Depends(get_current_user)) -> dict:
+    try:
+        return PlanFeedbackService(db).preview(user.id, payload.feedback_text)
+    except LearningPathRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/paths/feedback/{proposal_id}/confirm")
+def confirm_plan_feedback(proposal_id: str, db: Session = Depends(get_db),
+                          user: User = Depends(get_current_user)) -> dict:
+    try:
+        return PlanFeedbackService(db).confirm(user.id, proposal_id)
+    except LearningPathRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class TaskFeedbackRequest(BaseModel):
+    task_id: str = Field(min_length=1, max_length=120)
+    feedback_type: str = Field(min_length=1, max_length=40)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/paths/task-feedback/preview")
+def preview_task_feedback(payload: TaskFeedbackRequest, db: Session = Depends(get_db),
+                          user: User = Depends(get_current_user)) -> dict:
+    try:
+        return TaskFeedbackService(db).preview(user.id, payload.task_id, payload.feedback_type, payload.note)
     except LearningPathRevisionConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -91,8 +131,8 @@ def generate_learning_path(
     """Generate a personalized learning path through the multi-agent workflow."""
     require_self_or_admin(payload.user_id, current_user)
 
-    from services.agent_service.app.services.plan_knowledge import require_plan_knowledge
-    require_plan_knowledge(db, payload.user_id, payload.subject, payload.knowledge_point)
+    from services.agent_service.app.services.plan_knowledge import assess_plan_knowledge
+    assess_plan_knowledge(db, payload.user_id, payload.subject, payload.knowledge_point)
 
     settings = get_settings()
     set_trace_context(

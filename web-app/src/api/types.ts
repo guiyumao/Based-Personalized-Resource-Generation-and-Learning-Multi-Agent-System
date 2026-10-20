@@ -928,15 +928,43 @@ export type PromptTemplateDetail = PromptTemplateSummary & {
 /** P1-07 image-provider capability status (explicit BLOCKED entry). */
 export type ImageProviderStatus = {
   configured: boolean
+  enabled: boolean
   provider: string
   model: string
-  status: 'configured' | 'blocked'
+  status: 'configured' | 'blocked' | 'invalid' | 'disabled'
+  health: 'unknown' | 'ok' | 'unavailable'
   reason: string
+}
+
+export type PromptVersionSummary = {
+  version: string
+  chars: number
+  placeholders: string[]
 }
 
 export type ResourceSection = {
   title: string
   chars: number
+}
+
+export type ResourceIllustration = {
+  id: string
+  section_title: string
+  model: string
+  prompt: string
+  status: 'pending' | 'approved' | 'rejected'
+  storage_path: string
+  version: string
+}
+
+export type IllustrateResult = {
+  resource_id: number
+  section_title: string
+  status: 'generated' | 'blocked' | 'failed'
+  reason?: string
+  illustration_id?: string
+  storage_path?: string
+  model?: string
 }
 
 export type ResourceRewriteResult = {

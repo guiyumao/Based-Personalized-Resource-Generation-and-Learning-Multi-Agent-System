@@ -1,6 +1,7 @@
 """Unit tests for the coordinator workflow."""
 
 from types import SimpleNamespace
+
 import pytest
 
 from common.ai_errors import AIModelInitializationTimeoutError
@@ -15,6 +16,8 @@ def verified_knowledge_boundary(monkeypatch):
     # publication/index gate is exercised in test_plan_knowledge_p1.py.
     from services.agent_service.app.services import plan_knowledge
     monkeypatch.setattr(plan_knowledge, "require_plan_knowledge", lambda *_: {})
+    monkeypatch.setattr(plan_knowledge, "assess_plan_knowledge",
+                        lambda *_: {"mode": "public", "reason": "READY", "gap_id": None})
 
 
 def test_coordinator_preserves_learning_path_initialization_error(monkeypatch):

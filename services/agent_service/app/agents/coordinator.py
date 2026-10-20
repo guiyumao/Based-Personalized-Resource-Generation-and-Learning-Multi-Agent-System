@@ -328,20 +328,20 @@ class CoordinatorWorkflow:
         session = self.db or SessionLocal()
         owns_session = self.db is None
         if "path_planning_agent" in selected:
-            from services.agent_service.app.services.plan_knowledge import require_plan_knowledge
-            try:
-                if not context.get("subject"):
-                    points = session.query(KnowledgePoint).filter(KnowledgePoint.name == knowledge_point,
-                        KnowledgePoint.subject_id.is_not(None)).limit(2).all()
-                    if len(points) == 1:
-                        catalog = session.get(SystemSubject, points[0].subject_id)
-                        if catalog:
-                            context["subject"] = catalog.name
-                require_plan_knowledge(session, payload.user_id, str(context.get("subject") or knowledge_point), knowledge_point)
-            except Exception:
-                if owns_session:
-                    session.close()
-                raise
+            from services.agent_service.app.services.plan_knowledge import assess_plan_knowledge
+            if not context.get("subject"):
+                points = session.query(KnowledgePoint).filter(KnowledgePoint.name == knowledge_point,
+                    KnowledgePoint.subject_id.is_not(None)).limit(2).all()
+                if len(points) == 1:
+                    catalog = session.get(SystemSubject, points[0].subject_id)
+                    if catalog:
+                        context["subject"] = catalog.name
+            # Constructive coverage check: record the gap and continue in personal-draft
+            # mode instead of terminating the learner's request with a 409.
+            coverage = assess_plan_knowledge(session, payload.user_id,
+                                             str(context.get("subject") or knowledge_point), knowledge_point)
+            context["knowledge_scope"] = coverage["mode"]
+            context["knowledge_gap"] = {"reason": coverage.get("reason"), "gap_id": coverage.get("gap_id")}
         plan_parts: list[str] = []
         resource_result: dict[str, Any] | None = None
         snapshot: Any | None = None

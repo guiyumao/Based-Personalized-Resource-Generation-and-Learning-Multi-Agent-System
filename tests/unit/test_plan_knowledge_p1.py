@@ -130,36 +130,56 @@ def retriever(ctx, chunks, available=True):
     ctx.monkeypatch.setattr(service, "ChromaRetriever", Retriever)
 
 
-def test_unknown_subject_gap_deduplicates_and_coordinator_calls_no_model(coverage, monkeypatch):
+def test_unknown_subject_gap_deduplicates_and_generates_personal_draft(coverage, monkeypatch):
     ctx = coverage
     monkeypatch.setattr(
         LearningPathService,
         "_generate_path_with_llm",
-        lambda *_: pytest.fail("model before coverage gate"),
+        lambda self, request, teacher_scope: {
+            "user_id": request.user_id,
+            "subject": request.subject,
+            "knowledge_point": request.knowledge_point,
+            "overview": "从零学习",
+            "estimated_days": 42,
+            "stages": [{"stage_id": "s1", "title": "基础", "description": "", "tasks": [
+                {"task_id": "t1", "title": "入门", "task_type": "courseware",
+                 "knowledge_point": request.knowledge_point, "objective": "理解",
+                 "estimated_minutes": 30, "difficulty": "foundation", "completed": False,
+                 "status": "pending", "depends_on": []},
+            ]}],
+        },
     )
     body = {"subject": "未知物理学科", "knowledge_point": "陌生知识点"}
     client = TestClient(app)
     first = client.post("/paths/preflight", json=body)
     assert first.status_code == 200, first.text
     assert first.json()["reason"] == "SUBJECT_MISSING"
+    assert first.json()["mode"] == "personal_draft"
     assert client.post("/paths/preflight", json=body).json()["gap_id"] == first.json()["gap_id"]
-    assert ctx.db.query(LearningKnowledgeGap).filter_by(user_id=ctx.user.id,subject=body["subject"],knowledge_point=body["knowledge_point"]).count() == 1
+    assert ctx.db.query(LearningKnowledgeGap).filter_by(user_id=ctx.user.id, subject=body["subject"], knowledge_point=body["knowledge_point"]).count() == 1
     workflow = CoordinatorWorkflow(db=ctx.db)
-    with pytest.raises(HTTPException) as caught:
-        workflow.run(
-            CoordinationRequest(
-                user_id=ctx.user.id,
-                intent="生成计划",
-                knowledge_point="陌生知识点",
-                payload={
-                    "execute": True,
-                    "force_agents": ["path_planning_agent"],
-                    "subject": "未知物理学科",
-                },
-            )
+    workflow.run(
+        CoordinationRequest(
+            user_id=ctx.user.id,
+            intent="生成计划",
+            knowledge_point="陌生知识点",
+            payload={
+                "execute": True,
+                "force_agents": ["path_planning_agent"],
+                "subject": "未知物理学科",
+            },
         )
-    assert caught.value.status_code == 409
+    )
+    # The unknown discipline must NOT be created as public knowledge.
     assert ctx.db.query(SystemSubject).filter_by(name="未知物理学科").count() == 0
+    # A personal-draft path is persisted and is never labelled public.
+    path = (ctx.db.query(LearningPath)
+            .filter_by(user_id=ctx.user.id, status="active")
+            .order_by(LearningPath.id.desc()).first())
+    assert path is not None
+    assert path.path_data_json["knowledge_scope"] == "personal_draft"
+    assert path.path_data_json["knowledge_gap_reason"] == "SUBJECT_MISSING"
+    assert path.path_data_json.get("subject_id") is None
 
 
 @pytest.mark.parametrize(

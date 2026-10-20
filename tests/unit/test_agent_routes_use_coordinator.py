@@ -72,6 +72,7 @@ def test_resource_route_uses_coordinator(monkeypatch):
 def test_learning_and_exercise_routes_use_coordinator(monkeypatch):
     from services.agent_service.app.services import plan_knowledge
     monkeypatch.setattr(plan_knowledge, "require_plan_knowledge", lambda *_: {})
+    monkeypatch.setattr(plan_knowledge, "assess_plan_knowledge", lambda *_: {})
     """Learning path and exercise endpoints should delegate to specific agents."""
 
     captured: list[CoordinationRequest] = []
@@ -151,6 +152,7 @@ def test_learning_and_exercise_routes_use_coordinator(monkeypatch):
 def test_learning_path_route_returns_typed_model_initialization_error(monkeypatch):
     from services.agent_service.app.services import plan_knowledge
     monkeypatch.setattr(plan_knowledge, "require_plan_knowledge", lambda *_: {})
+    monkeypatch.setattr(plan_knowledge, "assess_plan_knowledge", lambda *_: {})
     class FakeCoordinatorWorkflow:
         def __init__(self, db=None):
             pass

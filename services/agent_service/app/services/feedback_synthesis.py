@@ -15,8 +15,6 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
-from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -25,17 +23,14 @@ from langchain_core.output_parsers import StrOutputParser
 from common.config import get_settings
 from common.performance import traced_invoke
 from services.agent_service.app.services.llm_factory import LLMFactory
+from services.agent_service.app.services.prompt_registry import (
+    load_prompt_template as _load_prompt_template,
+)
 
 logger = logging.getLogger(__name__)
 
 _PROMPT_FILENAME = "evaluation_feedback.md"
 _MAX_CONTEXT_CHARS = 5000
-
-
-@lru_cache(maxsize=1)
-def _load_prompt_template(filename: str) -> str:
-    prompt_path = Path("prompts") / filename
-    return prompt_path.read_text(encoding="utf-8")
 
 
 def _truncate(text: str, max_chars: int = 300) -> str:

@@ -1,9 +1,11 @@
 """FastAPI entrypoint for the agent service."""
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from common.config import get_settings
 from common.cors import get_cors_allow_origins
@@ -58,6 +60,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve locally persisted illustrations (and other storage artifacts) so the
+# administrator UI can preview generated images before inserting them.
+# main.py sits at services/agent_service/app/, so the repo root is 3 levels up.
+_storage_dir = Path(__file__).resolve().parents[3] / "storage"
+_storage_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/storage", StaticFiles(directory=str(_storage_dir)), name="storage")
 app.include_router(agents.router, prefix="/agents", tags=["agents"])
 app.include_router(graph.router, prefix="/graph", tags=["knowledge-graph"])
 app.include_router(resources.router, prefix="/resources", tags=["resource-generation"])

@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { useAdminWorkspace } from '../../composables/useAdminWorkspace'
-const { resourceError, resourceFilter, selectedResource, loading, visibleResources, rewriteInstruction, rewriteStyle, rewriteResult, rewriteBusy, resourceSections, imageProvider, fetchManagedResources, showResource, changeResourceStatus, rewriteSelectedResource, applyRewrite, loadResourceSections } = useAdminWorkspace('resources')
+const { resourceError, resourceFilter, selectedResource, loading, visibleResources, rewriteInstruction, rewriteStyle, rewriteResult, rewriteBusy, resourceSections, resourceIllustrations, illustratePrompt, illustrateBusy, imageProvider, fetchManagedResources, showResource, changeResourceStatus, rewriteSelectedResource, applyRewrite, loadResourceSections, loadIllustrations, generateIllustration, reviewIllustration, insertIllustration } = useAdminWorkspace('resources')
+
+function illustrationUrl(path: string) {
+  return `/storage/${path}`
+}
 </script>
 <template>
 <div class="admin-module">        <section class="workspace-panel">
@@ -44,15 +48,39 @@ const { resourceError, resourceFilter, selectedResource, loading, visibleResourc
 
         <section v-if="selectedResource" class="workspace-panel">
           <div class="panel-heading"><div><div class="panel-kicker">P1-07 图文编排</div><h2>章节配图</h2></div></div>
-          <div class="action-row"><el-button @click="loadResourceSections">读取章节</el-button></div>
-          <p v-if="imageProvider && imageProvider.status === 'blocked'" class="admin-evidence-note">图片 Provider：BLOCKED —— {{ imageProvider.reason }}</p>
+          <div class="action-row">
+            <el-button @click="loadResourceSections">读取章节</el-button>
+            <el-input v-model="illustratePrompt" placeholder="配图要求（可留空，系统按章节自动生成描述）" maxlength="1000" style="max-width:360px" />
+          </div>
+          <p v-if="imageProvider && imageProvider.status !== 'configured'" class="admin-evidence-note">图片 Provider：{{ imageProvider.status }} —— {{ imageProvider.reason }}</p>
           <div class="list-stack">
             <div v-for="section in resourceSections" :key="section.title" class="list-card static admin-user-row">
               <div><strong>{{ section.title }}</strong><span>{{ section.chars }} 字符</span></div>
-              <span class="admin-evidence-note" style="margin:0">BLOCKED（未配置图片 Provider）</span>
+              <el-button size="small" type="primary" :loading="illustrateBusy" :disabled="!imageProvider || imageProvider.status !== 'configured'" @click="generateIllustration(section.title)">生成配图</el-button>
             </div>
             <div v-if="!resourceSections.length" class="empty-state">点击“读取章节”查看可配图的正文小节。</div>
           </div>
+
+          <template v-if="resourceIllustrations.length">
+            <div class="panel-heading" style="margin-top:12px"><div><h3>配图草稿</h3></div></div>
+            <div class="list-stack">
+              <div v-for="ill in resourceIllustrations" :key="ill.id" class="list-card static admin-user-row">
+                <div style="display:flex; gap:12px; align-items:flex-start">
+                  <img v-if="ill.status !== 'rejected'" :src="illustrationUrl(ill.storage_path)" :alt="ill.section_title" style="width:120px; height:120px; object-fit:cover; border-radius:6px; background:#eee" />
+                  <div>
+                    <strong>{{ ill.section_title }}</strong>
+                    <span>{{ ill.model }} · {{ ill.status }}</span>
+                    <span class="admin-evidence-note" style="margin:0">{{ ill.prompt }}</span>
+                  </div>
+                </div>
+                <div class="action-row">
+                  <el-button v-if="ill.status === 'pending'" size="small" type="success" @click="reviewIllustration(ill.id, true)">通过</el-button>
+                  <el-button v-if="ill.status === 'pending'" size="small" type="danger" @click="reviewIllustration(ill.id, false)">拒绝</el-button>
+                  <el-button v-if="ill.status === 'approved'" size="small" type="warning" @click="insertIllustration(ill.id)">插入资源</el-button>
+                </div>
+              </div>
+            </div>
+          </template>
         </section></div>
 </template>
 <style src="./admin.css"></style>

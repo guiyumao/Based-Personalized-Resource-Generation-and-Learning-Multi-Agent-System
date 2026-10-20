@@ -28,6 +28,8 @@ import {
 } from '../../utils/studentWorkspace'
 import LearningAtmosphere from '../../components/LearningAtmosphere.vue'
 import PlanAdaptationPanel from '../../components/PlanAdaptationPanel.vue'
+import PlanFeedbackPanel from '../../components/PlanFeedbackPanel.vue'
+import TaskFeedbackButton from '../../components/TaskFeedbackButton.vue'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -45,10 +47,16 @@ const pathForm = reactive<LearningPathPayload>({
 const learningPath = ref<LearningPathResponse | null>(null)
 const loading = ref(false)
 const pathError = ref('')
-const knowledgeCheck = ref<{ ready: boolean; message: string; reason: string; gap_id?: string } | null>(null)
+const knowledgeCheck = ref<{ ready: boolean; message: string; reason: string; mode?: string; gap_id?: string } | null>(null)
 async function checkKnowledge() {
   const { data } = await agentApi.post('/paths/preflight', { subject: pathForm.subject, knowledge_point: pathForm.knowledge_point })
   knowledgeCheck.value = data
+  // Constructive gate: when public knowledge is missing the backend now builds a
+  // personal AI draft instead of blocking, so proceed rather than abort.
+  if (!data.ready && data.mode === 'personal_draft') {
+    ElMessage.info('知识库暂未收录该学科，将为你生成个人学习知识草稿（不会标记为公共正式知识）。')
+    return true
+  }
   return Boolean(data.ready)
 }
 const coordination = ref<CoordinationResponse | null>(null)
@@ -524,9 +532,10 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
         </div>
 
         <div v-if="pathError" class="path-error">{{ pathError }}</div>
-        <el-alert v-if="knowledgeCheck" :title="knowledgeCheck.message" :type="knowledgeCheck.ready ? 'success' : 'warning'" :closable="false"><span v-if="knowledgeCheck.gap_id">缺口请求 #{{ knowledgeCheck.gap_id }}，请管理员在知识库中处理后重试。</span></el-alert>
+        <el-alert v-if="knowledgeCheck" :title="knowledgeCheck.message" :type="knowledgeCheck.ready ? 'success' : (knowledgeCheck.mode === 'personal_draft' ? 'info' : 'warning')" :closable="false"><span v-if="knowledgeCheck.gap_id && knowledgeCheck.mode !== 'personal_draft'">缺口请求 #{{ knowledgeCheck.gap_id }}，请管理员在知识库中处理后重试。</span></el-alert>
 
         <div v-if="learningPath" class="timeline">
+          <PlanFeedbackPanel @updated="learningPath = $event" />
           <PlanAdaptationPanel @updated="learningPath = $event" />
           <article v-for="stage in learningPath.stages" :key="stage.stage_id" class="stage-item">
             <span class="stage-dot" :class="{ done: stage.tasks.every((task) => task.completed) }"></span>
@@ -555,6 +564,7 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
                     </button>
                     <button v-if="!task.completed" @click.stop="adjustTask(task.task_id, 'complete')">完成</button>
                     <button v-else @click.stop="adjustTask(task.task_id, 'skip')">撤销</button>
+                    <TaskFeedbackButton :task-id="task.task_id" @updated="learningPath = $event" />
                   </div>
                 </article>
               </div>

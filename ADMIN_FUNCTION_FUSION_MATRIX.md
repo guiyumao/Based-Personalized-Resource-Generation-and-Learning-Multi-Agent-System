@@ -18,3 +18,13 @@
 后端路径省略前缀 `services/`，前端页面省略 `web-app/src/`。Java控制器位于同一 `com/learning/controller` 目录，Service位于相邻 service 目录。当前不宣称全部融合完成。共享库、线上索引和付费Provider不在本轮测试写入范围。
 
 2026-10-20续接：文档专项证据 `artifacts/aura-full-integration-20261020/documents-browser-v9/`；当前单步迁移演练升级至head0029，保留同期0028/0029改动。IMPLEMENTED不等于TESTED_ISOLATED，更不等于LIVE_VERIFIED。共享运行未激活，其他功能仍按原状态列出。
+
+2026-10-20 AI 内容编排真实可用性修复（本轮）：根因是 agent_service 8002 仍在跑 P1-07 之前的旧代码，前端已热加载新导航但后端 `/admin/prompts`、`/admin/image-provider`、`/admin/resources/{id}/rewrite|sections|illustrations` 全部 404，表现为截图中的"提示词列表获取失败/Provider 状态失败/改写失败"。本轮：
+
+- **部署修复**：按 `artifacts/local-start-20261019/start.ps1` 同款运行时 DB 与 env，重启 agent_service 8002（`--lifespan off`），openapi 已含全部 admin 路由；真实 HTTP 验证：`GET /admin/prompts`=200/11 模板、`GET /admin/image-provider`=blocked(未配置)、`GET /admin/resources/220/sections`=9 节、`POST rewrite`=blocked(未授权)、`POST illustrations`=blocked(未配置)。
+- **提示词统一加载**：`_load_prompt_template` 三处 lru_cache 改为 `prompt_registry.load_prompt_template`（按 mtime 失效），管理员编辑后新生成任务无需重启即生效。
+- **提示词版本生命周期**：`prompt_registry` 新增 `.history/` 文件式快照、`list/read/restore`；`/admin/prompts/{name}/versions[/{version}][/restore]` 路由 + 前端版本列表/恢复 UI。实测 save→1 版本→restore→2 版本闭环通过。
+- **图片 Provider 状态细分**：`image_provider_status` 增加 `enabled/health` 字段与 `blocked/invalid/disabled/configured` 四态（未配置/配置不全/已停用/就绪），`PUT /admin/image-provider` 支持 `enabled`；无凭据时诚实返回 blocked 而非故障。
+- **AI 改写付费闸门**：`rewrite_resource` 增加 `RUN_LIVE_LLM=1` 且 `DEEPSEEK_LIVE_PAID_ACK=1` 双闸门（INC-01 缓解），未授权返回 blocked"需要授权"，杜绝后台误触发真实付费调用（此前会因 `model_calls` 表缺失在台账 begin_call 处崩溃）。
+
+状态：提示词列表/Provider 状态/章节读取/改写路由已 **LIVE_VERIFIED（接口真实可调用）**；改写真实模型调用仍 BLOCKED（无付费授权，符合预期）；图片生成后端未接入（blocked 为预期安全态）。未决：runtime.sqlite 缺 P1-06 台账表（`model_calls` 等 0030/0031），授权后改写/真实生成需先补齐该表；孤儿模板 coordinator/knowledge_graph/learner_profile/path_planning/qa 无生成消费方，待后续接线或移出白名单。单测 53 passed，Ruff 通过，前端 build 退出 0。

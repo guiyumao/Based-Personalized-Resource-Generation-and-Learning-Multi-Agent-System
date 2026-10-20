@@ -7,6 +7,7 @@ import logging
 from copy import deepcopy
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
@@ -95,24 +96,48 @@ class LearningPathService:
         teacher_scope = self._extract_teacher_scope(request.learner_profile)
         knowledge = None
         if self.db is not None:
-            from services.agent_service.app.services.plan_knowledge import require_plan_knowledge
-            knowledge = require_plan_knowledge(self.db, request.user_id, request.subject, request.knowledge_point)
+            from services.agent_service.app.services.plan_knowledge import (
+                assess_plan_knowledge,
+                require_plan_knowledge,
+            )
+            # Constructive gate: prefer reviewed public knowledge, but a missing
+            # subject/point/content/index downgrades to a personal AI draft instead
+            # of terminating the learner's request.
+            try:
+                knowledge = dict(require_plan_knowledge(
+                    self.db, request.user_id, request.subject, request.knowledge_point))
+                knowledge["mode"] = "public"
+            except HTTPException:
+                knowledge = assess_plan_knowledge(
+                    self.db, request.user_id, request.subject, request.knowledge_point)
             request = request.model_copy(update={"knowledge_point": knowledge["knowledge_point"],
                 "retrieval_context": {"retrieved_chunks": knowledge["usable_chunks"]}})
         payload = self._generate_path_with_llm(request, teacher_scope)
         if knowledge:
-            current_knowledge = require_plan_knowledge(self.db, request.user_id, request.subject, request.knowledge_point)
-            if sorted(current_knowledge["published_versions"]) != sorted(knowledge["published_versions"]):
-                raise LearningPathRevisionConflict("Knowledge publication changed during generation; regenerate the plan")
+            mode = knowledge.get("mode", "public")
+            if mode == "public":
+                from services.agent_service.app.services.plan_knowledge import (
+                    require_plan_knowledge,
+                )
+                current_knowledge = require_plan_knowledge(self.db, request.user_id, request.subject, request.knowledge_point)
+                if sorted(current_knowledge["published_versions"]) != sorted(knowledge["published_versions"]):
+                    raise LearningPathRevisionConflict("Knowledge publication changed during generation; regenerate the plan")
             payload["subject"] = request.subject
             payload["knowledge_point"] = knowledge["knowledge_point"]
-            payload["subject_id"] = knowledge["subject_id"]
-            payload["knowledge_versions"] = knowledge["published_versions"]
-            # Subtasks describe different activities around this validated point;
-            # model prose cannot create new public catalog nodes implicitly.
-            for task in self._ordered_tasks(payload):
-                task["knowledge_point"] = knowledge["knowledge_point"]
-                task["knowledge_point_id"] = knowledge["point_id"]
+            payload["knowledge_scope"] = mode
+            if mode == "public":
+                payload["subject_id"] = knowledge["subject_id"]
+                payload["knowledge_versions"] = knowledge["published_versions"]
+                # Subtasks describe different activities around this validated point;
+                # model prose cannot create new public catalog nodes implicitly.
+                for task in self._ordered_tasks(payload):
+                    task["knowledge_point"] = knowledge["knowledge_point"]
+                    task["knowledge_point_id"] = knowledge["point_id"]
+            else:
+                # Personal AI-draft mode: never claim public provenance.  Preserve the
+                # gap reason/id so the plan traces back to the auto-construction gap.
+                payload["knowledge_gap_reason"] = knowledge.get("reason")
+                payload["knowledge_gap_id"] = knowledge.get("gap_id")
         payload["generation_source"] = "llm"
         if source_analysis_id is not None:
             payload["source_transcript_analysis_id"] = source_analysis_id

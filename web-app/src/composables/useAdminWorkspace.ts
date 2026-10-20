@@ -11,10 +11,13 @@ import {
   userApi,
   type ApiEnvelope,
   type AuditLogItem,
+  type IllustrateResult,
   type ImageProviderStatus,
   type ManagedResourceItem,
   type PromptTemplateDetail,
   type PromptTemplateSummary,
+  type PromptVersionSummary,
+  type ResourceIllustration,
   type ResourceRewriteResult,
   type ResourceSection,
   type RoleAssignmentPayload,
@@ -108,6 +111,7 @@ const prompts = ref<PromptTemplateSummary[]>([])
 const selectedPromptName = ref('')
 const promptContent = ref('')
 const promptPlaceholders = ref<string[]>([])
+const promptVersions = ref<PromptVersionSummary[]>([])
 const imageProvider = ref<ImageProviderStatus | null>(null)
 const imageProviderForm = reactive({ provider: '', model: '' })
 const rewriteInstruction = ref('')
@@ -115,6 +119,9 @@ const rewriteStyle = ref('plain')
 const rewriteResult = ref<ResourceRewriteResult | null>(null)
 const rewriteBusy = ref(false)
 const resourceSections = ref<ResourceSection[]>([])
+const resourceIllustrations = ref<ResourceIllustration[]>([])
+const illustratePrompt = ref('')
+const illustrateBusy = ref(false)
 
 const loading = reactive({
   role: false,
@@ -733,6 +740,7 @@ async function loadPrompt(name: string) {
     const { data } = await agentApi.get<ApiEnvelope<PromptTemplateDetail>>(`/admin/prompts/${encodeURIComponent(name)}`)
     promptContent.value = data.data.content
     promptPlaceholders.value = data.data.placeholders
+    await loadPromptVersions(name)
   } catch {
     ElMessage.error('提示词读取失败')
   }
@@ -746,9 +754,33 @@ async function savePrompt() {
       { content: promptContent.value },
     )
     ElMessage.success('提示词已保存')
-    await Promise.all([fetchPrompts(), loadPrompt(selectedPromptName.value)])
+    await Promise.all([fetchPrompts(), loadPrompt(selectedPromptName.value), loadPromptVersions(selectedPromptName.value)])
   } catch {
     ElMessage.error('保存失败：请确认保留了全部占位符')
+  }
+}
+
+async function loadPromptVersions(name: string) {
+  if (!name) return
+  try {
+    const { data } = await agentApi.get<ApiEnvelope<PromptVersionSummary[]>>(
+      `/admin/prompts/${encodeURIComponent(name)}/versions`,
+    )
+    promptVersions.value = data.data
+  } catch {
+    promptVersions.value = []
+  }
+}
+
+async function restorePromptVersion(name: string, version: string) {
+  try {
+    await agentApi.post<ApiEnvelope<PromptTemplateDetail>>(
+      `/admin/prompts/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/restore`,
+    )
+    ElMessage.success('已恢复该版本')
+    await Promise.all([fetchPrompts(), loadPrompt(name), loadPromptVersions(name)])
+  } catch {
+    ElMessage.error('恢复版本失败')
   }
 }
 
@@ -823,8 +855,66 @@ async function loadResourceSections() {
     )
     resourceSections.value = data.sections
     imageProvider.value = data.image_provider
+    await loadIllustrations()
   } catch {
     ElMessage.error('资源章节读取失败')
+  }
+}
+
+async function loadIllustrations() {
+  if (!selectedResource.value) return
+  try {
+    const { data } = await agentApi.get<{ resource_id: number; illustrations: ResourceIllustration[] }>(
+      `/admin/resources/${selectedResource.value.id}/illustrations`,
+    )
+    resourceIllustrations.value = data.illustrations
+  } catch {
+    resourceIllustrations.value = []
+  }
+}
+
+async function generateIllustration(sectionTitle: string) {
+  if (!selectedResource.value) return
+  illustrateBusy.value = true
+  try {
+    const { data } = await agentApi.post<IllustrateResult>(
+      `/admin/resources/${selectedResource.value.id}/illustrations`,
+      { section_title: sectionTitle, prompt: illustratePrompt.value.trim() },
+    )
+    if (data.status === 'generated') ElMessage.success('配图已生成，待审核')
+    else if (data.status === 'blocked') ElMessage.info(data.reason || '图片生成当前不可用')
+    else if (data.status === 'failed') ElMessage.error(data.reason || '图片生成失败')
+    await loadIllustrations()
+  } catch {
+    ElMessage.error('图片生成请求失败')
+  } finally {
+    illustrateBusy.value = false
+  }
+}
+
+async function reviewIllustration(illustrationId: string, approve: boolean) {
+  if (!selectedResource.value) return
+  try {
+    await agentApi.post(
+      `/admin/resources/${selectedResource.value.id}/illustrations/${illustrationId}/${approve ? 'approve' : 'reject'}`,
+    )
+    ElMessage.success(approve ? '已通过审核' : '已拒绝')
+    await loadIllustrations()
+  } catch {
+    ElMessage.error('审核操作失败')
+  }
+}
+
+async function insertIllustration(illustrationId: string) {
+  if (!selectedResource.value) return
+  try {
+    await agentApi.post(
+      `/admin/resources/${selectedResource.value.id}/illustrations/${illustrationId}/insert`,
+    )
+    ElMessage.success('配图已插入资源并保存版本')
+    await Promise.all([loadIllustrations(), showResource(selectedResource.value)])
+  } catch {
+    ElMessage.error('插入失败：请确认已通过审核')
   }
 }
 
@@ -845,5 +935,5 @@ onMounted(async () => {
     case 'prompts': await Promise.all([fetchPrompts(), fetchImageProvider()]); break
   }
 })
-return { router, authStore, subjects, configs, logs, dashboard, userPage, knowledgeStatus, knowledgeSources, knowledgeTasks, taskSubject, taskQuery, maintenancePlans, knowledgeCandidates, constructionSubjects, constructionPoints, constructionSubjectId, constructionSelectedPoints, constructionForm, outlineEditor, outlineTaskId, constructionBusy, manualSubjectCode, manualPoint, constructionFocus, knowledgeVersions, oldVersionId, newVersionId, versionComparison, maintenanceReport, taskUsage, versionImpact, planForm, knowledgeError, managedResources, resourceError, resourceFilter, selectedResource, userKeyword, userRole, newUser, currentUserPage, selectedConfigKey, roleForm, subjectForm, configForm, logFilter, roleResult, loading, configKeys, visibleLogs, visibleResources, adminStats, prompts, selectedPromptName, promptContent, promptPlaceholders, imageProvider, imageProviderForm, rewriteInstruction, rewriteStyle, rewriteResult, rewriteBusy, resourceSections, fetchDashboard, fetchUsers, selectUser, createUser, setUserStatus, fetchKnowledgeStatus, fetchKnowledgeSources, reindexKnowledgeBase, fetchKnowledgeTasks, fetchMaintenancePlans, createMaintenancePlan, toggleMaintenancePlan, startKnowledgeTask, candidateSources, fetchedSource, searchKnowledgeSources, fetchCandidateSource, cancelKnowledgeTask, viewTaskUsage, retryKnowledgeTask, viewVersionImpact, loadConstructionSubjects, createManualConstructionSubject, createManualConstructionPoint, planConstructionSubject, loadConstructionOutline, confirmConstructionOutline, loadConstructionPoints, buildConstructionPoints, fetchKnowledgeCandidates, createKnowledgeCandidate, saveCandidate, submitCandidate, reviewCandidate, loadKnowledgeVersions, compareKnowledgeVersions, compareCandidateDraft, rollbackKnowledgeVersion, startCandidateRevision, viewMaintenanceReports, publishCandidate, createHealthCheckTask, fetchManagedResources, showResource, changeResourceStatus, assignRole, fetchSubjects, createSubject, fetchConfigs, syncSelectedConfigValue, updateConfig, fetchLogs, fetchPrompts, loadPrompt, savePrompt, fetchImageProvider, updateImageProvider, rewriteSelectedResource, applyRewrite, loadResourceSections, logout }
+return { router, authStore, subjects, configs, logs, dashboard, userPage, knowledgeStatus, knowledgeSources, knowledgeTasks, taskSubject, taskQuery, maintenancePlans, knowledgeCandidates, constructionSubjects, constructionPoints, constructionSubjectId, constructionSelectedPoints, constructionForm, outlineEditor, outlineTaskId, constructionBusy, manualSubjectCode, manualPoint, constructionFocus, knowledgeVersions, oldVersionId, newVersionId, versionComparison, maintenanceReport, taskUsage, versionImpact, planForm, knowledgeError, managedResources, resourceError, resourceFilter, selectedResource, userKeyword, userRole, newUser, currentUserPage, selectedConfigKey, roleForm, subjectForm, configForm, logFilter, roleResult, loading, configKeys, visibleLogs, visibleResources, adminStats, prompts, selectedPromptName, promptContent, promptPlaceholders, promptVersions, imageProvider, imageProviderForm, rewriteInstruction, rewriteStyle, rewriteResult, rewriteBusy, resourceSections, resourceIllustrations, illustratePrompt, illustrateBusy, fetchDashboard, fetchUsers, selectUser, createUser, setUserStatus, fetchKnowledgeStatus, fetchKnowledgeSources, reindexKnowledgeBase, fetchKnowledgeTasks, fetchMaintenancePlans, createMaintenancePlan, toggleMaintenancePlan, startKnowledgeTask, candidateSources, fetchedSource, searchKnowledgeSources, fetchCandidateSource, cancelKnowledgeTask, viewTaskUsage, retryKnowledgeTask, viewVersionImpact, loadConstructionSubjects, createManualConstructionSubject, createManualConstructionPoint, planConstructionSubject, loadConstructionOutline, confirmConstructionOutline, loadConstructionPoints, buildConstructionPoints, fetchKnowledgeCandidates, createKnowledgeCandidate, saveCandidate, submitCandidate, reviewCandidate, loadKnowledgeVersions, compareKnowledgeVersions, compareCandidateDraft, rollbackKnowledgeVersion, startCandidateRevision, viewMaintenanceReports, publishCandidate, createHealthCheckTask, fetchManagedResources, showResource, changeResourceStatus, assignRole, fetchSubjects, createSubject, fetchConfigs, syncSelectedConfigValue, updateConfig, fetchLogs, fetchPrompts, loadPrompt, savePrompt, loadPromptVersions, restorePromptVersion, fetchImageProvider, updateImageProvider, rewriteSelectedResource, applyRewrite, loadResourceSections, loadIllustrations, generateIllustration, reviewIllustration, insertIllustration, logout }
 }
