@@ -12,7 +12,8 @@
 - 证据：`test_knowledge_bootstrap.py` 5 passed（+visible_chunks 丢弃个人草稿、retrieve_personal 只按 owner+scope）；knowledge/rag/publication 相关 89 passed；改动文件 Ruff 通过。
 - **P0-3 搜索抓取与候选（已真实跑通）**：`_search_and_fetch_personal`——受双闸门（`RUN_LIVE_LLM=1 && DEEPSEEK_LIVE_PAID_ACK=1`）控制，用 `search_sources(query, need_content=True)` 取回真实来源正文（**发现 `/v1/tools/fetch` 在 DeepSeek 公开 API 上 404 不存在，改用 search 内联 `content` 替代**），落 `KnowledgeCandidate(status=DRAFT, subject=personal_<hash>)`；`deepseek_search` 新增 `DEEPSEEK_SEARCH_ALLOW_FAKE_IP=1` 显式放宽 SSRF（本机 fake-IP DNS）。真实证据：搜到清华《数据结构》第3章，正文 6528 字，候选 #1 DRAFT，草稿 37 chunks（含 1 条真实正文）。
 - 证据：`test_knowledge_bootstrap.py` **9 passed**（+SSRF 开关、未授权不调用、授权时用内联正文建候选）；相关回归 **106 passed**；改动文件 Ruff 通过；前端 build 退出 0。
-- **P0-1/P0-2/P0-3/P0-4（核心）已完成并验证**；剩余：P0-7 前端真实进度面板（当前同步生成）、P0-8 A–G 全链 E2E。真实 Search 调用需设 `RUN_LIVE_LLM=1`+`DEEPSEEK_LIVE_PAID_ACK=1`+`DEEPSEEK_SEARCH_ALLOW_FAKE_IP=1` 并重启 8002；默认不调用。运行中 8002 仍是 21:12 构建（P0-3 需再重启加载）。不冒充场景 A 已全链通过。
+- **真实 HTTP 全链路验收（2026-10-20）**：运行库已建立 5 个真实学科（数据结构/计算机网络/计算机组成原理/操作系统/离散数学，194 知识点）；`GET /knowledge-base/catalog/subjects` 返回真实目录（DB 驱动，前端不再硬编码）；工作区 `POST /learning/contexts` 对计划 154 解析到**真实知识点 id=437（链表）**（`build_subject_outline` + `_snap_tasks_to_real_points` 生效）；`POST /paths/task-feedback/preview` → `added=1、impact 2→3`，`POST /paths/feedback/{id}/confirm` → `applied`，重放 → `already_applied`（幂等）。**P0-1~P0-4 + 真实知识点吸附 + 工作区 create_context 修复均已完成。**
+- 剩余：P0-7 前端异步进度面板（当前同步生成）、P0-8 A–G 浏览器 E2E（需一次真实计划生成调用）。运行中 8002 已重启（PID 44292）加载最新代码；真实 Search/计划生成需 `RUN_LIVE_LLM=1`+`DEEPSEEK_LIVE_PAID_ACK=1`(+`DEEPSEEK_SEARCH_ALLOW_FAKE_IP=1`)。
 
 ## 最新 AI 内容编排真实可用性修复（2026-10-20；提示词/Provider/改写接口已 LIVE_VERIFIED）
 
