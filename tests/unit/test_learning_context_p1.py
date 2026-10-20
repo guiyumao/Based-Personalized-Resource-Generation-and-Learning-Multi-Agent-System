@@ -412,3 +412,40 @@ def test_generated_exercise_binding_rejects_another_owner(workspace):
         with pytest.raises(HTTPException) as caught:
             bind_generated_exercises(db, 1, context_id, 1, [1])
         assert caught.value.status_code == 404
+
+
+def test_personal_draft_plan_can_open_workspace_context(tmp_path):
+    """A personal-draft plan has no public subject/point, but the workspace must
+    still open it by creating an owner-scoped personal knowledge point."""
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'personal.sqlite'}", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        db.add(User(id=1, username="owner", password_hash="unused"))
+        db.add(
+            LearningPath(
+                id=1, user_id=1, status="active",
+                path_data_json={
+                    "subject": "数据结构", "knowledge_scope": "personal_draft", "path_revision": 0,
+                    "stages": [{"stage_id": "s1", "tasks": [{"task_id": "t1", "knowledge_point": "链表"}]}],
+                },
+            )
+        )
+        db.commit()
+        # No public SystemSubject / KnowledgePoint exists for 数据结构.
+        assert db.query(SystemSubject).count() == 0
+        row = create_context(
+            db, 1, client_request_id="personal-ctx-1",
+            plan_id=1, module_id="s1", task_key="t1",
+        )
+        point = db.get(KnowledgePoint, row.knowledge_point_id)
+        assert point is not None
+        assert point.subject_id is None
+        assert point.construction_status == "PERSONAL_DRAFT"
+        snap = context_snapshot(db, 1, row.id)
+        assert snap["knowledge_point"] == "链表"
+        assert snap["subject"] == "数据结构"
+        # No public catalog entry was created for the personal draft.
+        assert db.query(SystemSubject).count() == 0
+    engine.dispose()

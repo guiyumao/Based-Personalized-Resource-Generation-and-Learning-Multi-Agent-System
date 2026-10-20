@@ -48,14 +48,16 @@ def validate_context(db: Session, user_id: int, context_id: str) -> tuple:
     point = db.get(KnowledgePoint, row.knowledge_point_id)
     if not point or task.get("knowledge_point") != point.name:
         raise HTTPException(409, "Task knowledge point changed")
-    subject = db.get(SystemSubject, point.subject_id)
-    subject_name = str((plan.path_data_json or {}).get("subject", "")).strip().casefold()
-    if not subject or subject_name not in {
-        subject.name.casefold(),
-        (subject.code or "").casefold(),
-        *(str(alias).casefold() for alias in subject.aliases_json or []),
-    }:
-        raise HTTPException(409, "Plan subject changed")
+    if point.subject_id is not None:
+        subject = db.get(SystemSubject, point.subject_id)
+        subject_name = str((plan.path_data_json or {}).get("subject", "")).strip().casefold()
+        if not subject or subject_name not in {
+            subject.name.casefold(),
+            (subject.code or "").casefold(),
+            *(str(alias).casefold() for alias in subject.aliases_json or []),
+        }:
+            raise HTTPException(409, "Plan subject changed")
+    # A personal AI-draft point (subject_id is None) has no public subject to match.
     resource = (
         db.get(Resource, row.resource_id, populate_existing=True) if row.resource_id else None
     )
@@ -91,7 +93,9 @@ def create_context(
     expected_resource_version: str | None = None,
 ) -> LearningContext:
     plan, _, task = _task(db, user_id, plan_id, module_id, task_key)
-    subject_name = str((plan.path_data_json or {}).get("subject", "")).strip().casefold()
+    plan_data = plan.path_data_json or {}
+    personal_draft = plan_data.get("knowledge_scope") == "personal_draft"
+    subject_name = str(plan_data.get("subject", "")).strip().casefold()
     subjects = db.query(SystemSubject).all()
     subject = next(
         (
@@ -106,12 +110,33 @@ def create_context(
         ),
         None,
     )
-    if subject is None:
+    if subject is None and not personal_draft:
         raise HTTPException(409, "Plan subject must exist in the knowledge catalog")
-    query = db.query(KnowledgePoint).filter(KnowledgePoint.name == task.get("knowledge_point"))
-    if subject:
-        query = query.filter(KnowledgePoint.subject_id == subject.id)
-    points = query.limit(2).all()
+
+    task_point = str(task.get("knowledge_point") or "").strip()
+    points: list[KnowledgePoint] = []
+    if subject is not None and task_point:
+        points = db.query(KnowledgePoint).filter(
+            KnowledgePoint.name == task_point,
+            KnowledgePoint.subject_id == subject.id,
+        ).limit(2).all()
+    if len(points) != 1:
+        # LLM-generated sub-topic (or personal draft): reuse an owner-scoped personal
+        # point so the workspace opens without implicitly adding a public node.
+        points = db.query(KnowledgePoint).filter(
+            KnowledgePoint.name == task_point,
+            KnowledgePoint.subject_id.is_(None),
+            KnowledgePoint.construction_status == "PERSONAL_DRAFT",
+        ).limit(2).all()
+    if len(points) == 0 and task_point:
+        point = KnowledgePoint(
+            name=task_point[:200],
+            subject_id=None,
+            construction_status="PERSONAL_DRAFT",
+        )
+        db.add(point)
+        db.flush()
+        points = [point]
     if len(points) != 1:
         raise HTTPException(409, "Task must resolve to one existing knowledge point")
     resource = db.get(Resource, resource_id) if resource_id else None

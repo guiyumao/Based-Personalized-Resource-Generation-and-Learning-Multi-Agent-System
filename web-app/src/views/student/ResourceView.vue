@@ -274,12 +274,38 @@ type CoreSubject = {
   description: string
 }
 
-const coreSubjects: CoreSubject[] = [
+// Fallback only when the real DB catalog cannot be loaded. The live list mirrors
+// actual SystemSubject rows so the page never claims a subject the DB lacks.
+const fallbackCoreSubjects: CoreSubject[] = [
   { key: 'computer_networks', label: '计算机网络', code: 'NET', description: '协议分层、TCP/IP、路由与 Web 通信' },
   { key: 'data_structures', label: '数据结构', code: 'DS', description: '线性表、树、图、排序与复杂度分析' },
   { key: 'computer_architecture', label: '计算机组成原理', code: 'CO', description: 'CPU、存储系统、指令与总线结构' },
   { key: 'operating_systems', label: '操作系统', code: 'OS', description: '进程、内存、文件系统与并发控制' },
 ]
+
+const catalogSubjects = ref<CoreSubject[]>([])
+const coreSubjects = computed<CoreSubject[]>(() =>
+  catalogSubjects.value.length ? catalogSubjects.value : fallbackCoreSubjects,
+)
+
+async function loadCatalogSubjects() {
+  try {
+    const { data } = await agentApi.get('/knowledge-base/catalog/subjects')
+    const items = (data?.items ?? []) as Array<{
+      id: number; name: string; code: string; description: string; point_count: number
+    }>
+    catalogSubjects.value = items
+      .filter((item) => item.name?.trim())
+      .map((item) => ({
+        key: item.code || `subject_${item.id}`,
+        label: item.name,
+        code: (item.code || item.name).slice(0, 2).toUpperCase(),
+        description: item.description || `已收录 ${item.point_count} 个知识点`,
+      }))
+  } catch {
+    catalogSubjects.value = []
+  }
+}
 
 const fallbackKnowledgeArticles: KnowledgeBaseArticle[] = [
   {
@@ -439,8 +465,9 @@ const summaryCardText = computed(() => ({
     : '系统生成资源会在这里统一沉淀',
 }))
 
-onMounted(() => {
-  void refreshPage()
+onMounted(async () => {
+  await loadCatalogSubjects()
+  await refreshPage()
 })
 
 watch(() => route.query.resource, (value) => {
@@ -451,7 +478,7 @@ watch(() => route.query.resource, (value) => {
 })
 
 async function refreshPage() {
-  const isCoreSubject = coreSubjects.some((subject) => subject.key === selectedSubject.value)
+  const isCoreSubject = coreSubjects.value.some((subject) => subject.key === selectedSubject.value)
   await Promise.all([
     isCoreSubject ? searchKnowledgeBase() : fetchKnowledgeBase(selectedSubject.value),
     fetchResources(),
@@ -525,7 +552,7 @@ async function searchKnowledgeBase() {
         ...(selectedSubject.value ? { subject: selectedSubject.value } : {}),
       },
     })
-    const strictItems = coreSubjects.some((subject) => subject.key === selectedSubject.value)
+    const strictItems = coreSubjects.value.some((subject) => subject.key === selectedSubject.value)
       ? data.items.filter((item) => matchesCoreSubject(item, selectedSubject.value))
       : data.items
     applyKnowledgeArticles(strictItems, subjects.value, false)
@@ -536,7 +563,7 @@ async function searchKnowledgeBase() {
       const haystack = [article.title, article.subject, article.summary, ...article.concepts].join(' ').toLowerCase()
       return haystack.includes(normalizedQuery)
     })
-    const strictFallbackMatches = coreSubjects.some((subject) => subject.key === selectedSubject.value)
+    const strictFallbackMatches = coreSubjects.value.some((subject) => subject.key === selectedSubject.value)
       ? fallbackMatches.filter((item) => matchesCoreSubject(item, selectedSubject.value))
       : fallbackMatches
     applyKnowledgeArticles(strictFallbackMatches, subjects.value, false)
@@ -990,6 +1017,10 @@ async function deleteAllImportedResources() {
           <ArrowRight class="subject-arrow" aria-hidden="true" />
         </button>
       </div>
+
+      <p class="core-subject-note">
+        以上为数据库中真实收录的学科；未收录的学科在你创建学习计划时会自动构建个人学习知识草稿，不会标记为公共正式知识。
+      </p>
 
       <div class="filter-bar">
         <div class="subject-row" aria-label="更多学科筛选">
@@ -2065,6 +2096,7 @@ async function deleteAllImportedResources() {
 .core-subject-card { min-width: 0; display: grid; grid-template-columns: 42px 1fr 16px; gap: 11px; align-items: center; padding: 14px; border: 1px solid var(--resource-border); border-radius: 13px; color: var(--text); background: var(--panel); text-align: left; cursor: pointer; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
 .core-subject-card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
 .core-subject-card.active { border-color: color-mix(in srgb, var(--accent) 56%, var(--line)); background: var(--accent-soft); }
+.core-subject-note { margin: 10px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .subject-code { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 11px; color: var(--accent); background: var(--accent-soft); font-size: 11px; font-weight: 850; letter-spacing: .05em; }
 .core-subject-card.active .subject-code { color: #fff; background: var(--accent); }
 .subject-copy { min-width: 0; }

@@ -261,6 +261,31 @@ def list_knowledge_base_subjects() -> dict[str, object]:
     return {"total": len(subjects), "subjects": subjects}
 
 
+@router.get("/knowledge-base/catalog/subjects")
+def list_catalog_subjects(
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    """List REAL subjects from the database catalog (for the student KB page).
+
+    The frontend must render these instead of a hardcoded subject card list.
+    """
+    from common.models.learning import KnowledgePoint, SystemSubject
+    subjects = db.query(SystemSubject).order_by(SystemSubject.id).all()
+    items = []
+    for subject in subjects:
+        point_count = db.query(KnowledgePoint).filter_by(subject_id=subject.id).count()
+        items.append({
+            "id": subject.id,
+            "name": subject.name,
+            "code": subject.code or "",
+            "description": subject.description or "",
+            "status": subject.construction_status,
+            "point_count": point_count,
+        })
+    return {"total": len(items), "items": items}
+
+
 @router.get("/knowledge-base/search")
 def search_knowledge_base(
     q: str = Query(default="", min_length=0),
