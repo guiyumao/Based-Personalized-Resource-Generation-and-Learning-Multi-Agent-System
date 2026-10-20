@@ -1,7 +1,7 @@
 # 学生端自主学科建设 / 知识补全 / 学习计划全链路 — P0-1 交付文档
 
-> 日期：2026-10-20 ｜ 分支：main ｜ 范围：仅 P0-1（知识覆盖门禁由阻断式改为建设式）
-> 结论先行：**P0-1 已编码并通过隔离单测；P0-2~P0-8 未实现；场景 A 全链尚未验收，不宣称已完成。**
+> 日期：2026-10-20 ｜ 分支：main ｜ 范围：P0-1（门禁）+ P0-2（个人学科草稿）
+> 结论先行：**P0-1、P0-2 已编码并通过隔离单测；P0-3（Search/Fetch）、P0-4（向量可检索）、P0-7（前端进度）、P0-8（E2E）未实现；场景 A 全链尚未验收，不宣称已完成。**
 
 ## 1. 发现的原始业务逻辑错误
 
@@ -56,20 +56,21 @@ personal_draft 计划在 `path_data_json` 中携带 `knowledge_scope`、`knowled
   - 协调器**不再 409**，持久化 `LearningPath.path_data_json["knowledge_scope"]=="personal_draft"`、`knowledge_gap_reason=="SUBJECT_MISSING"`、`subject_id is None`；
   - **不创建公共 `SystemSubject`**（未知学科不会被提升为公共学科）。
 - 受影响回归：`test_coordinator` / `test_agent_routes_use_coordinator` / `test_learning_path_adjustment` / `test_transcript_learning_path` / `test_assistant_tasks` / `test_path_adaptation` / `test_plan_feedback` / `test_task_feedback` 合计 **89 passed**。
-- Ruff：改动文件全部通过（`coordinator.py` 两处 `I001` 为改动前既有导入排序问题，非本次引入）。
+- **P0-2（新增）**：`tests/unit/test_knowledge_bootstrap.py` **3 passed**——个人草稿可复用、跨学生隔离、`generate_path` 用个人草稿 chunks 接地且无 `subject_id`/`knowledge_versions`；连同门禁/反馈/路径测试本轮合计 **48 passed**。
+- Ruff：改动文件全部通过（`knowledge_bootstrap.py` / `learning_path.py` / 新增测试均通过；`coordinator.py` 两处 `I001` 为改动前既有导入排序问题，非本次引入）。
 - 前端 `npm run build`：退出 0（2.26s）。
 
-## 6. 明确未完成（P0-2 ~ P0-8）
+## 6. 未完成 / 已完成边界（P0-2 ~ P0-8）
 
-1. **P0-2**：学科缺失时**自动触发** `KnowledgeBuildTask(AI_SUBJECT_PLAN)` 生成大纲、建知识点、保存为个人草稿，并回填到计划生成。当前 personal_draft 仅靠模型自带知识出稿，**不会自动建设公共/个人知识**。
-2. **P0-3**：搜索/抓取/来源整理/候选保存的真实接入（Search/Fetch 当前受配置与安全闸门限制）。
-3. **P0-4**：个人学习知识空间的**持久化 + 可检索**（复用现有结构，未建新表）。
-4. **P0-5**：知识建设完成后**自动续接原计划请求**（当前需用户再次点击生成）。
-5. **P0-6**：计划预览→自然语言反馈→调整→确认（反馈机制已在上一轮实现，但未与自动建设串起来）。
-6. **P0-7**：学生端**真实任务进度**、刷新恢复、错误处理（当前仍是同步生成，无进度面板）。
+1. **P0-2 ✅ 已完成**：新增 `knowledge_bootstrap.build_personal_draft`——按 `actor_user_id + subject` 在 `KnowledgeBuildTask(operation_type="PERSONAL_SUBJECT_DRAFT")` 持久化 `SubjectOutline` + 检索 chunks；**不写公共 SystemSubject/KnowledgePoint**；同一学生复用、跨学生隔离；LLM 出大纲受双闸门，未授权用确定性草稿。`generate_path` 在 personal_draft 时先建/复用草稿并把 chunks 作为 `retrieval_context` 喂给计划模型（同请求内续接出稿，P0-5 部分完成）。
+2. **P0-3**：搜索/抓取/来源整理/候选保存的真实接入（Search/Fetch 当前受配置与安全闸门限制，仍 BLOCKED）。
+3. **P0-4**：个人知识**向量可检索**（当前草稿走结构化 chunks 接地，未写入 Chroma；同一学生复用靠 `KnowledgeBuildTask` 查询而非向量检索）。
+4. **P0-5**：已随 P0-2 在同一请求内自动续接；跨请求/异步任务化（Worker 持久任务）尚未做。
+5. **P0-6**：计划预览→自然语言反馈→调整→确认（反馈机制已在上一轮实现，`plan_feedback` + `PlanFeedbackPanel`）。
+6. **P0-7**：学生端**真实任务进度面板**、刷新恢复（当前同步生成，无阶段进度推送）。
 7. **P0-8**：隔离环境端到端验收（场景 A~G）。
 
-**场景 A 全链未通过**，本文档不宣称通过。
+**场景 A 全链未通过**（缺 Search/Fetch 与前端进度面板），本文档不宣称通过。计划出稿本身需已配置 LLM；无授权时 personal_draft 会显式失败、不伪造。
 
 ## 7. 运行与部署说明
 

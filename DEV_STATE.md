@@ -1,15 +1,14 @@
 # 当前开发状态
 
-## 最新 学生端自主学科建设 P0-1：知识覆盖门禁由阻断式改为建设式（2026-10-20）
+## 最新 学生端自主学科建设 P0-1 / P0-2：建设式门禁 + 个人学科草稿（2026-10-20）
 
-按新任务（学生端自主学科建设/知识补全/计划全链路）先落地 P0-1：`SUBJECT_MISSING` 不再终止学生请求。
+按新任务（学生端自主学科建设/知识补全/计划全链路）落地 P0-1、P0-2：`SUBJECT_MISSING` 不再终止学生请求，缺失时自动构建**个人学科草稿**并据此生成计划。
 
-- 新增 `plan_knowledge.assess_plan_knowledge`：返回 `mode`（public / personal_draft），缺失时仍记录缺口但**不抛 409**，并改写 message 为“将生成个人学习知识草稿”。
-- 三处门禁改为建设式：`coordinator._execute_agents`（path_planning_agent 前置覆盖检查）、`LearningPathService.generate_path`（try require→fallback assess）、`/paths/preflight` 与 `/paths/generate` 路由。
-- `generate_path` 在 personal_draft 模式：空检索上下文、不写 `subject_id`、标 `knowledge_scope="personal_draft"` 与 `knowledge_gap_reason/gap_id`，**不冒充公共正式知识**。
-- 前端 `LearningPathView.checkKnowledge()` 对 personal_draft 继续生成（info 提示），不再因 not-ready 直接 return。
-- 证据：`test_plan_knowledge_p1.py` 更新断言（未知学科→personal_draft 计划、不建公共 SystemSubject、缺口=1）10 passed；受影响 coordinator/路由/助手/反馈测试合计 **89 passed**；改动文件 Ruff 通过（coordinator.py 两处 I001 为改动前既有导入排序问题）；前端 build 退出 0。
-- **P0-1 已完成并隔离测试通过**；P0-2（自动建学科大纲+个人知识持久化）、P0-3（搜索抓取）、P0-4~P0-8（个人空间/自动续接/反馈确认/前端真实进度/E2E）未做。运行中 8002 仍是 20:07 旧构建，需重启才加载本改动；不冒充场景 A 已全链通过。
+- **P0-1 门禁**：新增 `plan_knowledge.assess_plan_knowledge`（返回 `mode`：public / personal_draft，缺失时不抛 409 但记录缺口）；`coordinator._execute_agents`、`generate_path`、`/paths/preflight`、`/paths/generate` 全部改为建设式；前端 `LearningPathView.checkKnowledge()` 对 personal_draft 继续生成（info 提示）。
+- **P0-2 个人草稿**：新增 `knowledge_bootstrap.build_personal_draft`——按 `actor_user_id + subject` 在 `KnowledgeBuildTask(operation_type="PERSONAL_SUBJECT_DRAFT")` 中持久化 `SubjectOutline` + 检索 chunks；**不写公共 SystemSubject/KnowledgePoint**、不建平行库；同一学生复用（不重复生成）、跨学生隔离。LLM 出大纲走 `plan_subject`（schema 校验）且受 `RUN_LIVE_LLM=1 && DEEPSEEK_LIVE_PAID_ACK=1` 双闸门，未授权时用确定性草稿（标 `source=deterministic_fallback`）。
+- **自动续接（P0-5 部分）**：`generate_path` 在 personal_draft 时先建/复用草稿，把草稿 chunks 作为 `retrieval_context` 喂给计划模型，同一请求内续接出稿；计划标 `knowledge_scope="personal_draft"`、`knowledge_draft`、`knowledge_draft_task_id`，**不冒充公共正式知识**。
+- 证据：`test_plan_knowledge_p1.py` 10 passed（未知学科→personal_draft、不建公共学科、缺口=1）；新增 `test_knowledge_bootstrap.py` **3 passed**（个人且可复用、跨学生隔离、generate_path 用个人草稿 chunks 接地且无 subject_id/versions）；相关回归合计 **48 passed**；改动文件 Ruff 通过；前端 build 退出 0。
+- **P0-1/P0-2 已完成并隔离测试通过**；剩余：P0-3（Search/Fetch 外部接入，DEV_STATE 记录 Search/Fetch 仍受授权限制）、P0-4 向量可检索（当前草稿走结构化 chunks 接地，未入 Chroma）、P0-6 已由上一轮反馈机制覆盖、P0-7 前端真实进度面板、P0-8 A–G E2E。运行中 8002 仍是 20:07 旧构建，需重启才加载本改动；不冒充场景 A 已全链通过。
 
 ## 最新 AI 内容编排真实可用性修复（2026-10-20；提示词/Provider/改写接口已 LIVE_VERIFIED）
 

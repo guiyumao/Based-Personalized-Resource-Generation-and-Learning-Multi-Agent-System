@@ -103,6 +103,7 @@ class LearningPathService:
             # Constructive gate: prefer reviewed public knowledge, but a missing
             # subject/point/content/index downgrades to a personal AI draft instead
             # of terminating the learner's request.
+            personal_draft = None
             try:
                 knowledge = dict(require_plan_knowledge(
                     self.db, request.user_id, request.subject, request.knowledge_point))
@@ -110,8 +111,20 @@ class LearningPathService:
             except HTTPException:
                 knowledge = assess_plan_knowledge(
                     self.db, request.user_id, request.subject, request.knowledge_point)
-            request = request.model_copy(update={"knowledge_point": knowledge["knowledge_point"],
-                "retrieval_context": {"retrieved_chunks": knowledge["usable_chunks"]}})
+            if knowledge.get("mode") == "personal_draft":
+                # P0-2: build (or reuse) a personal subject draft so the plan is
+                # grounded on a structured outline, never on the public catalog.
+                from services.agent_service.app.services.knowledge_bootstrap import (
+                    build_personal_draft,
+                )
+                personal_draft = build_personal_draft(
+                    self.db, request.user_id, request.subject, request.knowledge_point)
+                request = request.model_copy(update={
+                    "retrieval_context": {"retrieved_chunks": personal_draft["chunks"],
+                                          "personal_outline": personal_draft["outline"]}})
+            else:
+                request = request.model_copy(update={"knowledge_point": knowledge["knowledge_point"],
+                    "retrieval_context": {"retrieved_chunks": knowledge["usable_chunks"]}})
         payload = self._generate_path_with_llm(request, teacher_scope)
         if knowledge:
             mode = knowledge.get("mode", "public")
@@ -138,6 +151,9 @@ class LearningPathService:
                 # gap reason/id so the plan traces back to the auto-construction gap.
                 payload["knowledge_gap_reason"] = knowledge.get("reason")
                 payload["knowledge_gap_id"] = knowledge.get("gap_id")
+                if personal_draft:
+                    payload["knowledge_draft"] = personal_draft["outline"]
+                    payload["knowledge_draft_task_id"] = personal_draft.get("task_id")
         payload["generation_source"] = "llm"
         if source_analysis_id is not None:
             payload["source_transcript_analysis_id"] = source_analysis_id
