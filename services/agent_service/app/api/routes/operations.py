@@ -58,7 +58,7 @@ def task_summary(kind, task, now):
         "attempt": task.execution_attempt,
         "error_code": code(task.error_code),
         "created_at": task.created_at,
-        "started_at": task.started_at,
+        "started_at": getattr(task, "started_at", None),
         "completed_at": task.completed_at,
         "heartbeat_at": task.heartbeat_at,
         "heartbeat_age_seconds": interval,
@@ -93,8 +93,8 @@ def operations_overview(days: int = Query(7, ge=1, le=90), db: Session = Depends
             .all()
         )
     budget_scopes = [f"day:{now:%Y%m%d}", f"month:{now:%Y%m}"]
-    from services.agent_service.app.api.routes.model_usage import usage_summary, worker_instances
     from common.models.operations import ModelCall
+    from services.agent_service.app.api.routes.model_usage import usage_summary, worker_instances
     usage = usage_summary(db.query(ModelCall).filter(ModelCall.mode == "LIVE", ModelCall.started_at >= cutoff))
     worker_data = worker_instances(db)
     budgets = [

@@ -83,3 +83,34 @@ def test_task_counts_unknown_usage_details_and_role_boundary(db_session, test_us
         db_session.commit()
         db_session.delete(session)
         db_session.commit()
+
+
+def test_operations_handles_knowledge_task_without_started_at(db_session, test_user):
+    """KnowledgeBuildTask has no started_at; the overview must not 500 on it."""
+    from common.models.learning import KnowledgeBuildTask
+
+    knowledge_task = KnowledgeBuildTask(
+        actor_user_id=test_user.id,
+        client_request_id="knowledge-ops-fixture",
+        request_hash="f" * 64,
+        trigger_source="manual",
+        operation_type="SEARCH_SOURCES",
+        subject="fixture",
+        status="COMPLETED",
+    )
+    db_session.add(knowledge_task)
+    db_session.commit()
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+        id=test_user.id, role="admin"
+    )
+    client = TestClient(app)
+    try:
+        response = client.get("/admin/operations")
+        assert response.status_code == 200, response.text
+        kinds = {row["kind"] for row in response.json()["recent_tasks"]}
+        assert "knowledge" in kinds
+    finally:
+        app.dependency_overrides.clear()
+        db_session.delete(knowledge_task)
+        db_session.commit()

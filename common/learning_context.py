@@ -94,7 +94,6 @@ def create_context(
 ) -> LearningContext:
     plan, _, task = _task(db, user_id, plan_id, module_id, task_key)
     plan_data = plan.path_data_json or {}
-    personal_draft = plan_data.get("knowledge_scope") == "personal_draft"
     subject_name = str(plan_data.get("subject", "")).strip().casefold()
     subjects = db.query(SystemSubject).all()
     subject = next(
@@ -110,9 +109,8 @@ def create_context(
         ),
         None,
     )
-    if subject is None and not personal_draft:
-        raise HTTPException(409, "Plan subject must exist in the knowledge catalog")
-
+    # No public subject (legacy plan or personal draft): fall back to an
+    # owner-scoped personal knowledge point instead of blocking the workspace.
     task_point = str(task.get("knowledge_point") or "").strip()
     points: list[KnowledgePoint] = []
     if subject is not None and task_point:

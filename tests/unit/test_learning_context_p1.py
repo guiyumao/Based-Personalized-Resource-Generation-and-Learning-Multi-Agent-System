@@ -449,3 +449,33 @@ def test_personal_draft_plan_can_open_workspace_context(tmp_path):
         # No public catalog entry was created for the personal draft.
         assert db.query(SystemSubject).count() == 0
     engine.dispose()
+
+
+def test_legacy_plan_with_unknown_subject_can_open_workspace_context(tmp_path):
+    """Old plans whose subject was never catalogued must still open in the workspace."""
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'legacy.sqlite'}", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        db.add(User(id=1, username="owner", password_hash="unused"))
+        db.add(
+            LearningPath(
+                id=1, user_id=1, status="active",
+                path_data_json={
+                    "subject": "Python 程序设计", "path_revision": 0,
+                    "stages": [{"stage_id": "s1", "tasks": [{"task_id": "t1", "knowledge_point": "Python 循环"}]}],
+                },
+            )
+        )
+        db.commit()
+        assert db.query(SystemSubject).count() == 0
+        row = create_context(
+            db, 1, client_request_id="legacy-ctx-1",
+            plan_id=1, module_id="s1", task_key="t1",
+        )
+        point = db.get(KnowledgePoint, row.knowledge_point_id)
+        assert point is not None
+        assert point.subject_id is None
+        assert db.query(SystemSubject).count() == 0
+    engine.dispose()
