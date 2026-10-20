@@ -106,6 +106,38 @@ def _try_llm_outline(subject: str, knowledge_point: str) -> dict | None:
         return None
 
 
+def _index_personal_chunks(user_id: int, subject: str, chunks: list[dict]) -> None:
+    """Best-effort upsert of personal chunks into the owner-scoped Chroma namespace.
+
+    Public retrieval fail-closes ``scope=personal_draft`` (see ``visible_chunks``);
+    the owner reads them through ``ChromaRetriever.retrieve_personal``. If Chroma
+    is unavailable the structured chunks still ground plan generation directly.
+    """
+    try:
+        from services.agent_service.app.services.rag import ChromaRetriever
+        retriever = ChromaRetriever()
+        if not retriever.is_available:
+            return
+        ids: list[str] = []
+        documents: list[str] = []
+        metadatas: list[dict] = []
+        for index, chunk in enumerate(chunks):
+            meta = dict(chunk.get("metadata") or {})
+            meta["owner_user_id"] = str(user_id)
+            meta["scope"] = "personal_draft"
+            meta.setdefault("subject", subject)
+            key = hashlib.sha256(
+                json.dumps(chunk, ensure_ascii=False, sort_keys=True).encode()
+            ).hexdigest()[:24]
+            ids.append(f"personal-{user_id}-{key}-{index}")
+            documents.append(str(chunk.get("content") or ""))
+            metadatas.append(meta)
+        if ids:
+            retriever.upsert_documents(ids, documents, metadatas)
+    except Exception as exc:  # Chroma down / not installed must not block the plan
+        logger.warning("personal draft vector index skipped: %s", exc)
+
+
 def build_personal_draft(db: Session, user_id: int, subject: str, knowledge_point: str) -> dict:
     """Return ``{outline, chunks, reused, task_id}`` for a personal subject draft."""
     subject = (subject or "").strip()[:100]
@@ -160,4 +192,5 @@ def build_personal_draft(db: Session, user_id: int, subject: str, knowledge_poin
             return {"outline": outline, "chunks": chunks, "reused": True, "task_id": existing.id}
         raise
     db.refresh(task)
+    _index_personal_chunks(user_id, subject, chunks)
     return {"outline": outline, "chunks": chunks, "reused": False, "task_id": task.id}

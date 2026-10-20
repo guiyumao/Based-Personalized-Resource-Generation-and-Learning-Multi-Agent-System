@@ -28,6 +28,14 @@ def verifying(source: str):
 
 
 def visible_chunks(rows: list[dict]) -> list[dict]:
+    # Personal AI-draft chunks (P0-4) are only readable through the owner-scoped
+    # ``ChromaRetriever.retrieve_personal`` path. The public gate fail-closes them
+    # so a learner's private draft can never leak into public retrieval.
+    rows = [
+        row for row in rows
+        if str((row.get("metadata") or {}).get("scope") or "") != "personal_draft"
+    ]
+
     def source(row):
         return str((row.get("metadata") or {}).get("source") or "")
 

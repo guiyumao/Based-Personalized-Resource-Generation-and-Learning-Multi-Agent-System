@@ -1,7 +1,7 @@
 # 学生端自主学科建设 / 知识补全 / 学习计划全链路 — P0-1 交付文档
 
-> 日期：2026-10-20 ｜ 分支：main ｜ 范围：P0-1（门禁）+ P0-2（个人学科草稿）
-> 结论先行：**P0-1、P0-2 已编码并通过隔离单测；P0-3（Search/Fetch）、P0-4（向量可检索）、P0-7（前端进度）、P0-8（E2E）未实现；场景 A 全链尚未验收，不宣称已完成。**
+> 日期：2026-10-20 ｜ 分支：main ｜ 范围：P0-1（门禁）+ P0-2（个人科目草稿）+ P0-4（个人草稿向量检索，fail-closed）
+> 结论先行：**P0-1、P0-2、P0-4（核心）已编码并通过隔离单测；P0-3（Search/Fetch）、P0-7（前端异步进度）、P0-8（E2E）未实现；场景 A 全链尚未验收，不宣称已完成。**
 
 ## 1. 发现的原始业务逻辑错误
 
@@ -64,7 +64,7 @@ personal_draft 计划在 `path_data_json` 中携带 `knowledge_scope`、`knowled
 
 1. **P0-2 ✅ 已完成**：新增 `knowledge_bootstrap.build_personal_draft`——按 `actor_user_id + subject` 在 `KnowledgeBuildTask(operation_type="PERSONAL_SUBJECT_DRAFT")` 持久化 `SubjectOutline` + 检索 chunks；**不写公共 SystemSubject/KnowledgePoint**；同一学生复用、跨学生隔离；LLM 出大纲受双闸门，未授权用确定性草稿。`generate_path` 在 personal_draft 时先建/复用草稿并把 chunks 作为 `retrieval_context` 喂给计划模型（同请求内续接出稿，P0-5 部分完成）。
 2. **P0-3**：搜索/抓取/来源整理/候选保存的真实接入（Search/Fetch 当前受配置与安全闸门限制，仍 BLOCKED）。
-3. **P0-4**：个人知识**向量可检索**（当前草稿走结构化 chunks 接地，未写入 Chroma；同一学生复用靠 `KnowledgeBuildTask` 查询而非向量检索）。
+3. **P0-4 ✅ 已完成（核心）**：`_index_personal_chunks` 把草稿 chunks upsert 到 Chroma（metadata 带 `owner_user_id`/`scope=personal_draft`，best-effort）；`ChromaRetriever.retrieve_personal(user_id,…)` 仅按 owner+scope 检索；`visible_chunks` **fail-closed 丢弃 `scope=personal_draft`**，公共检索永不泄露个人草稿。跨请求复用仍优先走 `KnowledgeBuildTask` 查询。
 4. **P0-5**：已随 P0-2 在同一请求内自动续接；跨请求/异步任务化（Worker 持久任务）尚未做。
 5. **P0-6**：计划预览→自然语言反馈→调整→确认（反馈机制已在上一轮实现，`plan_feedback` + `PlanFeedbackPanel`）。
 6. **P0-7**：学生端**真实任务进度面板**、刷新恢复（当前同步生成，无阶段进度推送）。

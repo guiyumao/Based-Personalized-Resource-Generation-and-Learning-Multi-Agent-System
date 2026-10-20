@@ -14,7 +14,10 @@ from services.agent_service.app.services.learning_path import LearningPathServic
 
 
 @pytest.fixture
-def boot_db():
+def boot_db(monkeypatch):
+    # Never touch a real Chroma collection from unit tests.
+    from services.agent_service.app.services import knowledge_bootstrap
+    monkeypatch.setattr(knowledge_bootstrap, "_index_personal_chunks", lambda *a, **k: None)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine)() as db:
@@ -62,6 +65,33 @@ def test_personal_draft_is_isolated_per_learner(boot_db):
     assert db.query(KnowledgeBuildTask).filter_by(subject="数据结构").count() == 2
     # each learner only sees their own task under their own actor id
     assert db.query(KnowledgeBuildTask).filter_by(subject="数据结构", actor_user_id=1).count() == 1
+
+
+def test_visible_chunks_drops_personal_draft_rows():
+    from services.agent_service.app.services.knowledge_publication import visible_chunks
+    rows = [
+        {"id": "pub", "metadata": {"source": "docs/pub.md"}},
+        {"id": "personal", "metadata": {"source": "personal_draft", "scope": "personal_draft"}},
+    ]
+    assert [row["id"] for row in visible_chunks(rows)] == ["pub"]
+
+
+def test_retrieve_personal_scopes_to_owner_and_scope():
+    from services.agent_service.app.services.rag import ChromaRetriever
+    captured = {}
+
+    def fake_unchecked(query, top_k=None, **kwargs):
+        captured.update(kwargs)
+        return [{"id": "x", "content": "c",
+                 "metadata": {"scope": "personal_draft", "owner_user_id": "7"}}]
+
+    retriever = ChromaRetriever.__new__(ChromaRetriever)  # bypass __init__ (no Chroma)
+    retriever._retrieve_with_metadata_unchecked = fake_unchecked
+    rows = retriever.retrieve_personal(7, "链表", subject="数据结构")
+    assert rows
+    assert captured["filters"] == {"owner_user_id": "7", "scope": "personal_draft", "subject": "数据结构"}
+    assert captured["cache_scope"] == "private"
+    assert captured["user_id"] == 7
 
 
 def test_generate_path_uses_personal_outline_when_subject_missing(boot_db, monkeypatch):

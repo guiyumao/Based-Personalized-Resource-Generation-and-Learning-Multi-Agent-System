@@ -357,6 +357,9 @@ def _normalize_filters(filters: dict[str, Any] | None) -> dict[str, str | int | 
         "knowledge_point_id", "knowledge_point_name", "teacher_scope", "version",
         "source", "source_site", "source_type", "university", "course", "difficulty",
         "language", "license",
+        # Personal AI-draft namespace (P0-4). Public retrieval never sends these,
+        # and ``visible_chunks`` drops ``scope=personal_draft`` fail-closed.
+        "owner_user_id", "scope",
     }
     return {
         key: value
@@ -651,6 +654,28 @@ class ChromaRetriever:
     ) -> list[dict[str, Any]]:
         return self.retrieve_with_metadata(
             query, top_k, filters=filters, cache_scope=cache_scope, user_id=user_id,
+        )
+
+    def retrieve_personal(
+        self,
+        user_id: int | str,
+        query: str,
+        *,
+        subject: str = "",
+        top_k: int = 6,
+    ) -> list[dict[str, Any]]:
+        """Retrieve only this learner's own personal AI-draft chunks (P0-4).
+
+        Owner-scoped at the store layer and intentionally bypasses the public
+        ``visible_chunks`` gate (which fail-closes ``scope=personal_draft``), so a
+        personal draft is reusable by its owner but never leaks into public
+        retrieval.
+        """
+        filters: dict[str, Any] = {"owner_user_id": str(user_id), "scope": "personal_draft"}
+        if subject:
+            filters["subject"] = subject
+        return self._retrieve_with_metadata_unchecked(
+            query, top_k, filters=filters, cache_scope="private", user_id=user_id,
         )
 
     def retrieve_by_tags(

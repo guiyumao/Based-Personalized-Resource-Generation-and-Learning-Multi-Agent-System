@@ -8,7 +8,9 @@
 - **P0-2 个人草稿**：新增 `knowledge_bootstrap.build_personal_draft`——按 `actor_user_id + subject` 在 `KnowledgeBuildTask(operation_type="PERSONAL_SUBJECT_DRAFT")` 中持久化 `SubjectOutline` + 检索 chunks；**不写公共 SystemSubject/KnowledgePoint**、不建平行库；同一学生复用（不重复生成）、跨学生隔离。LLM 出大纲走 `plan_subject`（schema 校验）且受 `RUN_LIVE_LLM=1 && DEEPSEEK_LIVE_PAID_ACK=1` 双闸门，未授权时用确定性草稿（标 `source=deterministic_fallback`）。
 - **自动续接（P0-5 部分）**：`generate_path` 在 personal_draft 时先建/复用草稿，把草稿 chunks 作为 `retrieval_context` 喂给计划模型，同一请求内续接出稿；计划标 `knowledge_scope="personal_draft"`、`knowledge_draft`、`knowledge_draft_task_id`，**不冒充公共正式知识**。
 - 证据：`test_plan_knowledge_p1.py` 10 passed（未知学科→personal_draft、不建公共学科、缺口=1）；新增 `test_knowledge_bootstrap.py` **3 passed**（个人且可复用、跨学生隔离、generate_path 用个人草稿 chunks 接地且无 subject_id/versions）；相关回归合计 **48 passed**；改动文件 Ruff 通过；前端 build 退出 0。
-- **P0-1/P0-2 已完成并隔离测试通过**；剩余：P0-3（Search/Fetch 外部接入，DEV_STATE 记录 Search/Fetch 仍受授权限制）、P0-4 向量可检索（当前草稿走结构化 chunks 接地，未入 Chroma）、P0-6 已由上一轮反馈机制覆盖、P0-7 前端真实进度面板、P0-8 A–G E2E。运行中 8002 仍是 20:07 旧构建，需重启才加载本改动；不冒充场景 A 已全链通过。
+- **P0-4 个人草稿向量可检索**：`knowledge_bootstrap._index_personal_chunks` 把草稿 chunks upsert 到 Chroma（best-effort，metadata 带 `owner_user_id`/`scope=personal_draft`）；`rag._normalize_filters` 允许 `owner_user_id/scope`；新增 `ChromaRetriever.retrieve_personal(user_id, …)` 仅按 owner+scope 检索；`knowledge_publication.visible_chunks` **fail-closed 丢弃 `scope=personal_draft`**，公共检索永不泄露个人草稿。
+- 证据：`test_knowledge_bootstrap.py` 5 passed（+visible_chunks 丢弃个人草稿、retrieve_personal 只按 owner+scope）；knowledge/rag/publication 相关 89 passed；改动文件 Ruff 通过。
+- **P0-1/P0-2/P0-4（核心）已完成并隔离测试通过**；剩余：P0-3（Search/Fetch 外部接入，受授权限制）、P0-7 前端真实进度面板（当前同步生成）、P0-8 A–G E2E。运行中 8002 已于 21:12 重启加载 P0-1/P0-2；P0-4 的 Chroma upsert 在下次生成个人草稿时生效（若 Chroma 不可用则跳过、结构化 chunks 仍接地）。不冒充场景 A 已全链通过。
 
 ## 最新 AI 内容编排真实可用性修复（2026-10-20；提示词/Provider/改写接口已 LIVE_VERIFIED）
 
