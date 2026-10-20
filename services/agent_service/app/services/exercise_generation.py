@@ -490,6 +490,13 @@ class ExerciseGenerationService:
                         limit=final_k,
                         mode=request.performance_mode,
                     )
+                    # P0-4: ground on the learner's own personal draft when public
+                    # knowledge is empty (owner-scoped, never public).
+                    if not chunks and request.user_id:
+                        try:
+                            chunks = retriever.retrieve_personal(request.user_id, query, top_k=final_k)
+                        except Exception:
+                            chunks = []
             except Exception:
                 chunks = []
 

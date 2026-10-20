@@ -201,6 +201,13 @@ class ResourceGenerationService:
             limit=final_count,
             mode=request.performance_mode,
         )
+        # P0-4: when public knowledge is empty, ground on the learner's own
+        # owner-scoped personal draft (never another learner's, never public).
+        if not chunks and request.user_id:
+            try:
+                chunks = self.retriever.retrieve_personal(request.user_id, query, top_k=final_count)
+            except Exception:
+                chunks = []
         payload = context.model_dump()
         payload["retrieved_chunks"] = chunks
         payload["source_ids"] = [str(item.get("id", "")) for item in chunks if item.get("id")]
