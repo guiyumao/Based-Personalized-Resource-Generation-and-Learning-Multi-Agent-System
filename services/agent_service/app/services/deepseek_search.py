@@ -7,9 +7,9 @@ import os
 import re
 import socket
 import time
-from uuid import uuid4
 from typing import Any
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 import httpx
 
@@ -28,12 +28,29 @@ class DeepSeekSearchUnavailable(RuntimeError):
         self.code = code
 
 
+def _allow_fake_ip() -> bool:
+    """Explicit, opt-in relaxation for local fake-IP DNS proxies (e.g. Clash/Surge).
+
+    The machine resolves every public host to a fake 198.18.0.0/15 address, which
+    is not "global" and would otherwise fail the SSRF check. This is only enabled
+    when the operator sets ``DEEPSEEK_SEARCH_ALLOW_FAKE_IP=1`` after accepting the
+    security trade-off (the real fetch still happens on DeepSeek's server side).
+    """
+    return os.getenv("DEEPSEEK_SEARCH_ALLOW_FAKE_IP", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 def _resolve_public_host(host: str) -> bool:
     try:
         addresses = {row[4][0] for row in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}
     except OSError:
         return False
-    return bool(addresses) and all(ipaddress.ip_address(address).is_global for address in addresses)
+    if not addresses:
+        return False
+    if _allow_fake_ip():
+        return True
+    return all(ipaddress.ip_address(address).is_global for address in addresses)
 
 
 def _public_url(url: str) -> bool:
@@ -97,22 +114,29 @@ def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def search_sources(query: str, *, count: int = 5) -> list[dict[str, str]]:
+def search_sources(query: str, *, count: int = 5, need_content: bool = False) -> list[dict[str, str]]:
     query = query.strip()
     if not 1 <= len(query) <= 128 or not 1 <= count <= 5:
         raise ValueError("Search query or result count is out of bounds")
-    data = _post("/v1/tools/search", {"query": query, "count": count, "need_content": False})
+    data = _post("/v1/tools/search", {"query": query, "count": count, "need_content": need_content})
     rows = data.get("results")
     if not isinstance(rows, list):
         raise DeepSeekSearchUnavailable("DeepSeek Search returned no results array")
-    return [
-        {
+    output: list[dict[str, str]] = []
+    for row in rows[:count]:
+        if not isinstance(row, dict) or not _public_url(str(row.get("url") or "")):
+            continue
+        item = {
             "title": str(row.get("title") or "")[:300],
             "url": str(row.get("url") or "")[:8192],
             "summary": str(row.get("summary") or row.get("snippet") or "")[:2000],
         }
-        for row in rows[:count] if isinstance(row, dict) and _public_url(str(row.get("url") or ""))
-    ]
+        if need_content:
+            # The public DeepSeek API has no /v1/tools/fetch endpoint (it 404s);
+            # search with need_content=True returns the page body inline instead.
+            item["content"] = str(row.get("content") or "")[:50000]
+        output.append(item)
+    return output
 
 
 def fetch_source(url: str) -> dict[str, Any]:

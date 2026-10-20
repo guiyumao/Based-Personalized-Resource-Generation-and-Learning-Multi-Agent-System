@@ -1,7 +1,7 @@
 # 学生端自主学科建设 / 知识补全 / 学习计划全链路 — P0-1 交付文档
 
-> 日期：2026-10-20 ｜ 分支：main ｜ 范围：P0-1（门禁）+ P0-2（个人科目草稿）+ P0-4（个人草稿向量检索，fail-closed）
-> 结论先行：**P0-1、P0-2、P0-4（核心）已编码并通过隔离单测；P0-3（Search/Fetch）、P0-7（前端异步进度）、P0-8（E2E）未实现；场景 A 全链尚未验收，不宣称已完成。**
+> 日期：2026-10-20 ｜ 分支：main ｜ 范围：P0-1（门禁）+ P0-2（个人学科草稿）+ P0-3（Search/Fetch 真实接入）+ P0-4（个人草稿向量检索，fail-closed）
+> 结论先行：**P0-1、P0-2、P0-3、P0-4（核心）已编码并通过隔离单测，P0-3 已用真实 Search 跑通；P0-7（前端异步进度）、P0-8（E2E）未实现；场景 A 全链尚未验收，不宣称已完成。**
 
 ## 1. 发现的原始业务逻辑错误
 
@@ -57,13 +57,14 @@ personal_draft 计划在 `path_data_json` 中携带 `knowledge_scope`、`knowled
   - **不创建公共 `SystemSubject`**（未知学科不会被提升为公共学科）。
 - 受影响回归：`test_coordinator` / `test_agent_routes_use_coordinator` / `test_learning_path_adjustment` / `test_transcript_learning_path` / `test_assistant_tasks` / `test_path_adaptation` / `test_plan_feedback` / `test_task_feedback` 合计 **89 passed**。
 - **P0-2（新增）**：`tests/unit/test_knowledge_bootstrap.py` **3 passed**——个人草稿可复用、跨学生隔离、`generate_path` 用个人草稿 chunks 接地且无 `subject_id`/`knowledge_versions`；连同门禁/反馈/路径测试本轮合计 **48 passed**。
-- Ruff：改动文件全部通过（`knowledge_bootstrap.py` / `learning_path.py` / 新增测试均通过；`coordinator.py` 两处 `I001` 为改动前既有导入排序问题，非本次引入）。
+- **P0-3 / P0-4（新增）**：`test_knowledge_bootstrap.py` 扩到 **9 passed**（+SSRF 开关、未授权不调用、授权时用内联正文建候选、visible_chunks 丢弃 personal、retrieve_personal 只按 owner+scope）；相关回归 **106 passed**。真实 Search：搜到清华《数据结构》第 3 章（正文 6528 字），候选 #1 DRAFT，草稿 37 chunks。
+- Ruff：改动文件全部通过（`knowledge_bootstrap.py` / `deepseek_search.py` / `learning_path.py` / 新增测试均通过；`coordinator.py` 两处 `I001` 为改动前既有导入排序问题，非本次引入）。
 - 前端 `npm run build`：退出 0（2.26s）。
 
 ## 6. 未完成 / 已完成边界（P0-2 ~ P0-8）
 
 1. **P0-2 ✅ 已完成**：新增 `knowledge_bootstrap.build_personal_draft`——按 `actor_user_id + subject` 在 `KnowledgeBuildTask(operation_type="PERSONAL_SUBJECT_DRAFT")` 持久化 `SubjectOutline` + 检索 chunks；**不写公共 SystemSubject/KnowledgePoint**；同一学生复用、跨学生隔离；LLM 出大纲受双闸门，未授权用确定性草稿。`generate_path` 在 personal_draft 时先建/复用草稿并把 chunks 作为 `retrieval_context` 喂给计划模型（同请求内续接出稿，P0-5 部分完成）。
-2. **P0-3**：搜索/抓取/来源整理/候选保存的真实接入（Search/Fetch 当前受配置与安全闸门限制，仍 BLOCKED）。
+2. **P0-3 ✅ 已完成（真实跑通）**：`_search_and_fetch_personal` 受双闸门控制，用 `search_sources(need_content=True)` 取真实正文（**发现 `/v1/tools/fetch` 在 DeepSeek 公开 API 上 404 不存在，改用 search 内联 `content`**），落 `KnowledgeCandidate(status=DRAFT, subject=personal_<hash>)`；`DEEPSEEK_SEARCH_ALLOW_FAKE_IP=1` 显式放宽 SSRF（本机 fake-IP DNS）。真实证据：搜到清华《数据结构》第 3 章，正文 6528 字，候选 #1 DRAFT，草稿 37 chunks。默认不调用，需显式授权三元组。
 3. **P0-4 ✅ 已完成（核心）**：`_index_personal_chunks` 把草稿 chunks upsert 到 Chroma（metadata 带 `owner_user_id`/`scope=personal_draft`，best-effort）；`ChromaRetriever.retrieve_personal(user_id,…)` 仅按 owner+scope 检索；`visible_chunks` **fail-closed 丢弃 `scope=personal_draft`**，公共检索永不泄露个人草稿；`resource_generation`/`exercise_generation` 在公共检索为空时回退到本人草稿，使课件/习题也能被个人知识支撑。跨请求复用仍优先走 `KnowledgeBuildTask` 查询。
 4. **P0-5**：已随 P0-2 在同一请求内自动续接；跨请求/异步任务化（Worker 持久任务）尚未做。
 5. **P0-6**：计划预览→自然语言反馈→调整→确认（反馈机制已在上一轮实现，`plan_feedback` + `PlanFeedbackPanel`）。

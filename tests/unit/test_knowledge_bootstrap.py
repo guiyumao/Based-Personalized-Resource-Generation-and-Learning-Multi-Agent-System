@@ -94,6 +94,60 @@ def test_retrieve_personal_scopes_to_owner_and_scope():
     assert captured["user_id"] == 7
 
 
+def test_ssrf_allows_fake_ip_only_when_explicitly_enabled(monkeypatch):
+    import services.agent_service.app.services.deepseek_search as ds
+    monkeypatch.delenv("DEEPSEEK_SEARCH_ALLOW_FAKE_IP", raising=False)
+    # localhost resolves to 127.0.0.1 which is not a global IP -> rejected by default
+    assert ds._resolve_public_host("localhost") is False
+    monkeypatch.setenv("DEEPSEEK_SEARCH_ALLOW_FAKE_IP", "1")
+    assert ds._resolve_public_host("localhost") is True
+
+
+def test_search_and_fetch_is_guarded_when_not_authorized(monkeypatch):
+    import services.agent_service.app.services.deepseek_search as ds
+    from services.agent_service.app.services import knowledge_bootstrap as kb
+    monkeypatch.delenv("RUN_LIVE_LLM", raising=False)
+    monkeypatch.delenv("DEEPSEEK_LIVE_PAID_ACK", raising=False)
+    called = []
+    monkeypatch.setattr(ds, "search_sources", lambda *a, **k: called.append("search") or [])
+    assert kb._search_and_fetch_personal(object(), 1, "数据结构", "链表") is None
+    assert called == []
+
+
+def test_search_and_fetch_uses_inline_content_when_authorized(boot_db, monkeypatch):
+    import services.agent_service.app.services.deepseek_search as ds
+    from services.agent_service.app.services import knowledge_bootstrap as kb
+    db = boot_db
+    monkeypatch.setenv("RUN_LIVE_LLM", "1")
+    monkeypatch.setenv("DEEPSEEK_LIVE_PAID_ACK", "1")
+    monkeypatch.setattr(ds, "search_sources", lambda query, count=5, need_content=False: [
+        {"title": "t", "url": "https://example.com/a", "summary": "s", "content": "x" * 40},
+    ])
+    out = kb._search_and_fetch_personal(db, 1, "数据结构", "链表")
+    assert out is not None
+    assert out["chunk"]["content"] == "x" * 40
+    task = db.query(KnowledgeBuildTask).filter_by(
+        actor_user_id=1, operation_type="FETCH_SOURCE").one()
+    assert task.status == "COMPLETED"
+    assert task.result_json["source"]["content"] == "x" * 40
+
+
+def test_build_personal_draft_includes_enriched_source(boot_db, monkeypatch):
+    from services.agent_service.app.services import knowledge_bootstrap as kb
+    db = boot_db
+    monkeypatch.setattr(kb, "_search_and_fetch_personal", lambda *a, **k: {
+        "candidate_id": 9,
+        "source": {"url": "https://example.com/a", "title": "t"},
+        "chunk": {"content": "real fetched content",
+                  "metadata": {"source": "https://example.com/a", "scope": "personal_draft"}},
+    })
+    draft = kb.build_personal_draft(db, 1, "数据结构", "链表")
+    assert draft["sources"][0]["url"] == "https://example.com/a"
+    assert any(c["content"] == "real fetched content" for c in draft["chunks"])
+    task = db.query(KnowledgeBuildTask).filter_by(actor_user_id=1, subject="数据结构").one()
+    assert task.result_json["candidate_id"] == 9
+
+
 def test_generate_path_uses_personal_outline_when_subject_missing(boot_db, monkeypatch):
     db = boot_db
     captured = {}

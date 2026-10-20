@@ -548,6 +548,9 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
                   <strong>{{ chapter.name }}</strong>：{{ (chapter.points || []).map(point => point.name).join('、') }}
                 </li>
               </ul>
+              <p v-if="learningPath.knowledge_sources?.length" class="knowledge-sources">
+                参考来源：<template v-for="(source, index) in learningPath.knowledge_sources" :key="index">{{ source.title || source.url }}<template v-if="index < learningPath.knowledge_sources.length - 1">；</template></template>
+              </p>
             </div>
           </el-alert>
           <PlanFeedbackPanel @updated="learningPath = $event" />

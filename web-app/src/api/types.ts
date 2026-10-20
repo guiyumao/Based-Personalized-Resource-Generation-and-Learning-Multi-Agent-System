@@ -196,6 +196,7 @@ export type LearningPathResponse = {
   knowledge_gap_reason?: string
   knowledge_gap_id?: string
   knowledge_draft_task_id?: number
+  knowledge_sources?: Array<{ url?: string; title?: string }>
   knowledge_draft?: {
     name: string
     description?: string

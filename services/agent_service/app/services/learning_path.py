@@ -154,6 +154,7 @@ class LearningPathService:
                 if personal_draft:
                     payload["knowledge_draft"] = personal_draft["outline"]
                     payload["knowledge_draft_task_id"] = personal_draft.get("task_id")
+                    payload["knowledge_sources"] = personal_draft.get("sources") or []
         payload["generation_source"] = "llm"
         if source_analysis_id is not None:
             payload["source_transcript_analysis_id"] = source_analysis_id
