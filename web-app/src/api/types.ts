@@ -191,6 +191,16 @@ export type LearningPathResponse = {
   teacher_scope?: TeachingScopeItem | null
   generation_source?: 'llm' | null
   source_transcript_analysis_id?: number | null
+  // P0-1/P0-2: personal AI-draft provenance (never public reviewed knowledge).
+  knowledge_scope?: 'public' | 'personal_draft'
+  knowledge_gap_reason?: string
+  knowledge_gap_id?: string
+  knowledge_draft_task_id?: number
+  knowledge_draft?: {
+    name: string
+    description?: string
+    chapters: Array<{ name: string; points: Array<{ name: string }> }>
+  }
 }
 
 export type AgentExecutionOutput<T = unknown> = {

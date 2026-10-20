@@ -535,6 +535,21 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
         <el-alert v-if="knowledgeCheck" :title="knowledgeCheck.message" :type="knowledgeCheck.ready ? 'success' : (knowledgeCheck.mode === 'personal_draft' ? 'info' : 'warning')" :closable="false"><span v-if="knowledgeCheck.gap_id && knowledgeCheck.mode !== 'personal_draft'">缺口请求 #{{ knowledgeCheck.gap_id }}，请管理员在知识库中处理后重试。</span></el-alert>
 
         <div v-if="learningPath" class="timeline">
+          <el-alert
+            v-if="learningPath.knowledge_scope === 'personal_draft'"
+            type="info"
+            :closable="false"
+            title="本次已自动构建个人学习知识草稿（未经公共审核，不作为正式公共知识）"
+          >
+            <div class="knowledge-draft">
+              <p>{{ learningPath.knowledge_draft?.description || learningPath.subject }}</p>
+              <ul>
+                <li v-for="chapter in (learningPath.knowledge_draft?.chapters || [])" :key="chapter.name">
+                  <strong>{{ chapter.name }}</strong>：{{ (chapter.points || []).map(point => point.name).join('、') }}
+                </li>
+              </ul>
+            </div>
+          </el-alert>
           <PlanFeedbackPanel @updated="learningPath = $event" />
           <PlanAdaptationPanel @updated="learningPath = $event" />
           <article v-for="stage in learningPath.stages" :key="stage.stage_id" class="stage-item">
@@ -737,6 +752,18 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
   border-radius: 12px;
   color: var(--red);
   background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+
+.knowledge-draft p {
+  margin: 6px 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.knowledge-draft ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  line-height: 1.8;
 }
 
 .timeline {
