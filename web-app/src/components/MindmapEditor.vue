@@ -1,0 +1,14 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import { agentApi } from '../api/http'
+const props=defineProps<{contextId:string; version:string; structured:string}>()
+const emit=defineEmits<{saved:[]}>()
+function initial() { try {const value=JSON.parse(props.structured); return value.structured?.nodes ?? value.nodes ?? []} catch {return []} }
+const nodes=ref<{id:string;label:string;parent_id:string|null}[]>(initial())
+const zoom=ref(1); const error=ref(''); const history=ref<any[]>([])
+const edges=computed(()=>nodes.value.filter(n=>n.parent_id).map(n=>({child:nodes.value.indexOf(n),parent:nodes.value.findIndex(p=>p.id===n.parent_id)})).filter(e=>e.parent>=0))
+async function save() {try {await agentApi.put(`/learning/contexts/${props.contextId}/mindmap`,{expected_resource_version:props.version,nodes:nodes.value.map(node=>({...node,parent_id:node.parent_id||null}))}); emit('saved')} catch(reason:any) {error.value=reason?.response?.data?.detail || '导图保存失败'} }
+async function readHistory() {try {history.value=(await agentApi.get(`/learning/contexts/${props.contextId}/resource-history`)).data.items} catch {error.value='历史读取失败'} }
+</script>
+<template><section aria-label="思维导图编辑器"><div><el-button @click="zoom=Math.min(2,zoom+.2)">放大</el-button><el-button @click="zoom=Math.max(.5,zoom-.2)">缩小</el-button><el-button @click="nodes.push({id:crypto.randomUUID(),label:'新节点',parent_id:nodes[0]?.id??null})">添加节点</el-button><el-button @click="save">保存导图新版本</el-button><el-button @click="readHistory">读取版本历史</el-button></div><div class="map-canvas"><svg :width="600*zoom" :height="Math.max(160,nodes.length*75)*zoom" :viewBox="`0 0 600 ${Math.max(160,nodes.length*75)}`"><line v-for="(edge,i) in edges" :key="i" x1="130" :y1="edge.parent*75+30" x2="300" :y2="edge.child*75+30" stroke="#8076df"/><g v-for="(node,i) in nodes" :key="node.id"><rect x="160" :y="i*75+8" width="350" height="45" rx="9" fill="#e8e5ff"/><text x="176" :y="i*75+36" fill="#292345">{{node.label}}</text></g></svg></div><div v-for="node in nodes" :key="node.id" class="node-edit"><el-input v-model="node.label" :aria-label="`节点${node.id}名称`"/><el-select v-model="node.parent_id" placeholder="根节点"><el-option label="根节点" :value="null"/><el-option v-for="parent in nodes.filter(p=>p.id!==node.id)" :key="parent.id" :value="parent.id" :label="parent.label"/></el-select><el-button @click="nodes=nodes.filter(n=>n.id!==node.id)">移除</el-button></div><el-alert v-if="error" :title="error" type="error"/><details v-if="history.length"><summary>已保存版本</summary><p v-for="item in history" :key="item.version">{{item.created_at}} · {{item.version}}</p></details></section></template>
+<style scoped>.map-canvas {overflow:auto;max-width:100%;margin:15px 0}.node-edit {display:flex;gap:8px;margin:8px 0;flex-wrap:wrap}.node-edit .el-input {flex:1;min-width:130px}.node-edit .el-select {width:140px}</style>

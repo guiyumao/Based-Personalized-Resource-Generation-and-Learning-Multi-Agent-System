@@ -2,6 +2,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { Connection, DataAnalysis, Guide } from '@element-plus/icons-vue'
 
 import { userApi, type AuthTokenResponse, type UserRegisterPayload } from '../api'
 import { useAuthStore } from '../stores/auth'
@@ -60,37 +61,35 @@ async function handleRegister() {
 
 <template>
   <div class="auth-shell">
-    <div class="auth-card">
-      <div class="login-kicker">Learning Agent Platform</div>
-      <h1>注册新账号</h1>
-      <p>创建账号后，系统会根据你的身份自动进入学生端、教师端或管理员端。</p>
+    <div class="auth-stage">
+      <aside class="auth-brand-panel">
+        <router-link to="/" class="auth-logo"><span><i></i><i></i><i></i></span><b>智学平台</b></router-link>
+        <div class="auth-brand-copy">
+          <span class="auth-eyebrow">PERSONALIZED LEARNING OS</span>
+          <h1>从一份真实画像<br />开始个性化学习</h1>
+          <p>注册学生账号后即可构建学习画像；教师与管理员账号由平台管理员创建或分配。</p>
+        </div>
+        <div class="auth-feature-list">
+          <div><el-icon><Guide /></el-icon><span><strong>学生工作台</strong><small>注册后进入个人学习空间</small></span></div>
+          <div><el-icon><DataAnalysis /></el-icon><span><strong>可追溯评估</strong><small>用实际练习和错题记录支撑学习建议</small></span></div>
+          <div><el-icon><Connection /></el-icon><span><strong>智能体协同</strong><small>画像、路径、资源与评估保持上下文衔接</small></span></div>
+        </div>
+      </aside>
 
-      <el-form :model="form" label-position="top" @submit.prevent="handleRegister">
-        <el-form-item label="用户名">
-          <el-input v-model="form.username" placeholder="请输入用户名" />
-        </el-form-item>
-        <el-form-item label="密码">
-          <el-input v-model="form.password" type="password" show-password placeholder="请输入至少 6 位密码" />
-        </el-form-item>
-        <el-form-item label="身份">
-          <el-select v-model="form.role" placeholder="请选择身份">
-            <el-option label="学生" value="student" />
-            <el-option label="教师" value="teacher" />
-            <el-option label="管理员" value="admin" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="form.email" placeholder="请输入邮箱（可选）" />
-        </el-form-item>
-        <el-button native-type="submit" type="primary" :loading="loading" class="auth-button">
-          注册并进入系统
-        </el-button>
-      </el-form>
-
-      <div class="auth-footer">
-        <span>已经有账号？</span>
-        <router-link to="/login">返回登录</router-link>
-      </div>
+      <main class="auth-card register-card">
+        <div class="login-kicker">创建账号</div>
+        <h2>开始使用智学平台</h2>
+        <p>公开注册创建学生账号；教师和管理员账号请联系平台管理员。</p>
+        <el-form :model="form" label-position="top" @submit.prevent="handleRegister">
+          <el-form-item label="用户名"><el-input v-model="form.username" autocomplete="username" placeholder="至少 3 个字符" /></el-form-item>
+          <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password autocomplete="new-password" placeholder="至少 6 位密码" /></el-form-item>
+          <el-form-item label="身份"><el-input model-value="学生" disabled /></el-form-item>
+          <el-form-item label="邮箱（可选）"><el-input v-model="form.email" type="email" autocomplete="email" placeholder="name@example.com" /></el-form-item>
+          <el-button native-type="submit" type="primary" :loading="loading" class="auth-button">注册并进入系统</el-button>
+        </el-form>
+        <div class="auth-footer"><span>已经有账号？</span><router-link to="/login">返回登录</router-link></div>
+        <router-link to="/" class="auth-back-link">返回产品首页</router-link>
+      </main>
     </div>
   </div>
 </template>

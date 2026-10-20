@@ -19,15 +19,42 @@ dependencies = [
     "neo4j>=5.23.0",
     "minio>=7.2.7",
     "pika>=1.3.2",
-    "elasticsearch>=8.15.0",
+    # elasticsearch>=8.15.0 resolved to elasticsearch-py 9.x, which negotiates
+    # Accept: application/vnd.elasticsearch+json; compatible-with=9 and is rejected
+    # by the 8.15.0 server with a 400 media_type_header_exception. The client major
+    # must track the pinned server major (see docker-compose.yml).
+    "elasticsearch>=8.15.0,<9",
     "langchain>=0.3.0",
     "langchain-core>=0.3.0",
     "langchain-community>=0.3.0",
     "langchain-openai>=0.2.0",
     "langgraph>=0.2.34",
-    "chromadb>=0.5.5",
+    # chromadb>=0.5.5 resolved to a 1.x client that speaks the /api/v2 protocol,
+    # while docker-compose runs the chromadb/chroma:0.5.5 image which only serves
+    # /api/v1. The HTTP-mode path (CHROMA_MODE=http, the documented default in
+    # .env.example) therefore fails with {"detail":"Not Found"}. The bound is kept
+    # to the version that has actually been exercised against the pinned server;
+    # raising it requires re-verifying the server image at the same time.
+    "chromadb>=0.5.5,<1.0",
     "httpx>=0.27.0",
     "orjson>=3.10.7",
+    "requests>=2.32.0",
+    "beautifulsoup4>=4.12.3",
+    "pypdf>=5.0.0",
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1.5",
+    "xlrd>=2.0.1",
+    "python-docx>=1.1.2",
+    "python-pptx>=1.0.2",
+    "defusedxml>=0.7.1",
+    # 10.4.0 carries 33 advisories that DO have upstream fixes (12.1.1/12.2.0/12.3.0),
+    # so any environment resolving to it is a blocking supply-chain finding. Raised to
+    # the fixed line; the image helpers used by transcript_parser were re-verified
+    # against 12.3.0 (grayscale/autocontrast/MedianFilter/ImageEnhance).
+    "Pillow>=12.3.0",
+    "pytesseract>=0.3.13",
+    "pypdfium2>=4.30.0",
+    "reportlab>=4.2.2",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +63,8 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.6.0",
+    "pip-audit>=2.7.0",
+    "bandit>=1.7.9",
 ]
 
 [tool.pytest.ini_options]
@@ -45,7 +74,46 @@ pythonpath = [
     "services/agent_service",
 ]
 testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+markers = [
+    "slow: tests that hit external AI providers or take more than a few seconds",
+    "live_llm: opt-in tests that call a real LLM provider; run with RUN_LIVE_LLM=1 pytest -m live_llm",
+    "external_service: opt-in tests that require PostgreSQL/Neo4j/Chroma; run with RUN_EXTERNAL_SERVICES=1",
+]
+
+[tool.coverage.run]
+source = ["common", "services"]
+omit = [
+    "*/__init__.py",
+    "services/*/app/main.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# Keep the gate focused on real defects first; style rules can be tightened later.
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # line length is enforced by the formatter, not the linter
+    "B008",  # FastAPI dependencies are intentionally called in argument defaults
+]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "node_modules"]
+skips = ["B101"]  # asserts are acceptable in this codebase's internal checks
+
+[tool.ruff.lint.per-file-ignores]
+# These modules intentionally configure sys.path before importing project code,
+# so the imports cannot sit at the very top of the file.
+"common/db/bootstrap_chat.py" = ["E402"]
+"scripts/create_tables.py" = ["E402"]
+"tests/test_chat_service.py" = ["E402"]
+# The one-off codemod scripts in tests/global keep long historical literals.
+"tests/global/_patch_eval_auth.py" = ["E501"]
+"tests/global/_patch_profile_tests.py" = ["E501"]

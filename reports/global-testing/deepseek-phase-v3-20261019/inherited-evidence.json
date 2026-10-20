@@ -1,0 +1,57 @@
+[
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\README.md",
+    "exists": true,
+    "sha256": "b5f32715bddb4d82307758d89ea97483656b33158d98fee38cc11d6eb797af29"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\DEEPSEEK_LIVE_SUMMARY.md",
+    "exists": true,
+    "sha256": "9b65a1b4b0c16ec52be5e5e486dc888b32e5657be429547b7f2373c861a87ee2"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\defect-register.md",
+    "exists": true,
+    "sha256": "67ea00b013af05a54a9538c422d506beaaf217202591a49bfb067d833af390e6"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\test-matrix.csv",
+    "exists": true,
+    "sha256": "6af7686aef42044486008ea566e0082c781bd55e97cbbd51dcb3967018e40c9a"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\environment.json",
+    "exists": true,
+    "sha256": "f818c767e34dcc434b8ecd004b2e143371204e178e4470b5ff5164bf44d46656"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\source-manifest.json",
+    "exists": true,
+    "sha256": "e49751894ffb82ec78af78208ed74942065192312826c87d35150b518c262c4f"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\request-ledger.jsonl",
+    "exists": true,
+    "sha256": "710017c36b71126f07df7c066680d7198d327ca467e1e3ad3c24a8a06475dd93"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\command-log.jsonl",
+    "exists": true,
+    "sha256": "b72f41980b0e3b97733bfdb23fc515de4900081e0bcb4b5b849f24d13c91e961"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\evidence\\incident-unauthorized-live.md",
+    "exists": true,
+    "sha256": "92b62b89f1873f3e0d17eab7f1909afc2e1f14b88fbf82e46cdabaab0fe218d3"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\evidence\\live-gate.log",
+    "exists": true,
+    "sha256": "21b1ff558eb0c94e87f1c03be2127f6b3d4fec3f551fb185fcacea95b52bbd87"
+  },
+  {
+    "path": "artifacts\\deepseek-live-20261019-173354\\evidence\\task-chain.log",
+    "exists": true,
+    "sha256": "fe508db9085963499871de61f41cd20280e498fcef3e6f5ffdae72764dd89e11"
+  }
+]

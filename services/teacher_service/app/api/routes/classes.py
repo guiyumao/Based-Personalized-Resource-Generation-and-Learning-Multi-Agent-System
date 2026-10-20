@@ -15,17 +15,20 @@ Auth classification:
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from common.dependencies import require_role
-from common.dependencies import get_current_user
+from common.dependencies import get_current_user, require_role
 from common.models.learning import User
 from common.schemas.response import ApiResponse
 from services.teacher_service.app.schemas.teacher import (
+    AssignmentItem,
     ClassCreate,
     ClassItem,
+    EnrollmentCreate,
     HomeworkAssign,
     ReviewPayload,
-    StudentLearningDetail,
     StudentInsight,
+    StudentLearningDetail,
+    SubmissionCreate,
+    SubmissionItem,
     TeacherTeachingAnalytics,
     TeachingScopeCreate,
     TeachingScopeItem,
@@ -36,13 +39,20 @@ router = APIRouter()
 manager = TeacherManager()
 
 
+def _enforce_class_access(class_id: int, user: User) -> None:
+    try:
+        manager.ensure_teacher_class_access(class_id, user.id, user.role)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 @router.get("/classes", response_model=ApiResponse[list[ClassItem]])
 def list_classes(
-    _user: User = Depends(require_role("teacher", "admin")),
+    current_user: User = Depends(require_role("teacher", "admin")),
 ) -> ApiResponse[list[ClassItem]]:
     """List all classes. (teacher, admin)"""
 
-    return ApiResponse(data=manager.list_classes(), message="Classes fetched successfully.")
+    return ApiResponse(data=manager.list_classes(current_user.id, current_user.role), message="Classes fetched successfully.")
 
 
 @router.post("/classes", response_model=ApiResponse[ClassItem])
@@ -52,16 +62,30 @@ def create_class(
 ) -> ApiResponse[ClassItem]:
     """Create a new class. (teacher only)"""
 
-    return ApiResponse(data=manager.create_class(payload), message="Class created successfully.")
+    return ApiResponse(data=manager.create_class(payload, _user.id), message="Class created successfully.")
+
+
+@router.post("/classes/{class_id}/enrollments", response_model=ApiResponse[ClassItem])
+def enroll_student(
+    class_id: int,
+    payload: EnrollmentCreate,
+    current_user: User = Depends(require_role("teacher")),
+) -> ApiResponse[ClassItem]:
+    try:
+        item = manager.enroll_student(class_id, payload.student_user_id, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ApiResponse(data=item, message="Student enrolled successfully.")
 
 
 @router.get("/classes/{class_id}/progress", response_model=ApiResponse[dict[str, object]])
 def get_class_progress(
     class_id: int,
-    _user: User = Depends(require_role("teacher", "admin")),
+    current_user: User = Depends(require_role("teacher", "admin")),
 ) -> ApiResponse[dict[str, object]]:
     """Get class progress overview. (teacher, admin)"""
 
+    _enforce_class_access(class_id, current_user)
     return ApiResponse(
         data=manager.get_student_progress(class_id),
         message="Class progress fetched successfully.",
@@ -71,10 +95,11 @@ def get_class_progress(
 @router.get("/classes/{class_id}/insights", response_model=ApiResponse[list[StudentInsight]])
 def get_class_insights(
     class_id: int,
-    _user: User = Depends(require_role("teacher", "admin")),
+    current_user: User = Depends(require_role("teacher", "admin")),
 ) -> ApiResponse[list[StudentInsight]]:
     """Get student insights for one class. (teacher, admin)"""
 
+    _enforce_class_access(class_id, current_user)
     return ApiResponse(
         data=manager.list_student_insights(class_id),
         message="Class student insights fetched successfully.",
@@ -85,10 +110,11 @@ def get_class_insights(
 async def get_student_learning_detail(
     class_id: int,
     user_id: int,
-    _user: User = Depends(require_role("teacher", "admin")),
+    current_user: User = Depends(require_role("teacher", "admin")),
 ) -> ApiResponse[StudentLearningDetail]:
     """Get one student's detailed mistake notebook and learning reports. (teacher, admin)"""
 
+    _enforce_class_access(class_id, current_user)
     try:
         detail = await manager.get_student_learning_detail(class_id, user_id)
     except ValueError as exc:
@@ -103,10 +129,11 @@ async def get_student_learning_detail(
 @router.get("/classes/{class_id}/teaching-scopes", response_model=ApiResponse[list[TeachingScopeItem]])
 def list_teaching_scopes(
     class_id: int,
-    _user: User = Depends(require_role("teacher", "admin")),
+    current_user: User = Depends(require_role("teacher", "admin")),
 ) -> ApiResponse[list[TeachingScopeItem]]:
     """List teacher-defined scopes for one class. (teacher, admin)"""
 
+    _enforce_class_access(class_id, current_user)
     return ApiResponse(
         data=manager.list_teaching_scopes(class_id),
         message="Teaching scopes fetched successfully.",
@@ -116,10 +143,11 @@ def list_teaching_scopes(
 @router.post("/teaching-scopes", response_model=ApiResponse[TeachingScopeItem])
 def create_teaching_scope(
     payload: TeachingScopeCreate,
-    _user: User = Depends(require_role("teacher")),
+    current_user: User = Depends(require_role("teacher")),
 ) -> ApiResponse[TeachingScopeItem]:
     """Define learning scope, direction, and courseware for students. (teacher only)"""
 
+    _enforce_class_access(payload.class_id, current_user)
     return ApiResponse(
         data=manager.create_teaching_scope(payload),
         message="Teaching scope created successfully.",
@@ -154,38 +182,84 @@ def list_student_teaching_scopes(
 @router.get("/classes/{class_id}/teaching-analytics", response_model=ApiResponse[TeacherTeachingAnalytics])
 def get_teaching_analytics(
     class_id: int,
-    _user: User = Depends(require_role("teacher", "admin")),
+    current_user: User = Depends(require_role("teacher", "admin")),
 ) -> ApiResponse[TeacherTeachingAnalytics]:
     """Get mistake statistics and teaching direction suggestions. (teacher, admin)"""
 
+    _enforce_class_access(class_id, current_user)
     return ApiResponse(
         data=manager.get_teaching_analytics(class_id),
         message="Teaching analytics fetched successfully.",
     )
 
 
-@router.post("/homework/assign", response_model=ApiResponse[dict[str, object]])
+@router.post("/homework/assign", response_model=ApiResponse[AssignmentItem])
 def assign_homework(
     payload: HomeworkAssign,
-    _user: User = Depends(require_role("teacher")),
-) -> ApiResponse[dict[str, object]]:
+    current_user: User = Depends(require_role("teacher")),
+) -> ApiResponse[AssignmentItem]:
     """Assign homework to a class. (teacher only)"""
 
+    _enforce_class_access(payload.class_id, current_user)
+    try:
+        item = manager.create_assignment(payload, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ApiResponse(data=item, message="Homework assigned successfully.")
+
+
+@router.get("/homework", response_model=ApiResponse[list[AssignmentItem]])
+def list_homework(current_user: User = Depends(require_role("teacher", "admin"))) -> ApiResponse[list[AssignmentItem]]:
     return ApiResponse(
-        data=payload.model_dump(),
-        message="Homework assigned successfully.",
+        data=manager.list_teacher_assignments(current_user.id, current_user.role),
+        message="Homework fetched successfully.",
     )
 
 
-@router.post("/homework/{submission_id}/review", response_model=ApiResponse[dict[str, object]])
+@router.get("/students/me/homework", response_model=ApiResponse[list[AssignmentItem]])
+def list_my_homework(current_user: User = Depends(require_role("student"))) -> ApiResponse[list[AssignmentItem]]:
+    return ApiResponse(data=manager.list_student_assignments(current_user.id), message="Homework fetched successfully.")
+
+
+@router.post("/students/me/homework/{assignment_id}/submit", response_model=ApiResponse[SubmissionItem])
+def submit_homework(
+    assignment_id: int,
+    payload: SubmissionCreate,
+    current_user: User = Depends(require_role("student")),
+) -> ApiResponse[SubmissionItem]:
+    try:
+        item = manager.submit_assignment(assignment_id, payload, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ApiResponse(data=item, message="Homework submitted successfully.")
+
+
+@router.get("/homework/{assignment_id}/submissions", response_model=ApiResponse[list[SubmissionItem]])
+def list_homework_submissions(
+    assignment_id: int,
+    current_user: User = Depends(require_role("teacher", "admin")),
+) -> ApiResponse[list[SubmissionItem]]:
+    try:
+        items = manager.list_submissions(assignment_id, current_user.id, current_user.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ApiResponse(data=items, message="Submissions fetched successfully.")
+
+
+@router.post("/homework/{submission_id}/review", response_model=ApiResponse[SubmissionItem])
 def review_homework(
     submission_id: int,
     payload: ReviewPayload,
-    _user: User = Depends(require_role("teacher")),
-) -> ApiResponse[dict[str, object]]:
+    current_user: User = Depends(require_role("teacher")),
+) -> ApiResponse[SubmissionItem]:
     """Review one homework submission. (teacher only)"""
 
-    return ApiResponse(
-        data={"submission_id": submission_id, **payload.model_dump()},
-        message="Homework reviewed successfully.",
-    )
+    try:
+        item = manager.review_submission(submission_id, payload, current_user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ApiResponse(data=item, message="Homework reviewed successfully.")

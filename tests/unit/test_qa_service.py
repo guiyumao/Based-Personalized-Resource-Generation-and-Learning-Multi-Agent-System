@@ -20,11 +20,11 @@ def stub_realtime_qa_llm(monkeypatch):
             parts.append("已生成习题。")
         return "\n".join(parts)
 
-    def fake_study_suggestions(self, **kwargs):
-        return ["模型生成：先复盘本轮关键概念。", "模型生成：再用练习检验理解。"]
+    def fake_answer_bundle(self, **kwargs):
+        answer = fake_learning_response(self, **kwargs)
+        return answer, ["模型生成：先复盘本轮关键概念。", "模型生成：再用练习检验理解。"]
 
-    monkeypatch.setattr(QAService, "_generate_learning_response_with_llm", fake_learning_response)
-    monkeypatch.setattr(QAService, "_generate_study_suggestions_with_llm", fake_study_suggestions)
+    monkeypatch.setattr(QAService, "_generate_learning_answer_bundle_with_llm", fake_answer_bundle)
 
 
 def test_qa_fallback_includes_context_snippets_and_confidence() -> None:
@@ -49,7 +49,7 @@ def test_qa_generates_resource_and_exercises_when_requested(monkeypatch) -> None
     """QA should return structured courseware and exercise payloads together."""
 
     class FakeResourceGenerationService:
-        def generate_courseware_with_plan(self, request):
+        def generate_courseware_with_plan(self, request, *, snapshot=None):
             return {
                 "user_id": request.user_id,
                 "knowledge_point": request.knowledge_point,
@@ -74,7 +74,7 @@ def test_qa_generates_resource_and_exercises_when_requested(monkeypatch) -> None
             }
 
     class FakeExerciseGenerationService:
-        def generate_exercises(self, request):
+        def generate_exercises(self, request, *, snapshot=None):
             return {
                 "user_id": request.user_id,
                 "knowledge_point": request.knowledge_point,
@@ -126,7 +126,7 @@ def test_qa_recognizes_generate_practice_wording(monkeypatch) -> None:
     """Common wording like '生成配套练习' should trigger exercise generation."""
 
     class FakeExerciseGenerationService:
-        def generate_exercises(self, request):
+        def generate_exercises(self, request, *, snapshot=None):
             return {
                 "user_id": request.user_id,
                 "knowledge_point": request.knowledge_point,
@@ -262,3 +262,54 @@ def test_infer_route_knowledge_point_from_question_text() -> None:
     )
 
     assert knowledge_point == "大学物理"
+
+
+def test_new_question_does_not_inherit_previous_knowledge_point() -> None:
+    """A new topic in the same chat must not be forced back to the prior lesson."""
+
+    service = QAService()
+    history = [
+        {
+            "role": "assistant",
+            "content": "TCP 工作在传输层。",
+            "metadata": {
+                "inferred_knowledge_point": "tcp协议",
+                "generated_resource": {"knowledge_point": "tcp协议", "content": "旧课件"},
+            },
+        },
+        {"role": "user", "content": "请介绍秦朝历史", "metadata": {}},
+    ]
+    request = QARequest(
+        student_id="1",
+        subject="",
+        grade="大学",
+        question="请介绍秦朝历史",
+        current_knowledge_points=[],
+    )
+
+    context = service._build_conversation_context(request, history)
+
+    assert context["follow_up"] is False
+    assert context["knowledge_point"] == ""
+    assert context["effective_question"] == request.question
+    assert context["latest_resource"] is None
+    assert context["intent_mode"] == "general"
+    assert QAService.detect_intent_mode_from_request(request)["mode"] == "general"
+    assert QAService.infer_route_knowledge_point_from_request(request) == ""
+
+
+def test_new_explicit_topic_replaces_previous_knowledge_point() -> None:
+    """A fresh academic question should use its own topic even in an older chat."""
+
+    service = QAService()
+    history = [
+        {"role": "assistant", "content": "TCP 工作在传输层。", "metadata": {"inferred_knowledge_point": "tcp协议"}},
+        {"role": "user", "content": "请解释牛顿第二定律", "metadata": {}},
+    ]
+    request = QARequest(student_id="1", subject="", grade="大学", question="请解释牛顿第二定律")
+
+    context = service._build_conversation_context(request, history)
+
+    assert context["follow_up"] is False
+    assert context["knowledge_point"] == "牛顿第二定律"
+    assert context["effective_question"] == request.question

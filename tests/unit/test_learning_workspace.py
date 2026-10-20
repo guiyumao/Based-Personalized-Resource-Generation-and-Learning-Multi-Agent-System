@@ -4,7 +4,9 @@ import asyncio
 
 import pytest
 
-from common.schemas.agent import ExerciseGenerationRequest
+from common.ai_errors import AIModelInitializationTimeoutError
+from common.schemas.agent import ExerciseGenerationRequest, LearningPathRequest
+from services.agent_service.app.services import learning_path as learning_path_module
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
 from services.agent_service.app.services.learning_path import LearningPathService
 from services.evaluation_service.app.schemas.report import PracticeSubmission
@@ -127,6 +129,27 @@ def test_generate_learning_path_contains_stages(monkeypatch) -> None:
     assert response["stages"][0]["tasks"]
     assert response["overview"]  # learning path overview populated by service
     assert response["generation_source"] == "llm"
+
+
+def test_learning_path_preserves_model_initialization_error(monkeypatch) -> None:
+    expected = AIModelInitializationTimeoutError()
+
+    class FailingLLMFactory:
+        def __init__(self, settings):
+            pass
+
+        def build_chat_model(self, **kwargs):
+            raise expected
+
+    monkeypatch.setattr(learning_path_module, "LLMFactory", FailingLLMFactory)
+
+    with pytest.raises(AIModelInitializationTimeoutError) as raised:
+        LearningPathService()._generate_path_with_llm(
+            LearningPathRequest(user_id=1, subject="数学", knowledge_point="定积分"),
+            None,
+        )
+
+    assert raised.value is expected
 
 
 def test_generate_structured_exercises() -> None:

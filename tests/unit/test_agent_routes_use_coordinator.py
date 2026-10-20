@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
 from common.schemas.agent import CoordinationRequest
+from services.agent_service.app.api.routes import agents as agent_routes
 from services.agent_service.app.api.routes import learning, qa, resources
+
+_learner = SimpleNamespace(id=1, role="student")
 
 
 def test_resource_route_uses_coordinator(monkeypatch):
@@ -52,7 +60,8 @@ def test_resource_route_uses_coordinator(monkeypatch):
             user_id=1,
             knowledge_point="Python loops",
             request_text="generate courseware",
-        )
+        ),
+        current_user=_learner,
     )
 
     assert response.content == "agent-generated content"
@@ -61,6 +70,8 @@ def test_resource_route_uses_coordinator(monkeypatch):
 
 
 def test_learning_and_exercise_routes_use_coordinator(monkeypatch):
+    from services.agent_service.app.services import plan_knowledge
+    monkeypatch.setattr(plan_knowledge, "require_plan_knowledge", lambda *_: {})
     """Learning path and exercise endpoints should delegate to specific agents."""
 
     captured: list[CoordinationRequest] = []
@@ -117,12 +128,14 @@ def test_learning_and_exercise_routes_use_coordinator(monkeypatch):
             knowledge_point="loops",
         ),
         db=object(),
+        current_user=_learner,
     )
     exercises = learning.generate_exercises(
         learning.ExerciseGenerationRequest(
             user_id=1,
             knowledge_point="loops",
-        )
+        ),
+        current_user=_learner,
     )
 
     assert path.overview == "agent-planned path"
@@ -135,8 +148,92 @@ def test_learning_and_exercise_routes_use_coordinator(monkeypatch):
     assert captured[1].payload["force_agents"] == ["learner_profiling_agent", "exercise_generation_agent"]
 
 
+def test_learning_path_route_returns_typed_model_initialization_error(monkeypatch):
+    from services.agent_service.app.services import plan_knowledge
+    monkeypatch.setattr(plan_knowledge, "require_plan_knowledge", lambda *_: {})
+    class FakeCoordinatorWorkflow:
+        def __init__(self, db=None):
+            pass
+
+        def run(self, request):
+            return {
+                "outputs": {
+                    "path_planning_agent": {
+                        "status": "failed",
+                        "error_code": "AI_MODEL_INITIALIZATION_TIMEOUT",
+                        "user_message": "AI助教正在加载中，请稍后重试",
+                    }
+                }
+            }
+
+    monkeypatch.setattr(learning, "CoordinatorWorkflow", FakeCoordinatorWorkflow)
+
+    with pytest.raises(HTTPException) as raised:
+        learning.generate_learning_path(
+            learning.LearningPathRequest(user_id=1, subject="数学", knowledge_point="定积分"),
+            db=object(),
+            current_user=_learner,
+        )
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail == {
+        "code": "AI_MODEL_INITIALIZATION_TIMEOUT",
+        "message": "AI助教正在加载中，请稍后重试",
+    }
+
+
+def test_coordinator_route_derives_deadline_from_selected_agent_budgets(monkeypatch):
+    trace_context = []
+    monkeypatch.setattr(
+        agent_routes,
+        "get_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "qa_deadline_seconds": 41,
+                "learning_path_deadline_seconds": 23,
+                "courseware_deadline_seconds": 67,
+                "exercise_deadline_seconds": 19,
+                "report_deadline_seconds": 31,
+                "max_total_retries": 4,
+            },
+        )(),
+    )
+    monkeypatch.setattr(agent_routes, "set_trace_context", lambda **kwargs: trace_context.append(kwargs))
+
+    class FakeCoordinatorWorkflow:
+        def __init__(self, db=None):
+            pass
+
+        def run(self, request):
+            return {
+                "status": "success",
+                "selected_agents": request.payload["force_agents"],
+                "route_reason": "test",
+                "outputs": {},
+            }
+
+    monkeypatch.setattr(agent_routes, "CoordinatorWorkflow", FakeCoordinatorWorkflow)
+    response = agent_routes.coordinate(
+        CoordinationRequest(
+            user_id=1,
+            intent="learning path with companion resources",
+            payload={
+                "force_agents": ["learner_profiling_agent", "path_planning_agent", "resource_generation_agent", "exercise_generation_agent"],
+            },
+        ),
+        db=object(),
+        current_user=_learner,
+    )
+
+    assert response.status == "success"
+    assert trace_context[0]["deadline_seconds"] == 23 + 67 + 19
+    assert trace_context[0]["retry_budget"] == 4
+
+
 def test_qa_route_uses_coordinator(monkeypatch):
-    """QA endpoint should delegate to profile + graph + QA agents."""
+    """QA endpoint should delegate only the required profile + QA agents."""
 
     captured: list[CoordinationRequest] = []
 
@@ -190,13 +287,13 @@ def test_qa_route_uses_coordinator(monkeypatch):
             current_knowledge_points=["loops"],
         ),
         db=object(),
+        current_user=_learner,
     )
 
     assert response.student_response == "agent answer"
     assert captured[0].knowledge_point == "loops"
     assert captured[0].payload["force_agents"] == [
         "learner_profiling_agent",
-        "knowledge_graph_agent",
         "qa_agent",
     ]
 
@@ -256,6 +353,7 @@ def test_qa_route_falls_back_to_direct_qa_without_knowledge_point(monkeypatch):
             current_knowledge_points=[],
         ),
         db=object(),
+        current_user=_learner,
     )
 
     assert response.student_response == "general answer"
@@ -318,6 +416,7 @@ def test_qa_route_uses_general_mode_for_realtime_questions(monkeypatch):
             current_knowledge_points=[],
         ),
         db=object(),
+        current_user=_learner,
     )
 
     assert response.student_response == "今天是星期三。"
@@ -381,6 +480,7 @@ def test_qa_route_infers_learning_mode_from_question_text(monkeypatch):
             current_knowledge_points=[],
         ),
         db=object(),
+        current_user=_learner,
     )
 
     assert response.student_response == "已生成大学物理习题。"
@@ -388,6 +488,5 @@ def test_qa_route_infers_learning_mode_from_question_text(monkeypatch):
     assert captured[0].payload["intent_mode"] == "learning"
     assert captured[0].payload["force_agents"] == [
         "learner_profiling_agent",
-        "knowledge_graph_agent",
         "qa_agent",
     ]

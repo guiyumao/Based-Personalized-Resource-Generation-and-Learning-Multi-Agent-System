@@ -1,252 +1,107 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, type Component } from 'vue'
 import { useRouter } from 'vue-router'
-import { useTheme } from '../composables/useTheme'
+import { Aim, ArrowRight, ChatDotRound, Collection, Connection, EditPen, Guide, Notebook, Share, TrendCharts } from '@element-plus/icons-vue'
+import heroImage from '../assets/hero.png'
+import { useTheme, type ThemeName } from '../composables/useTheme'
 
 const router = useRouter()
 const { currentTheme, setTheme } = useTheme()
-
-// ── Mouse glow ──
-const glowRef = ref<HTMLDivElement | null>(null)
-let mx = 0.5, my = 0.5
-let curMx = 0.5, curMy = 0.5
-let raf = 0
-
-function onMouseMove(e: MouseEvent) {
-  mx = e.clientX / window.innerWidth
-  my = e.clientY / window.innerHeight
-}
-
-function updateGlow() {
-  curMx += (mx - curMx) * 0.06
-  curMy += (my - curMy) * 0.06
-  const x = (curMx * 100).toFixed(1), y = (curMy * 100).toFixed(1)
-  if (glowRef.value) {
-    glowRef.value.style.background = `
-      radial-gradient(420px circle at ${x}% ${y}%, var(--accent), transparent 70%),
-      radial-gradient(600px circle at ${x}% ${y}%, var(--accent-deep), transparent 50%)
-    `
-    glowRef.value.style.opacity = '0.12'
-  }
-  raf = requestAnimationFrame(updateGlow)
-}
-
-onMounted(() => {
-  window.addEventListener('mousemove', onMouseMove)
-  updateGlow()
-})
-onUnmounted(() => {
-  window.removeEventListener('mousemove', onMouseMove)
-  cancelAnimationFrame(raf)
-})
-
-// ── Theme dots for corner ──
-const themeDots = [
-  { key: 'ocean',   color: '#00c8aa' },
-  { key: 'warm',    color: '#e8924a' },
-  { key: 'cosmic',  color: '#a78bfa' },
-  { key: 'minimal', color: '#2563eb' },
-  { key: 'forest',  color: '#48c884' },
+const currentYear = new Date().getFullYear()
+const themes: { key: ThemeName; label: string; color: string }[] = [
+  { key: null, label: '靛蓝云台', color: '#4f46e5' },
+  { key: 'ocean', label: '深海科技', color: '#00b8a0' },
+  { key: 'warm', label: '暖金学术', color: '#d97745' },
+  { key: 'cosmic', label: '暗夜紫穹', color: '#8b5cf6' },
+  { key: 'minimal', label: '极简晨光', color: '#2563eb' },
+  { key: 'forest', label: '森林绿洲', color: '#35b978' },
 ]
 
-function scrollToFeatures() {
-  document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })
-}
-
-// ── Feature cards data ──
-const features = [
-  { icon:'🗺️', title:'个性化学习路径', desc:'AI 根据掌握度与学习风格，自动生成分阶段学习路径，动态调整难度' },
-  { icon:'📚', title:'智能课件生成', desc:'基于 RAG 检索增强生成，多源整合产出结构化课件，支持难度分级与变体' },
-  { icon:'✏️', title:'自适应练习测评', desc:'自动生成分层习题，即时反馈与解析，支持多种题型' },
-  { icon:'📝', title:'智能错题本', desc:'自动收录错题，AI 分析根因，一键生成变式题巩固训练' },
-  { icon:'🔗', title:'知识图谱可视化', desc:'构建学科知识依赖网络，节点颜色反映掌握程度' },
-  { icon:'💬', title:'多智能体问答', desc:'结合学习画像深度分析，识别知识差距，给出针对性建议' },
+type Feature = { title: string; desc: string; icon: Component; route: string }
+const features: Feature[] = [
+  { icon: Guide, title: '个性化学习路径', desc: '结合学习画像、知识依赖和教师范围，生成可调整的阶段任务。', route: '/student/learning-path' },
+  { icon: Collection, title: '课件与资源', desc: '检索知识库，按需生成课件，并统一管理已保存的学习资源。', route: '/student/resources' },
+  { icon: EditPen, title: '自适应练习', desc: '按知识点和难度生成习题，提交后返回真实评估与解析。', route: '/student/exercise' },
+  { icon: Notebook, title: '错题巩固', desc: '沉淀错题、错因和建议操作，连接针对性变式练习。', route: '/student/mistakes' },
+  { icon: Share, title: '知识图谱', desc: '展示先修依赖、知识缺口与关联资源，辅助理解学习顺序。', route: '/student/knowledge-graph' },
+  { icon: ChatDotRound, title: '上下文智能问答', desc: '问答时带入画像、知识图谱和错题上下文，识别学习缺口。', route: '/student/qa' },
 ]
+
+const roleEntries = [
+  { icon: Aim, title: '学生工作台', text: '聚合路径、课件、练习、错题、报告与问答。' },
+  { icon: TrendCharts, title: '教师工作台', text: '管理班级、学习范围、学生洞察、教学分析与作业。' },
+  { icon: Connection, title: '管理工作台', text: '维护角色、学科、系统配置与审计日志。' },
+]
+
+const activeThemeLabel = computed(() => themes.find((theme) => theme.key === currentTheme.value)?.label ?? '靛蓝云台')
+function scrollToFeatures() { document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' }) }
 </script>
 
 <template>
-  <!-- ═══ Mouse Glow Background ═══ -->
-  <div class="landing-bg">
-    <div ref="glowRef" class="mouse-glow-layer"></div>
-    <div class="grid-overlay"></div>
-  </div>
+  <div class="landing-page">
+    <nav class="landing-nav">
+      <router-link to="/" class="landing-brand"><span><i></i><i></i><i></i></span><b>智学平台</b></router-link>
+      <div class="landing-links"><a href="#features">功能</a><a href="#roles">角色</a><a href="#architecture">架构</a></div>
+      <button class="landing-login" type="button" @click="router.push('/login')">登录工作台</button>
+    </nav>
 
-  <!-- ═══ Theme Dots ═══ -->
-  <div class="corner-themes">
-    <span v-for="t in themeDots" :key="t.key"
-      class="theme-dot"
-      :class="{ active: currentTheme === t.key }"
-      :style="{ background: t.color, color: t.color }"
-      @click="setTheme(t.key as any)"
-    ></span>
-  </div>
-
-  <!-- ═══ Nav ═══ -->
-  <nav class="landing-nav">
-    <div class="nav-brand">
-      <div class="brand-dot"></div>
-      <span>智学平台</span>
-    </div>
-    <div class="nav-links">
-      <a href="#features">功能</a>
-      <a href="#tech">技术</a>
-      <button class="nav-cta" @click="router.push('/login')">免费体验</button>
-    </div>
-  </nav>
-
-  <!-- ═══ Hero ═══ -->
-  <section class="hero-section">
-    <div class="hero-eyebrow">AI-POWERED LEARNING PLATFORM</div>
-    <h1 class="hero-title">科技赋能教育<br>AI 引领未来</h1>
-    <p class="hero-subtitle">
-      基于多智能体协同的个性化学习系统 —— 为每位学习者定制专属路径、课件与练习
-    </p>
-    <div class="hero-buttons">
-      <button class="btn-hero-primary" @click="router.push('/login')">免费体验</button>
-      <button class="btn-hero-secondary" @click="scrollToFeatures">了解更多 ↓</button>
-    </div>
-    <div class="scroll-hint">
-      <span>滚 动 探 索</span>
-      <div class="scroll-line"></div>
-    </div>
-  </section>
-
-  <!-- ═══ Features ═══ -->
-  <section class="section" id="features">
-    <div class="section-inner">
-      <div class="section-label">核心功能</div>
-      <h2 class="section-title">八大智能学习模块</h2>
-      <p class="section-desc">从学习路径规划到课后自测，从知识图谱到智能问答 —— AI 多智能体系统为每个学习环节提供精准支持</p>
-
-      <div class="feature-grid">
-        <div v-for="f in features" :key="f.title" class="feature-card">
-          <div class="feature-icon">{{ f.icon }}</div>
-          <h3>{{ f.title }}</h3>
-          <p>{{ f.desc }}</p>
+    <main>
+      <section class="landing-hero">
+        <div class="landing-hero-copy">
+          <span class="landing-eyebrow">多智能体个性化学习平台</span>
+          <h1>让学习路径<br />真正因人而异</h1>
+          <p>结合学习画像、RAG 知识检索、知识图谱与多智能体协同，为学生、教师和管理员提供可追溯的学习闭环。</p>
+          <div class="landing-actions"><button type="button" class="primary" @click="router.push('/login')">开始使用</button><button type="button" class="secondary" @click="scrollToFeatures">查看功能</button></div>
+          <div class="hero-capabilities"><span><b>路径</b>任务化</span><span><b>资源</b>按需生成</span><span><b>评估</b>数据驱动</span></div>
         </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ═══ AI Tech ═══ -->
-  <section class="section" id="tech">
-    <div class="section-inner">
-      <div class="section-label">AI 技术</div>
-      <h2 class="section-title">多智能体驱动的学习引擎</h2>
-      <p class="section-desc">系统采用多智能体协同架构，各 Agent 分工协作，覆盖资源生成、学习诊断、路径规划的完整链路</p>
-
-      <div class="tech-grid">
-        <div v-for="tech in [
-          { icon:'🧠', title:'多智能体协同', desc:'资源生成、学习诊断、路径规划等多个 Agent 通过消息队列异步协作', tags:['LangGraph','Multi-Agent','RabbitMQ'] },
-          { icon:'🔍', title:'RAG 检索增强', desc:'课件和习题生成前从向量知识库检索相关片段，确保内容准确有据', tags:['ChromaDB','Elasticsearch','Embedding'] },
-          { icon:'🕸️', title:'知识图谱推理', desc:'基于 Neo4j 图数据库构建学科知识网络，支持先修依赖推理和缺口检测', tags:['Neo4j','Graph Reasoning','vis-network'] },
-          { icon:'🎯', title:'学习画像与自适应', desc:'持续追踪学习行为，构建多维度画像，动态调整内容难度和推荐策略', tags:['Learner Profile','Adaptive'] },
-        ]" :key="tech.title" class="tech-card">
-          <div class="tech-icon-lg">{{ tech.icon }}</div>
-          <h3>{{ tech.title }}</h3>
-          <p>{{ tech.desc }}</p>
-          <div class="tag-row">
-            <span v-for="t in tech.tags" :key="t" class="ai-tag">{{ t }}</span>
-          </div>
+        <div class="landing-visual">
+          <div class="visual-frame"><img :src="heroImage" alt="智学平台分层协同品牌图形" /><div><span>MULTI-AGENT</span><strong>画像、知识、路径、资源、评估</strong></div></div>
+          <div class="theme-control" :title="`当前主题：${activeThemeLabel}`"><span>外观</span><button v-for="theme in themes" :key="theme.label" type="button" :aria-label="`切换到${theme.label}`" :class="{ active: currentTheme === theme.key }" :style="{ '--swatch': theme.color }" @click="setTheme(theme.key)"></button></div>
         </div>
-      </div>
-    </div>
-  </section>
+      </section>
 
-  <!-- ═══ CTA ═══ -->
-  <section class="cta-section">
-    <h2>准备好开始智能学习了吗？</h2>
-    <p>立即体验 AI 驱动的个性化学习平台，让科技为您的学习之旅赋能</p>
-    <button class="btn-hero-primary" @click="router.push('/login')">免费体验 →</button>
-  </section>
+      <section id="features" class="landing-section">
+        <header><span>核心功能</span><h2>从计划到反馈的学习闭环</h2><p>所有模块都对应现有业务路由与后端服务，不使用静态数据代替实际功能。</p></header>
+        <div class="landing-feature-grid">
+          <article v-for="feature in features" :key="feature.title"><span><component :is="feature.icon" /></span><h3>{{ feature.title }}</h3><p>{{ feature.desc }}</p><button type="button" @click="router.push('/login')">登录后使用<el-icon><ArrowRight /></el-icon></button></article>
+        </div>
+      </section>
 
-  <!-- ═══ Footer ═══ -->
-  <footer class="landing-footer">
-    <span>© 2024 智学平台 · AI-Powered Learning</span>
-    <span>
-      <a href="#" @click.prevent="router.push('/login')">工作台</a> ·
-      <a href="#features">功能</a> ·
-      <a href="#tech">技术</a>
-    </span>
-  </footer>
+      <section id="roles" class="landing-section role-section">
+        <header><h2>每个角色都有自己的工作台</h2><p>界面与功能按实际权限配置展示，路由守卫保留现有角色边界。</p></header>
+        <div class="role-entry-grid"><article v-for="entry in roleEntries" :key="entry.title"><component :is="entry.icon" /><div><h3>{{ entry.title }}</h3><p>{{ entry.text }}</p></div></article></div>
+      </section>
+
+      <section id="architecture" class="architecture-section">
+        <div><span class="landing-eyebrow">系统架构</span><h2>前端、API 网关与多服务保持真实连接</h2><p>Vue 3 前端保留现有 FastAPI 与 LangGraph 服务边界，登录、画像、学习路径、资源、评估和教学管理均通过实际接口完成。</p></div>
+        <div class="architecture-flow"><span>Vue 3</span><i></i><span>API Gateway</span><i></i><span>FastAPI Services</span><i></i><span>Data & AI</span></div>
+      </section>
+
+      <section class="landing-cta"><div><h2>从今天的学习任务开始</h2><p>登录后，系统会根据你的身份进入对应工作台。</p></div><button type="button" @click="router.push('/login')">进入工作台</button></section>
+    </main>
+
+    <footer class="landing-footer"><span>© {{ currentYear }} 智学平台</span><span>个性化资源生成与学习多智能体系统</span></footer>
+  </div>
 </template>
 
 <style scoped>
-/* ── Background ── */
-.landing-bg { position:fixed; inset:0; pointer-events:none; z-index:0; }
-.mouse-glow-layer { position:absolute; inset:0; transition:opacity 0.6s; background:radial-gradient(420px circle at 50% 50%, var(--accent), transparent 70%); opacity:0.1; }
-.grid-overlay { position:absolute; inset:0; background-image:linear-gradient(rgba(129,160,204,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(129,160,204,.05) 1px,transparent 1px); background-size:32px 32px; mask-image:radial-gradient(circle at 50% 50%, rgba(0,0,0,.4), transparent 60%); }
-
-/* ── Corner themes ── */
-.corner-themes { position:fixed; top:72px; right:24px; z-index:40; display:flex; gap:8px; padding:8px 10px; border-radius:999px; background:color-mix(in srgb, var(--bg) 72%, transparent); border:1px solid var(--line); backdrop-filter:blur(16px); }
-.theme-dot { width:16px;height:16px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .25s; }
-.theme-dot:hover { transform:scale(1.25); }
-.theme-dot.active { border-color:var(--text); box-shadow:0 0 10px currentColor; }
-
-/* ── Nav ── */
-.landing-nav { position:fixed; top:0;left:0;right:0;z-index:80; padding:14px 28px; display:flex; align-items:center; justify-content:space-between; backdrop-filter:blur(20px);background:color-mix(in srgb, var(--bg) 72%, transparent); border-bottom:1px solid var(--line); }
-.nav-brand { display:flex; align-items:center; gap:10px; color:var(--text); font-weight:700; font-size:17px; }
-.brand-dot { width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,var(--accent),var(--accent-deep)); }
-.nav-links { display:flex; align-items:center; gap:8px; }
-.nav-links a { color:var(--muted); text-decoration:none; font-size:13px; font-weight:550; padding:8px 16px; border-radius:999px; transition:all .2s; }
-.nav-links a:hover { color:var(--text); background:color-mix(in srgb,var(--accent) 6%,transparent); }
-.nav-cta { padding:9px 22px; border-radius:999px; border:none; background:linear-gradient(135deg,var(--accent),var(--accent-deep)); color:#fff; font-weight:700; cursor:pointer; font-size:13px; font-family:inherit; }
-.nav-cta:hover { transform:translateY(-2px); box-shadow:0 6px 20px color-mix(in srgb,var(--accent) 30%,transparent); }
-
-/* ── Hero ── */
-.hero-section { position:relative;z-index:1; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:120px 24px 80px; }
-.hero-eyebrow { font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent);margin-bottom:20px; display:flex;align-items:center;gap:12px; }
-.hero-eyebrow::before,.hero-eyebrow::after { content:"";width:36px;height:1px;background:linear-gradient(90deg,transparent,var(--accent)); }
-.hero-eyebrow::after { background:linear-gradient(90deg,var(--accent),transparent); }
-.hero-title { font-size:clamp(38px,7vw,80px);font-weight:850;line-height:1.18;letter-spacing:.04em; background:linear-gradient(160deg,var(--text)20%,var(--accent)45%,var(--accent-deep)65%,var(--text)85%);background-size:200% auto; -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text; animation:shimmer 6s ease-in-out infinite; filter:drop-shadow(0 0 32px color-mix(in srgb,var(--accent) 35%,transparent)); margin-bottom:20px; }
-@keyframes shimmer { 0%,100%{background-position:0% center} 50%{background-position:100% center} }
-.hero-subtitle { font-size:clamp(16px,2.2vw,20px);color:var(--muted);max-width:36em;line-height:1.8;margin-bottom:36px; }
-.hero-buttons { display:flex;gap:16px;flex-wrap:wrap;justify-content:center; }
-.btn-hero-primary { padding:14px 36px;border-radius:999px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:#fff;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 8px 32px color-mix(in srgb,var(--accent) 30%,transparent);transition:all .2s; }
-.btn-hero-primary:hover { transform:translateY(-3px);box-shadow:0 14px 42px color-mix(in srgb,var(--accent) 45%,transparent); }
-.btn-hero-secondary { padding:14px 36px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--text);font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;backdrop-filter:blur(12px);transition:all .2s; }
-.btn-hero-secondary:hover { border-color:color-mix(in srgb,var(--accent) 30%,transparent);background:color-mix(in srgb,var(--accent) 5%,transparent); }
-.scroll-hint { position:absolute;bottom:28px;display:flex;flex-direction:column;align-items:center;gap:8px;color:var(--muted);font-size:11px;letter-spacing:.1em;animation:bounce 2s ease-in-out infinite; }
-.scroll-line { width:1px;height:36px;background:linear-gradient(180deg,var(--accent),transparent); }
-@keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(8px)} }
-
-/* ── Sections ── */
-.section { position:relative;z-index:1;padding:80px 24px;scroll-snap-align:start; }
-.section-inner { max-width:1100px;margin:0 auto; }
-.section-label { font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin-bottom:10px; }
-.section-title { font-size:clamp(26px,4vw,42px);font-weight:750;line-height:1.2;margin-bottom:12px; }
-.section-desc { color:var(--muted);font-size:15px;line-height:1.7;max-width:48em;margin-bottom:40px; }
-
-/* ── Feature cards ── */
-.feature-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:20px; }
-.feature-card { padding:28px;border-radius:18px;background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(14px);transition:all .28s;position:relative;overflow:hidden; }
-.feature-card:hover { transform:translateY(-4px);border-color:color-mix(in srgb,var(--accent) 30%,transparent);box-shadow:var(--shadow); }
-.feature-card::after { content:"";position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--accent),var(--accent-deep));opacity:0;transition:opacity .28s; }
-.feature-card:hover::after { opacity:1; }
-.feature-icon { font-size:28px;margin-bottom:14px; }
-.feature-card h3 { font-size:17px;font-weight:700;margin-bottom:8px; }
-.feature-card p { font-size:13px;color:var(--muted);line-height:1.7; }
-
-/* ── Tech ── */
-.tech-grid { display:grid;grid-template-columns:repeat(2,1fr);gap:20px; }
-.tech-card { padding:32px;border-radius:18px;background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(14px);transition:all .28s; }
-.tech-card:hover { border-color:color-mix(in srgb,var(--accent) 30%,transparent);box-shadow:var(--shadow); }
-.tech-icon-lg { font-size:40px;margin-bottom:16px; }
-.tech-card h3 { font-size:20px;font-weight:700;margin-bottom:8px; }
-.tech-card p { color:var(--muted);line-height:1.7;font-size:14px; }
-.tag-row { display:flex;gap:8px;flex-wrap:wrap;margin-top:16px; }
-.ai-tag { padding:5px 14px;border-radius:999px;font-size:11px;font-weight:650;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent); }
-
-/* ── CTA ── */
-.cta-section { position:relative;z-index:1;text-align:center;padding:100px 24px;}
-.cta-section h2 { font-size:clamp(28px,5vw,44px);font-weight:750;margin-bottom:14px; }
-.cta-section p { color:var(--muted);font-size:16px;max-width:32em;margin:0 auto 32px;line-height:1.7; }
-
-/* ── Footer ── */
-.landing-footer { position:relative;z-index:1;border-top:1px solid var(--line);padding:40px 28px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;color:var(--muted);font-size:13px; }
-.landing-footer a { color:var(--muted);text-decoration:none;transition:color .2s; }
-.landing-footer a:hover { color:var(--accent); }
-
-@media (max-width:900px) { .feature-grid{grid-template-columns:repeat(2,1fr)} .tech-grid{grid-template-columns:1fr} }
-@media (max-width:600px) { .feature-grid{grid-template-columns:1fr} .nav-links a{display:none} .corner-themes{top:64px;right:16px;gap:6px;padding:7px 9px}.theme-dot{width:14px;height:14px}.nav-cta{padding:8px 14px} }
+.landing-page { min-height:100dvh; color:var(--text); background:var(--bg); }
+.landing-nav { width:min(1180px,calc(100% - 40px)); height:70px; margin:auto; display:flex; align-items:center; justify-content:space-between; gap:26px; border-bottom:1px solid var(--line); }
+.landing-brand { display:flex; align-items:center; gap:10px; color:var(--text); text-decoration:none; }.landing-brand > span { width:36px; height:36px; display:grid; place-content:center; gap:3px; border-radius:11px; background:linear-gradient(145deg,var(--accent),var(--accent-deep)); }.landing-brand i { display:block; width:16px; height:3px; border-radius:3px; background:#fff; transform:skewY(-16deg); }.landing-brand b { font-size:16px; }
+.landing-links { display:flex; align-items:center; gap:28px; }.landing-links a { color:var(--muted); font-size:13px; font-weight:650; text-decoration:none; }.landing-links a:hover { color:var(--accent); }
+.landing-login,.landing-actions button,.landing-cta button { border:0; border-radius:10px; font-family:inherit; font-weight:700; cursor:pointer; }.landing-login { padding:10px 16px; color:#fff; background:var(--accent); }.landing-login:hover { background:var(--accent-deep); }
+.landing-hero { width:min(1180px,calc(100% - 40px)); min-height:calc(100dvh - 70px); margin:auto; display:grid; grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr); gap:70px; align-items:center; padding:54px 0; }
+.landing-eyebrow,.landing-section header > span { color:var(--accent); font-size:11px; font-weight:800; letter-spacing:.11em; }.landing-hero h1 { max-width:680px; margin:15px 0 20px; font-size:clamp(48px,6vw,78px); line-height:1.08; letter-spacing:-.065em; }.landing-hero-copy > p { max-width:650px; margin:0; color:var(--muted); font-size:17px; line-height:1.85; }
+.landing-actions { display:flex; gap:11px; margin-top:30px; }.landing-actions button { min-height:46px; padding:0 23px; }.landing-actions .primary { color:#fff; background:var(--accent); box-shadow:0 12px 26px color-mix(in srgb,var(--accent) 22%,transparent); }.landing-actions .primary:hover { background:var(--accent-deep); transform:translateY(-1px); }.landing-actions .secondary { border:1px solid var(--line); color:var(--text); background:var(--panel); }.landing-actions .secondary:hover { border-color:color-mix(in srgb,var(--accent) 34%,var(--line)); }
+.hero-capabilities { display:flex; flex-wrap:wrap; gap:20px; margin-top:30px; color:var(--muted); font-size:11px; }.hero-capabilities span { display:flex; gap:5px; }.hero-capabilities b { color:var(--text); }
+.landing-visual { position:relative; }.visual-frame { min-height:500px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:34px; border:1px solid color-mix(in srgb,var(--accent) 16%,var(--line)); border-radius:24px; background:linear-gradient(145deg,var(--panel),color-mix(in srgb,var(--accent) 7%,var(--panel))); box-shadow:var(--shadow); overflow:hidden; position:relative; }.visual-frame::before { content:''; width:310px; height:310px; border-radius:50%; position:absolute; background:color-mix(in srgb,var(--accent) 12%,transparent); filter:blur(10px); }.visual-frame img { width:min(70%,360px); position:relative; z-index:1; filter:drop-shadow(0 28px 32px color-mix(in srgb,var(--accent) 22%,transparent)); }.visual-frame > div { display:grid; gap:5px; text-align:center; position:relative; z-index:1; }.visual-frame span { color:var(--accent); font-size:10px; font-weight:800; letter-spacing:.13em; }.visual-frame strong { font-size:12px; font-weight:650; }
+.theme-control { display:flex; align-items:center; gap:7px; padding:9px 11px; border:1px solid var(--line); border-radius:11px; background:var(--panel); box-shadow:var(--shadow-soft); position:absolute; right:18px; bottom:18px; z-index:2; }.theme-control span { margin-right:4px; color:var(--muted); font-size:10px; }.theme-control button { width:15px; height:15px; padding:0; border:2px solid var(--panel); border-radius:5px; outline:1px solid transparent; background:var(--swatch); cursor:pointer; }.theme-control button.active { outline-color:var(--text); }
+.landing-section { width:min(1180px,calc(100% - 40px)); margin:auto; padding:100px 0; }.landing-section header { max-width:680px; margin-bottom:42px; }.landing-section h2,.architecture-section h2 { margin:10px 0 12px; font-size:clamp(32px,4vw,48px); line-height:1.2; letter-spacing:-.045em; }.landing-section header p,.architecture-section p { margin:0; color:var(--muted); font-size:14px; line-height:1.8; }
+.landing-feature-grid { display:grid; grid-template-columns:repeat(12,1fr); gap:16px; }.landing-feature-grid article { grid-column:span 4; min-height:260px; padding:25px; border:1px solid var(--line); border-radius:16px; background:var(--panel); box-shadow:var(--shadow-soft); }.landing-feature-grid article:first-child,.landing-feature-grid article:nth-child(6) { grid-column:span 8; }.landing-feature-grid article:first-child { background:linear-gradient(135deg,var(--panel),color-mix(in srgb,var(--accent) 8%,var(--panel))); }.landing-feature-grid article:nth-child(6) { background:linear-gradient(135deg,color-mix(in srgb,var(--info) 6%,var(--panel)),var(--panel)); }.landing-feature-grid article > span { width:46px; height:46px; display:grid; place-items:center; border-radius:12px; color:var(--accent); background:var(--accent-soft); }.landing-feature-grid svg { width:22px; }.landing-feature-grid h3 { margin:22px 0 9px; font-size:18px; }.landing-feature-grid p { margin:0; color:var(--muted); font-size:13px; line-height:1.75; }.landing-feature-grid button { display:flex; align-items:center; gap:5px; margin-top:20px; padding:0; border:0; color:var(--accent); background:transparent; font-weight:700; cursor:pointer; }.landing-feature-grid button svg { width:14px; }
+.role-section { border-top:1px solid var(--line); }.role-entry-grid { display:grid; gap:12px; }.role-entry-grid article { display:grid; grid-template-columns:52px 1fr; gap:18px; align-items:center; padding:20px; border:1px solid var(--line); border-radius:15px; background:var(--panel); }.role-entry-grid article > svg { width:26px; padding:12px; box-sizing:content-box; border-radius:12px; color:var(--accent); background:var(--accent-soft); }.role-entry-grid h3 { margin:0 0 5px; font-size:17px; }.role-entry-grid p { margin:0; color:var(--muted); line-height:1.7; }
+.architecture-section { width:min(1180px,calc(100% - 40px)); margin:auto; display:grid; grid-template-columns:1fr 1fr; gap:60px; align-items:center; padding:100px 0; border-top:1px solid var(--line); }.architecture-flow { display:grid; grid-template-columns:1fr 18px 1fr 18px 1fr 18px 1fr; gap:7px; align-items:center; }.architecture-flow span { min-height:74px; display:grid; place-items:center; padding:10px; border:1px solid var(--line); border-radius:12px; background:var(--panel); color:var(--text); font-size:12px; font-weight:700; text-align:center; }.architecture-flow i { height:2px; background:linear-gradient(90deg,var(--accent),transparent); }
+.landing-cta { width:min(1180px,calc(100% - 40px)); margin:0 auto 80px; display:flex; justify-content:space-between; align-items:center; gap:28px; padding:38px; border-radius:20px; color:#eef2ff; background:linear-gradient(135deg,#312e81,#4f46e5); }.landing-cta h2 { margin:0 0 7px; font-size:28px; }.landing-cta p { margin:0; color:rgba(238,242,255,.75); }.landing-cta button { min-height:46px; padding:0 22px; color:var(--accent-deep); background:#fff; white-space:nowrap; }
+.landing-footer { width:min(1180px,calc(100% - 40px)); margin:auto; display:flex; justify-content:space-between; gap:20px; padding:28px 0; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+@media (max-width:900px) { .landing-hero { grid-template-columns:1fr; gap:38px; }.landing-visual { max-width:620px; }.visual-frame { min-height:420px; }.landing-feature-grid article,.landing-feature-grid article:first-child,.landing-feature-grid article:nth-child(6) { grid-column:span 6; }.architecture-section { grid-template-columns:1fr; }.landing-cta { align-items:flex-start; flex-direction:column; } }
+@media (max-width:620px) { .landing-nav,.landing-hero,.landing-section,.architecture-section,.landing-cta,.landing-footer { width:min(100% - 28px,1180px); }.landing-links { display:none; }.landing-login { padding-inline:12px; }.landing-hero { padding-top:34px; }.landing-hero h1 { font-size:44px; }.landing-hero-copy > p { font-size:15px; }.hero-capabilities { gap:10px 16px; }.visual-frame { min-height:350px; }.landing-section,.architecture-section { padding:70px 0; }.landing-feature-grid { grid-template-columns:1fr; }.landing-feature-grid article,.landing-feature-grid article:first-child,.landing-feature-grid article:nth-child(6) { grid-column:auto; min-height:0; }.architecture-flow { grid-template-columns:1fr; }.architecture-flow i { width:2px; height:16px; margin:auto; background:linear-gradient(180deg,var(--accent),transparent); }.landing-footer { flex-direction:column; } }
 </style>

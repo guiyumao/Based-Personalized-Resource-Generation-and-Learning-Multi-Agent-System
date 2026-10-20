@@ -5,7 +5,7 @@ export type ThemeName = 'ocean' | 'warm' | 'cosmic' | 'minimal' | 'forest' | nul
 
 const THEME_LIST: ThemeName[] = ['ocean', 'warm', 'cosmic', 'minimal', 'forest']
 
-const currentTheme = ref<ThemeName>('ocean')  // :root default is ocean
+const currentTheme = ref<ThemeName>(null)
 
 export function useTheme() {
   function init() {
@@ -13,7 +13,10 @@ export function useTheme() {
     if (stored && THEME_LIST.includes(stored)) {
       applyTheme(stored)
     }
-    // no stored theme → use :root default (ocean), no data-theme needed
+    if (!stored) {
+      currentTheme.value = null
+      document.documentElement.removeAttribute('data-theme')
+    }
   }
 
   function setTheme(theme: ThemeName) {
@@ -21,12 +24,12 @@ export function useTheme() {
       applyTheme(theme)
       localStorage.setItem(THEME_STORAGE_KEY, theme)
     } else {
-      // remove theme → back to :root default (ocean)
+      // Remove theme and return to the default indigo SaaS palette.
       document.documentElement.removeAttribute('data-theme')
       document.body.style.background = ''
       document.body.style.color = ''
       localStorage.removeItem(THEME_STORAGE_KEY)
-      currentTheme.value = 'ocean'
+      currentTheme.value = null
     }
   }
 

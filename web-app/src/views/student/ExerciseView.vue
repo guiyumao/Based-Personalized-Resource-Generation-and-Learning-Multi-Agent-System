@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
-import { agentApi, evaluationApi, type ApiEnvelope, type ExerciseGenerationPayload, type ExerciseGenerationResponse, type ExerciseItem, type LearningPathResponse, type MistakeNotebook, type PracticeFeedback, type PracticeSubmissionPayload } from '../../api'
+import { agentApi, evaluationApi, type ApiEnvelope, type ExerciseFavoriteNotebook, type ExerciseGenerationPayload, type ExerciseGenerationResponse, type ExerciseItem, type LearningPathResponse, type MistakeNotebook, type PracticeFeedback, type PracticeSubmissionPayload } from '../../api'
 import { postContentWithTimeout } from '../../utils/viewHelpers'
+import { renderLearningMarkdown } from '../../utils/renderLearningMarkdown'
 import {
   buildPracticeSessionStorageKey,
   COURSEWARE_STORAGE_KEY,
@@ -13,6 +15,7 @@ import {
 } from '../../utils/studentWorkspace'
 
 const authStore = useAuthStore()
+const route = useRoute()
 const user = authStore.user!
 const MISTAKE_NOTEBOOK_STORAGE_KEY = 'student-workspace-mistakes'
 const PRACTICE_SESSION_STORAGE_KEY = buildPracticeSessionStorageKey(user.userId)
@@ -50,6 +53,7 @@ type StoredPracticeSession = {
   exerciseSet: ExerciseGenerationResponse
   currentIdx: number
   answerDrafts: Record<number, string>
+  submissionRequestIds?: Record<number, string>
   submittedExercises: Record<number, PracticeFeedback>
   submissionHistory: SubmissionHistoryItem[]
   mistakeNotebook: MistakeNotebook | null
@@ -72,19 +76,23 @@ const exerciseForm = reactive<ExerciseGenerationPayload>({
 
 const exerciseSet = ref<ExerciseGenerationResponse | null>(null)
 const currentIdx = ref(0)
-const loading = ref({ exercises: false, submit: false })
+const loading = ref({ exercises: false, submit: false, favorite: false })
 const answerDrafts = reactive<Record<number, string>>({})
+const submissionRequestIds = reactive<Record<number, string>>({})
 const submittedExercises = reactive<Record<number, PracticeFeedback>>({})
 const submissionHistory = ref<SubmissionHistoryItem[]>([])
 const mistakeNotebook = ref<MistakeNotebook | null>(null)
 const genError = ref('')
 const submitError = ref('')
 const knowledgeSource = ref('')
+const favoriteIds = ref<Set<number>>(new Set())
 
 const currentExercise = computed<ExerciseItem | null>(() => exerciseSet.value?.exercises[currentIdx.value] ?? null)
 const totalExercises = computed(() => exerciseSet.value?.exercises.length ?? 0)
 const answeredCount = computed(() => Object.keys(submittedExercises).length)
 const mistakeCount = computed(() => mistakeNotebook.value?.mistake_count ?? 0)
+const favoriteCount = computed(() => favoriteIds.value.size)
+const currentExerciseFavorited = computed(() => Boolean(currentExercise.value && favoriteIds.value.has(currentExercise.value.exercise_id)))
 const hasKnowledgePoint = computed(() => Boolean(exerciseForm.knowledge_point.trim()))
 const subjectiveTypes = new Set(['short_answer', 'programming'])
 
@@ -102,6 +110,10 @@ function normalizeExercisePromptV2(prompt: string) {
     return compact.slice(colonIndex + 1)
   }
   return compact
+}
+
+function scrollToSubmissionHistory() {
+  document.getElementById('practice-submission-history')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
 function hasDistinctExercisePromptsV2(set: ExerciseGenerationResponse) {
@@ -134,12 +146,16 @@ function clearStoredExerciseSnapshots() {
 }
 
 onMounted(() => {
-  const hasIncomingExerciseSet = loadStoredExerciseSet()
-  if (!hasIncomingExerciseSet) {
-    loadStoredPracticeSession()
+  const requestedTopic = typeof route.query.topic === 'string' ? route.query.topic.trim().slice(0, 100) : ''
+  if (requestedTopic) {
+    applyKnowledgePoint(requestedTopic, '来自学习概览的补强建议')
+  } else {
+    const hasIncomingExerciseSet = loadStoredExerciseSet()
+    if (!hasIncomingExerciseSet) loadStoredPracticeSession()
+    void loadExistingKnowledgePoint()
   }
-  void loadExistingKnowledgePoint()
   void refreshMistakeNotebook()
+  void refreshExerciseFavorites()
 })
 
 function loadStoredPracticeSession() {
@@ -156,11 +172,11 @@ function loadStoredPracticeSession() {
     if (stored.userId !== user.userId || !stored.exerciseSet?.exercises?.length) {
       return false
     }
-    if (workspaceContext && !sameWorkspaceTopic(stored.exerciseSet.knowledge_point, workspaceContext.topic)) {
+    if (workspaceContext && stored.knowledgeSource !== '小智生成的练习' && !sameWorkspaceTopic(stored.exerciseSet.knowledge_point, workspaceContext.topic)) {
       clearStoredExerciseSnapshots()
       return false
     }
-    if (!hasDistinctExercisePromptsV2(stored.exerciseSet) || !matchesRequiredExerciseMix(stored.exerciseSet)) {
+    if (!hasDistinctExercisePromptsV2(stored.exerciseSet) || (stored.knowledgeSource !== '小智生成的练习' && !matchesRequiredExerciseMix(stored.exerciseSet))) {
       clearStoredExerciseSnapshots()
       return false
     }
@@ -169,6 +185,7 @@ function loadStoredPracticeSession() {
     exerciseForm.knowledge_point = stored.exerciseSet.knowledge_point
     currentIdx.value = Math.min(Math.max(stored.currentIdx ?? 0, 0), stored.exerciseSet.exercises.length - 1)
     Object.assign(answerDrafts, stored.answerDrafts ?? {})
+    Object.assign(submissionRequestIds, stored.submissionRequestIds ?? {})
     Object.assign(submittedExercises, stored.submittedExercises ?? {})
     submissionHistory.value = stored.submissionHistory ?? []
     mistakeNotebook.value = stored.mistakeNotebook ?? null
@@ -194,13 +211,15 @@ function loadStoredExerciseSet() {
     window.sessionStorage.removeItem(EXERCISE_STORAGE_KEY)
     if (
       stored.exerciseSet?.exercises?.length
-      && (!workspaceContext || sameWorkspaceTopic(stored.exerciseSet.knowledge_point, workspaceContext.topic))
+      && (stored.source === 'assistant' || !workspaceContext || sameWorkspaceTopic(stored.exerciseSet.knowledge_point, workspaceContext.topic))
       && hasDistinctExercisePromptsV2(stored.exerciseSet)
-      && matchesRequiredExerciseMix(stored.exerciseSet)
+      && (stored.source === 'assistant' || matchesRequiredExerciseMix(stored.exerciseSet))
     ) {
       window.localStorage.removeItem(PRACTICE_SESSION_STORAGE_KEY)
       exerciseSet.value = stored.exerciseSet
       exerciseForm.knowledge_point = stored.exerciseSet.knowledge_point
+      knowledgeSource.value = stored.source === 'assistant' ? '小智生成的练习' : '协同智能体生成的练习'
+      persistPracticeSession()
       ElMessage.success('已载入协同智能体生成的练习题')
       return true
     } else {
@@ -321,10 +340,12 @@ async function submitAnswer() {
   if (!ex) return
   if (submittedExercises[ex.exercise_id]) { ElMessage.warning('这道题已经提交过'); return }
   if (!draft) { ElMessage.warning('请先填写答案'); return }
+  if (loading.value.submit) return
   loading.value.submit = true; submitError.value = ''
 
   const payload: PracticeSubmissionPayload = {
     user_id: exerciseForm.user_id, exercise_id: ex.exercise_id,
+    client_request_id: submissionRequestIds[ex.exercise_id] ??= crypto.randomUUID(),
     subject: resolvePracticeSubject(),
     knowledge_point: ex.knowledge_point, question_type: ex.question_type,
     user_answer: draft, correct_answer: ex.answer, analysis: ex.analysis,
@@ -335,6 +356,9 @@ async function submitAnswer() {
     time_spent: 30,
   }
   try {
+    // Keep the attempt key before sending: a lost response or reload retries
+    // the original attempt instead of counting the same answer twice.
+    persistPracticeSession()
     const { data } = await evaluationApi.post<ApiEnvelope<PracticeFeedback>>('/evaluation/practice/submit', payload)
     const feedback = (data as any).data ?? data
     submittedExercises[ex.exercise_id] = feedback
@@ -354,6 +378,7 @@ async function submitAnswer() {
 
 function resetSession() {
   for (const k of Object.keys(answerDrafts)) delete answerDrafts[Number(k)]
+  for (const k of Object.keys(submissionRequestIds)) delete submissionRequestIds[Number(k)]
   for (const k of Object.keys(submittedExercises)) delete submittedExercises[Number(k)]
   submissionHistory.value = []
   currentIdx.value = 0
@@ -368,6 +393,7 @@ function persistPracticeSession() {
     exerciseSet: exerciseSet.value,
     currentIdx: currentIdx.value,
     answerDrafts: { ...answerDrafts },
+    submissionRequestIds: { ...submissionRequestIds },
     submittedExercises: { ...submittedExercises },
     submissionHistory: submissionHistory.value,
     mistakeNotebook: mistakeNotebook.value,
@@ -425,6 +451,39 @@ async function refreshMistakeNotebook() {
     // Keep practice flow usable even if the notebook endpoint is temporarily unavailable.
   }
 }
+async function refreshExerciseFavorites() {
+  try {
+    const { data } = await evaluationApi.get<ApiEnvelope<ExerciseFavoriteNotebook>>('/evaluation/practice/favorites')
+    const notebook = (data as any).data ?? data
+    favoriteIds.value = new Set((notebook.items ?? []).map((item: { exercise_id: number }) => item.exercise_id))
+  } catch {
+    // The exercise flow remains usable when the favorites service is temporarily unavailable.
+  }
+}
+async function toggleCurrentFavorite() {
+  const exercise = currentExercise.value
+  if (!exercise || loading.value.favorite) return
+  loading.value.favorite = true
+  try {
+    if (currentExerciseFavorited.value) {
+      await evaluationApi.delete(`/evaluation/practice/favorites/${exercise.exercise_id}`)
+      const next = new Set(favoriteIds.value)
+      next.delete(exercise.exercise_id)
+      favoriteIds.value = next
+      ElMessage.success('已取消收藏')
+    } else {
+      await evaluationApi.post(`/evaluation/practice/favorites/${exercise.exercise_id}`)
+      const next = new Set(favoriteIds.value)
+      next.add(exercise.exercise_id)
+      favoriteIds.value = next
+      ElMessage.success('已收藏到收藏本')
+    }
+  } catch (error: any) {
+    ElMessage.error(error?.response?.data?.detail ?? '收藏操作失败，请稍后重试')
+  } finally {
+    loading.value.favorite = false
+  }
+}
 function normalizePracticeDifficulty(difficulty: ExerciseItem['difficulty']): PracticeSubmissionPayload['difficulty'] {
   return difficulty === 'foundation' ? 'basic' : difficulty
 }
@@ -475,13 +534,23 @@ function prevQuestion() {
 
     <div v-if="currentExercise" style="display:grid;grid-template-columns:1fr 280px;gap:20px">
       <div style="padding:28px;border-radius:18px;background:var(--panel);border:1px solid var(--line)">
-        <div style="font-size:12px;letter-spacing:.08em;color:var(--accent);margin-bottom:12px">第 {{ currentIdx + 1 }} 题 / 共 {{ totalExercises }} 题 · {{ currentExercise.question_type }} · {{ currentExercise.difficulty }}</div>
-        <h3 style="font-size:18px;line-height:1.6;margin-bottom:20px">{{ currentExercise.prompt }}</h3>
-        <div v-if="currentExercise.question_type === 'choice' && currentExercise.options?.length" style="display:grid;gap:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+          <div style="font-size:12px;letter-spacing:.08em;color:var(--accent)">第 {{ currentIdx + 1 }} 题 / 共 {{ totalExercises }} 题 · {{ currentExercise.question_type }} · {{ currentExercise.difficulty }}</div>
+          <button type="button" :disabled="loading.favorite" @click="toggleCurrentFavorite"
+            :style="{ color: currentExerciseFavorited ? 'var(--accent)' : 'var(--muted)', borderColor: currentExerciseFavorited ? 'var(--accent)' : 'var(--line)', background: currentExerciseFavorited ? 'var(--accent-soft)' : 'var(--bg)' }"
+            style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid;border-radius:999px;cursor:pointer;font:600 12px inherit;white-space:nowrap">
+            <span aria-hidden="true" style="font-size:16px;line-height:1">{{ currentExerciseFavorited ? '★' : '☆' }}</span>
+            {{ currentExerciseFavorited ? '已收藏' : '收藏题目' }}
+          </button>
+        </div>
+        <div class="exercise-markdown exercise-question" v-html="renderLearningMarkdown(currentExercise.prompt)"></div>
+        <div v-if="currentExercise.question_type === 'choice' && currentExercise.options?.length" role="radiogroup" aria-label="选择答案" style="display:grid;gap:10px">
           <div v-for="opt in currentExercise.options" :key="opt" @click="setAnswer(currentExercise.exercise_id, opt.charAt(0))"
+            role="radio" :aria-label="opt" :aria-checked="answerDrafts[currentExercise.exercise_id] === opt.charAt(0)" tabindex="0"
+            @keydown.enter="setAnswer(currentExercise.exercise_id, opt.charAt(0))" @keydown.space.prevent="setAnswer(currentExercise.exercise_id, opt.charAt(0))"
             style="display:flex;align-items:center;gap:12px;padding:14px 18px;border-radius:14px;border:1px solid var(--line);cursor:pointer"
             :style="answerDrafts[currentExercise.exercise_id]===opt.charAt(0)?{borderColor:'var(--accent)',background:'color-mix(in srgb,var(--accent) 10%,transparent)'}:{background:'var(--bg)'}">
-            <span style="width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;background:color-mix(in srgb,var(--accent) 8%,transparent)">{{ opt.charAt(0) }}</span>{{ opt.slice(3) }}
+            <span style="width:32px;height:32px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;background:color-mix(in srgb,var(--accent) 8%,transparent)">{{ opt.charAt(0) }}</span><span class="exercise-markdown" v-html="renderLearningMarkdown(opt.slice(3), true)"></span>
           </div>
         </div>
         <textarea v-else v-model="answerDrafts[currentExercise.exercise_id]" :disabled="!!submittedExercises[currentExercise.exercise_id]"
@@ -495,20 +564,24 @@ function prevQuestion() {
         </div>
       </div>
       <div style="display:grid;gap:12px;align-content:start">
-        <div style="padding:18px;text-align:center;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
+        <button type="button" class="practice-stat-link" :disabled="!submissionHistory.length" aria-label="查看本次提交记录" @click="scrollToSubmissionHistory">
           <div style="font-size:36px;font-weight:750;background:linear-gradient(135deg,var(--accent),var(--accent-deep));-webkit-background-clip:text;-webkit-text-fill-color:transparent">{{ answeredCount }}/{{ totalExercises }}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:6px">已提交</div>
-        </div>
-        <div style="padding:18px;text-align:center;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
+        </button>
+        <router-link :to="{ name: 'student-mistakes' }" class="practice-stat-link" aria-label="打开错题本">
           <div style="font-size:30px;font-weight:750;color:var(--red)">{{ mistakeCount }}</div>
           <div style="font-size:12px;color:var(--muted);margin-top:6px">错题本</div>
-        </div>
+        </router-link>
+        <router-link :to="{ name: 'student-favorites' }" class="practice-stat-link" aria-label="打开收藏本">
+          <div style="font-size:30px;font-weight:750;color:var(--accent)">{{ favoriteCount }}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:6px">收藏本</div>
+        </router-link>
         <div v-if="currentExercise && submittedExercises[currentExercise.exercise_id]" style="padding:18px;border-radius:14px;border:1px solid"
           :style="submittedExercises[currentExercise.exercise_id].is_correct?{background:'color-mix(in srgb,var(--green) 10%,transparent)',borderColor:'var(--green)'}:{background:'color-mix(in srgb,var(--red) 10%,transparent)',borderColor:'var(--red)'}">
           <div style="font-weight:700;margin-bottom:8px" :style="{color:submittedExercises[currentExercise.exercise_id].is_correct?'var(--green)':'var(--red)'}">{{ submittedExercises[currentExercise.exercise_id].is_correct ? '✓ 正确' : '✗ 错误' }}</div>
-          <div style="font-size:13px;color:var(--text)">{{ submittedExercises[currentExercise.exercise_id].analysis }}</div>
+          <div class="exercise-markdown" style="font-size:13px;color:var(--text)" v-html="renderLearningMarkdown(submittedExercises[currentExercise.exercise_id].analysis)"></div>
         </div>
-        <div v-if="submissionHistory.length" style="padding:18px;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
+        <div v-if="submissionHistory.length" id="practice-submission-history" style="padding:18px;border-radius:14px;background:var(--panel);border:1px solid var(--line)">
           <h3 style="margin:0 0 12px;font-size:16px">本次提交记录</h3>
           <div style="display:grid;gap:10px;max-height:280px;overflow:auto;padding-right:4px">
             <article v-for="item in submissionHistory" :key="item.exercise_id" style="padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--bg)">
@@ -523,7 +596,7 @@ function prevQuestion() {
               </div>
               <div style="font-size:12px;line-height:1.6">
                 <div>你的答案：{{ item.user_answer }}</div>
-                <div v-if="!item.feedback.is_correct">正确答案：{{ item.correct_answer }}</div>
+                <div v-if="!item.feedback.is_correct">正确答案：<span class="exercise-markdown" v-html="renderLearningMarkdown(item.correct_answer, true)"></span></div>
               </div>
             </article>
           </div>
@@ -535,3 +608,38 @@ function prevQuestion() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.practice-stat-link {
+  display: block;
+  width: 100%;
+  padding: 18px;
+  text-align: center;
+  text-decoration: none;
+  color: inherit;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  cursor: pointer;
+}
+.practice-stat-link:hover:not(:disabled),
+.practice-stat-link:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.practice-stat-link:disabled { cursor: default; }
+#practice-submission-history { scroll-margin-top: 96px; }
+.exercise-question {
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.65;
+  margin-bottom: 20px;
+}
+.exercise-markdown { overflow-wrap: anywhere; }
+.exercise-markdown :deep(p) { margin: 0 0 8px; }
+.exercise-markdown :deep(p:last-child) { margin-bottom: 0; }
+.exercise-markdown :deep(pre),
+.exercise-markdown :deep(.learning-math-block) { overflow-x: auto; }
+.exercise-markdown :deep(code) { font-size: .92em; }
+</style>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from common.models.learning import AnswerRecord
 from services.evaluation_service.app.schemas.report import (
     AnswerRecordSubmission,
     PracticeSubmission,
@@ -43,6 +44,41 @@ class FakePublisher:
 
     def publish(self, queue_name: str, message: dict[str, object]) -> None:
         self.messages.append((queue_name, message))
+
+
+def test_persisted_practice_answer_succeeds_when_broker_is_down(test_user, db_session, caplog) -> None:
+    """A post-commit event failure must not invite the learner to submit twice."""
+
+    class UnavailablePublisher:
+        calls = 0
+
+        def publish(self, queue_name: str, message: dict[str, object]) -> None:
+            self.calls += 1
+            raise ConnectionError("broker unavailable")
+
+    publisher = UnavailablePublisher()
+
+    async def run() -> None:
+        service = ReportService(llm_client=FakeLLMClient(), publisher=publisher)
+        result = await service.evaluate_practice(
+            PracticeSubmission(
+                user_id=test_user.id,
+                exercise_id=800000 + test_user.id,
+                knowledge_point=f"broker-test-{test_user.id}",
+                question_type="choice",
+                user_answer="B",
+                correct_answer="B",
+                analysis="选择 B。",
+                exercise_content="哪项是正确答案？",
+                difficulty="basic",
+            )
+        )
+        assert result.is_correct is True
+
+    asyncio.run(run())
+    assert publisher.calls == 1
+    assert db_session.query(AnswerRecord).filter(AnswerRecord.user_id == test_user.id).count() == 1
+    assert "evaluation event delivery failed after commit" in caplog.text
 
 
 def test_objective_submission_creates_mistake_notebook_entry(test_user) -> None:
@@ -369,5 +405,30 @@ def test_teacher_mistake_notebook_ignores_student_side_clear_visibility(test_use
         assert learner_notebook_after_clear.mistake_count == 0
         assert teacher_notebook.mistake_count == 1
         assert teacher_notebook.items[0].knowledge_point == f"graph-{test_user.id}"
+
+    asyncio.run(run())
+
+
+def test_report_dashboard_loads_user_context_once(test_user, monkeypatch) -> None:
+    """The report page bundle must reuse one answer-history snapshot."""
+
+    async def run() -> None:
+        service = ReportService(llm_client=FakeLLMClient(), publisher=FakePublisher())
+        original = service._load_user_context
+        calls = 0
+
+        def counting_load(user_id: int):
+            nonlocal calls
+            calls += 1
+            return original(user_id)
+
+        monkeypatch.setattr(service, "_load_user_context", counting_load)
+        dashboard = await service.generate_dashboard(test_user.id)
+
+        assert calls == 1
+        assert dashboard.stage_report.user_id == test_user.id
+        assert dashboard.comprehensive_report.user_id == test_user.id
+        assert dashboard.profile_snapshot["user_id"] == test_user.id
+        assert dashboard.mistake_notebook.user_id == test_user.id
 
     asyncio.run(run())

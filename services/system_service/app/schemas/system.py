@@ -46,3 +46,32 @@ class AuditLogItem(BaseModel):
     level: str
     event: str
     message: str
+
+
+class AdminUserItem(BaseModel):
+    id: int
+    username: str
+    email: str | None
+    role: str
+    is_active: bool
+    created_at: str
+
+
+class AdminUserPage(BaseModel):
+    total: int
+    page: int
+    size: int
+    items: list[AdminUserItem]
+
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool
+
+
+class AdminDashboard(BaseModel):
+    total_users: int
+    active_users: int
+    total_learning_paths: int
+    total_resources: int
+    answers_last_7_days: int
+    token_usage_available: bool = False

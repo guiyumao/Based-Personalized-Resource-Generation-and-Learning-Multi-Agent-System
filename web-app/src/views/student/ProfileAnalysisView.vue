@@ -34,6 +34,10 @@ const profileLearningStyle = ref('')
 const profileHabitSummary = ref('')
 const profileDimensions = ref<ProfileDimInfo[]>([])
 const profileFilledCount = ref(0)
+const studiedPoints = ref<Array<{ name: string; attempts: number; accuracy: number | null; weak: boolean }>>([])
+const exploredPoints = ref<Array<{ name: string; interactions: number }>>([])
+const answerCount = ref(0)
+const idleReason = ref('完成练习后，系统会按实际学习的知识点生成分析。')
 
 const status = ref<AnalysisStatus>('idle')
 const progress = ref(0)
@@ -101,6 +105,11 @@ async function startAnalysis() {
     const { data } = await userApi.get(`/users/${userId}/profile/analysis`)
     if (data.status === 'completed') {
       applyResult(data)
+      return
+    }
+    if (data.status === 'idle') {
+      status.value = 'idle'
+      idleReason.value = data.reason || idleReason.value
       return
     }
     // Start polling
@@ -189,6 +198,11 @@ async function refreshAnalysis() {
       applyResult(data)
       return
     }
+    if (data.status === 'idle') {
+      status.value = 'idle'
+      idleReason.value = data.reason || idleReason.value
+      return
+    }
     initialRequestMade.value = true
     startPolling()
   } catch (e: any) {
@@ -212,14 +226,14 @@ async function fetchProfileSummary() {
       profileLearningStyle.value = STYLE_LABELS[data.learning_style] ?? data.learning_style
     }
     profileHabitSummary.value = (data.habit_summary as string) || ''
-    // Build dimension tags from radar_metrics
+    studiedPoints.value = data.learning_content?.knowledge_points || []
+    exploredPoints.value = data.learning_content?.explored_points || []
+    answerCount.value = data.learning_content?.total_answers || 0
+    const profile = (await userApi.get(`/users/${userId}/profile`)).data
     const dims: ProfileDimInfo[] = []
-    if (data.radar_metrics && Array.isArray(data.radar_metrics)) {
-      for (const m of data.radar_metrics) {
-        const key = Object.keys(DIM_META).find(k => DIM_META[k].label === m.dimension)
-        if (key) {
-          dims.push({ key, label: m.dimension, icon: DIM_META[key].icon })
-        }
+    for (const [key, meta] of Object.entries(DIM_META)) {
+      if (profile.profile_dimensions?.[key]) {
+        dims.push({ key, label: meta.label, icon: meta.icon })
       }
     }
     profileDimensions.value = dims
@@ -319,6 +333,19 @@ onUnmounted(() => stopPolling())
         </div>
       </div>
 
+      <div v-if="studiedPoints.length" style="padding:22px 24px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-bottom:24px">
+        <strong>真实学习内容 · {{ answerCount }} 次作答</strong>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+          <span v-for="point in studiedPoints" :key="point.name" style="padding:6px 10px;border-radius:8px;background:var(--surface-soft);font-size:13px">
+            {{ point.name }} · {{ point.attempts }} 次<span v-if="point.accuracy != null"> · {{ point.accuracy }}% 正确</span><span v-if="point.weak"> · 待巩固</span>
+          </span>
+        </div>
+      </div>
+      <div v-if="exploredPoints.length" style="padding:18px 24px;border-radius:18px;background:var(--panel);border:1px solid var(--line);margin-bottom:24px;font-size:13px">
+        <strong>浏览过的知识点</strong>
+        <p style="color:var(--muted);margin:8px 0 0">{{ exploredPoints.map(point => point.name).join('、') }}。浏览记录不代表已经掌握。</p>
+      </div>
+
       <!-- Loading / progress state -->
       <div
         v-if="status === 'processing'"
@@ -371,7 +398,7 @@ onUnmounted(() => stopPolling())
         <div style="font-size:48px;margin-bottom:16px">🔍</div>
         <h3 style="font-weight:700;margin:0 0 8px">尚未生成分析报告</h3>
         <p style="color:var(--muted);margin:0 0 20px;font-size:14px">
-          AI 将根据您的画像数据和学习行为，生成一份深度的个性化分析
+          {{ idleReason }}
         </p>
         <button
           @click="startAnalysis()"

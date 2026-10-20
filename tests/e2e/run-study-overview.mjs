@@ -1,0 +1,111 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import assert from 'node:assert/strict'
+import { loadPlaywright } from './lib/env.mjs'
+const { module: pw } = loadPlaywright()
+const origin = process.env.E2E_BASE_URL
+const api = process.env.OVERVIEW_API
+const dir = process.env.OVERVIEW_ARTIFACTS
+assert.ok(dir && api && process.env.NO_COST_TEST === '1')
+const browser = await pw.chromium.launch({ headless: true })
+const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } })
+await context.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort())
+const page = await context.newPage()
+page.setDefaultTimeout(20000)
+const report = { passed: false, isolated: true, externalModels: false, steps: [], pageErrors: [], heartbeats: [] }
+page.on('pageerror', error => report.pageErrors.push(String(error)))
+page.on('response', async res => {
+  if (res.url().endsWith('/evaluation/activity/heartbeat')) report.heartbeats.push({ status: res.status(), data: await res.json().catch(() => null) })
+})
+const login = async username => {
+  const response = await context.request.post(`${api}/user/users/login`, { data: { username, password: process.env.OVERVIEW_PASSWORD } })
+  assert.equal(response.status(), 200)
+  return response.json()
+}
+try {
+  const auth = await login('overview-student')
+  const headers = { Authorization: `Bearer ${auth.access_token}` }
+  await page.goto(origin + '/login')
+  await page.evaluate(auth => localStorage.setItem('learning-system-auth', JSON.stringify({ token: auth.access_token, user: { userId: auth.user_id, username: auth.username, role: auth.role } })), auth)
+  await page.goto(origin + '/student/dashboard')
+  const panel = page.getByRole('region', { name: '学习计划与有效活动' })
+  await panel.getByText('已完成 1 / 2 项任务').waitFor()
+  await panel.getByText('2 张 →', { exact: true }).waitFor()
+  await panel.getByText('TCP隔离课件', { exact: false }).waitFor()
+  assert.equal(await panel.getByText('不可泄露资源').count(), 0)
+  report.steps.push('real_sqlite_plan_50_percent_due_2_resource_owner_filter')
+  const own = await context.request.get(api + '/evaluation/evaluation/overview/me', { headers })
+  const ownData = (await own.json()).data
+  assert.equal(ownData.analytics.summary.study_seconds, 120)
+  assert.equal(ownData.weak_points[0].accuracy_percent, 0)
+  report.steps.push('120_fixture_seconds_and_three_wrong_answers_affect_suggestions')
+  await panel.screenshot({ path: path.join(dir, 'overview-desktop.png') })
+  await panel.getByRole('button', { name: '补强练习' }).click()
+  await page.waitForURL('**/student/exercise?topic=*')
+  await page.getByText('来自学习概览的补强建议', { exact: false }).waitFor()
+  assert.ok((await page.locator('body').innerText()).includes('TCP 三次握手'))
+  report.steps.push('weak_point_link_prefills_real_exercise_context_without_model_call')
+  await page.bringToFront()
+  await page.getByRole('heading').first().click()
+  // Two real heartbeat periods: no injected client duration or mock timer.
+  await page.waitForResponse(res => res.url().endsWith('/evaluation/activity/heartbeat') && res.status() === 200, { timeout: 20000 })
+  await page.waitForResponse(res => res.url().endsWith('/evaluation/activity/heartbeat') && res.status() === 200, { timeout: 20000 })
+  const measuredResponse = await context.request.get(api + '/evaluation/evaluation/overview/me', { headers })
+  assert.ok((await measuredResponse.json()).data.analytics.summary.study_seconds > 120)
+  report.steps.push('trusted_browser_input_and_real_server_clock_heartbeat_persisted')
+  await page.goto(origin + '/student/dashboard')
+  await page.getByRole('region', { name: '学习计划与有效活动' }).getByText('已完成 1 / 2 项任务').waitFor()
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 1100 })
+    assert.ok(await page.locator('.learning-overview').evaluate(el => el.scrollWidth <= el.clientWidth + 1))
+    await page.locator('.learning-overview').screenshot({ path: path.join(dir, `overview-${width}.png`) })
+  }
+  report.steps.push('desktop_tablet_mobile_panel_widths')
+  await page.setViewportSize({ width: 1440, height: 1100 })
+  await page.goto(origin + '/student/learning-path')
+  const adaptation = page.getByRole('region', { name: '学情驱动计划调整' })
+  await adaptation.getByRole('button', { name: '预览调整', exact: true }).waitFor()
+  const previewResponse = page.waitForResponse(res => res.url().endsWith('/paths/adaptation/preview'))
+  await adaptation.getByRole('button', { name: '预览调整', exact: true }).click()
+  const proposal = await (await previewResponse).json()
+  assert.equal(proposal.evidence[0].graded_answers, 3)
+  const dialog = page.getByRole('dialog', { name: '确认学习计划变化' })
+  await dialog.getByRole('button', { name: '确认应用调整' }).waitFor()
+  const beforeConfirm = await context.request.get(api + '/evaluation/evaluation/overview/me', { headers })
+  assert.equal((await beforeConfirm.json()).data.active_plans[0].total_tasks, 2)
+  await dialog.screenshot({ path: path.join(dir, 'plan-change-preview.png') })
+  await dialog.getByRole('button', { name: '确认应用调整' }).click()
+  await page.getByRole('heading', { name: '学情补强', exact: true }).waitFor()
+  const afterConfirm = await context.request.get(api + '/evaluation/evaluation/overview/me', { headers })
+  assert.equal((await afterConfirm.json()).data.active_plans[0].total_tasks, 3)
+  const replay = await context.request.post(`${api}/agent/paths/adaptation/${proposal.proposal_id}/confirm`, { headers })
+  assert.equal((await replay.json()).status, 'already_applied')
+  report.steps.push('three_wrong_answers_preview_no_task_mutation_confirm_adds_one_task_and_replay_is_idempotent')
+  await page.goto(origin + '/student/dashboard')
+  await page.getByRole('region', { name: '学习计划与有效活动' }).getByText('已完成 1 / 3 项任务').waitFor()
+  report.steps.push('confirmed_plan_change_reflected_in_shared_dashboard_statistics')
+  const emptyAuth = await login('overview-empty')
+  const emptyResponse = await context.request.get(api + '/evaluation/evaluation/overview/me', { headers: { Authorization: `Bearer ${emptyAuth.access_token}` } })
+  const empty = (await emptyResponse.json()).data
+  assert.deepEqual(empty.active_plans, [])
+  assert.equal(empty.due_cards, 0)
+  assert.equal(empty.analytics.summary.study_seconds, 0)
+  assert.equal((await context.request.get(`${api}/evaluation/evaluation/analytics/${process.env.OVERVIEW_USER_ID}`, { headers: { Authorization: `Bearer ${emptyAuth.access_token}` } })).status(), 403)
+  report.steps.push('empty_account_zero_and_cross_account_403')
+  await page.evaluate(auth => localStorage.setItem('learning-system-auth', JSON.stringify({ token: auth.access_token, user: { userId: auth.user_id, username: auth.username, role: auth.role } })), emptyAuth)
+  await page.goto(origin + '/student/dashboard')
+  await page.getByText('暂无学习计划，选择学科和目标后开始。', { exact: true }).waitFor()
+  await page.locator('.learning-overview').screenshot({ path: path.join(dir, 'overview-empty.png') })
+  report.steps.push('new_account_browser_empty_state')
+  await page.route('**/evaluation/overview/me', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: '隔离故障注入' }) }))
+  await page.getByRole('button', { name: '刷新概览', exact: true }).click()
+  await page.getByText('学习概览暂不可用：隔离故障注入', { exact: true }).waitFor()
+  assert.equal(await page.locator('.overview-plan').count(), 0)
+  await page.locator('.learning-overview').screenshot({ path: path.join(dir, 'overview-failure.png') })
+  report.steps.push('503_explicit_error_no_stale_normal_values')
+  assert.deepEqual(report.pageErrors, [])
+  report.passed = true
+} finally {
+  fs.writeFileSync(path.join(dir, 'browser-result.json'), JSON.stringify(report, null, 2))
+  await browser.close()
+}

@@ -1,17 +1,36 @@
 """Routes for resource generation agent."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-from common.schemas.agent import CoordinationRequest, ResourceGenerationRequest, ResourceGenerationResponse
+from common.config import get_settings
+from common.dependencies import get_current_user, require_self_or_admin
+from common.models.learning import User
+from common.performance import set_trace_context
+from common.schemas.agent import (
+    CoordinationRequest,
+    ResourceGenerationRequest,
+    ResourceGenerationResponse,
+)
 from services.agent_service.app.agents.coordinator import CoordinatorWorkflow
 
 router = APIRouter()
 
 
 @router.post("/generate")
-def generate_resource(payload: ResourceGenerationRequest) -> ResourceGenerationResponse:
+def generate_resource(
+    payload: ResourceGenerationRequest,
+    current_user: User = Depends(get_current_user),
+) -> ResourceGenerationResponse:
     """Generate a personalized resource through the multi-agent workflow."""
+    require_self_or_admin(payload.user_id, current_user)
 
+    settings = get_settings()
+    set_trace_context(
+        user_id=payload.user_id,
+        task_type="courseware_generation",
+        deadline_seconds=settings.courseware_deadline_seconds,
+        retry_budget=settings.max_total_retries,
+    )
     result = CoordinatorWorkflow().run(
         CoordinationRequest(
             user_id=payload.user_id,

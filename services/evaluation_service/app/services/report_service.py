@@ -14,12 +14,21 @@ from statistics import mean
 from typing import Any
 
 from langchain_core.messages import SystemMessage
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from common.config import get_settings
 from common.db.session import SessionLocal
 from common.messaging.rabbitmq import RabbitMQPublisher
-from common.models.learning import AnswerRecord, Exercise, KnowledgePoint, LearningReport, User, UserProfile
+from common.models.learning import (
+    AnswerRecord,
+    Exercise,
+    ExerciseFavorite,
+    KnowledgePoint,
+    LearningReport,
+    User,
+    UserProfile,
+)
 from services.agent_service.app.services.llm_factory import LLMFactory
 from services.evaluation_service.app.schemas.report import (
     AnalyticsSuggestion,
@@ -28,6 +37,8 @@ from services.evaluation_service.app.schemas.report import (
     AnswerRecordSubmission,
     BatchAnswerSubmission,
     BatchEvaluationResponse,
+    ExerciseFavoriteItem,
+    ExerciseFavoriteNotebook,
     KnowledgePointFeedback,
     KnowledgePointStageStatus,
     LatestMistakeEvidence,
@@ -40,6 +51,7 @@ from services.evaluation_service.app.schemas.report import (
     QAMistakeSubmission,
     RemedialExerciseItem,
     RemedialExerciseSet,
+    ReportDashboardResponse,
     ReportDetail,
     ReportEvidence,
     ReportSummary,
@@ -51,6 +63,10 @@ from services.evaluation_service.app.schemas.report import (
 from services.evaluation_service.app.services.profile_updater import LearnerProfileUpdater
 
 logger = logging.getLogger(__name__)
+
+
+class SubmissionRequestConflict(ValueError):
+    """An attempt key was reused for a different answer."""
 
 SUBJECTIVE_SCORING_PROMPT = """你是一位严格的评分老师。请根据以下标准答案和评分要点，对学生的回答进行评分。
 
@@ -135,6 +151,8 @@ class PreparedSubmission:
     subject: str
     time_spent: float
     max_time: float
+    client_request_id: str | None = None
+    learning_context_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -270,6 +288,10 @@ class ReportService:
         """Evaluate one answer submission and persist all real outputs."""
 
         prepared = await asyncio.to_thread(self._prepare_submission, payload)
+        if prepared.client_request_id:
+            replay = await asyncio.to_thread(self._load_submission_receipt, prepared)
+            if replay is not None:
+                return replay
         outcome = await self._evaluate_submission(prepared)
         result, events = await asyncio.to_thread(self._persist_submission, prepared, outcome)
         await self._publish_events(events)
@@ -438,6 +460,8 @@ class ReportService:
         result = await self.submit_answer(
             AnswerRecordSubmission(
                 user_id=str(payload.user_id),
+                learning_context_id=payload.learning_context_id,
+                client_request_id=payload.client_request_id,
                 exercise_id=str(payload.exercise_id),
                 user_answer=payload.user_answer,
                 time_spent=float(payload.time_spent),
@@ -524,6 +548,14 @@ class ReportService:
         """Compatibility detailed stage report."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_stage_report_detail(user_id, traces, profile)
+
+    def _build_stage_report_detail(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> ReportDetail:
         chapter_id = self._latest_chapter_id(traces)
         chapter_traces = self._select_latest_stage_traces(traces, chapter_id)
         if not chapter_traces:
@@ -568,6 +600,14 @@ class ReportService:
         """Compatibility monthly detail report."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_comprehensive_report_detail(user_id, traces, profile)
+
+    def _build_comprehensive_report_detail(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> ReportDetail:
         now = datetime.now(UTC)
         start = now - timedelta(days=30)
         month_traces = [item for item in traces if item.created_at >= start]
@@ -606,6 +646,127 @@ class ReportService:
         """Return the learner mistake notebook."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_mistake_notebook(user_id, traces, profile)
+
+    async def get_exercise_favorites(self, user_id: int) -> ExerciseFavoriteNotebook:
+        """Return the learner's saved exercises, newest first."""
+
+        return await asyncio.to_thread(self._get_exercise_favorites, user_id)
+
+    async def add_exercise_favorite(self, user_id: int, exercise_id: int) -> ExerciseFavoriteItem:
+        """Save one real generated exercise for a learner."""
+
+        return await asyncio.to_thread(self._add_exercise_favorite, user_id, exercise_id)
+
+    async def remove_exercise_favorite(self, user_id: int, exercise_id: int) -> None:
+        """Remove one learner-owned favorite."""
+
+        await asyncio.to_thread(self._remove_exercise_favorite, user_id, exercise_id)
+
+    def _get_exercise_favorites(self, user_id: int) -> ExerciseFavoriteNotebook:
+        with self._session_factory() as session:
+            rows = (
+                session.query(ExerciseFavorite)
+                .filter(ExerciseFavorite.user_id == user_id)
+                .order_by(ExerciseFavorite.created_at.desc(), ExerciseFavorite.id.desc())
+                .all()
+            )
+            return ExerciseFavoriteNotebook(
+                user_id=user_id,
+                favorite_count=len(rows),
+                items=[self._favorite_item(row) for row in rows],
+            )
+
+    def _add_exercise_favorite(self, user_id: int, exercise_id: int) -> ExerciseFavoriteItem:
+        with self._session_factory() as session:
+            exercise = session.get(Exercise, exercise_id)
+            if exercise is None:
+                raise ValueError(f"Exercise '{exercise_id}' not found.")
+            stored = self._parse_exercise_content(exercise.content)
+            if stored.get("generated_for_user_id") not in {None, user_id}:
+                raise ValueError(f"Exercise '{exercise_id}' not found.")
+
+            existing = (
+                session.query(ExerciseFavorite)
+                .filter(
+                    ExerciseFavorite.user_id == user_id,
+                    ExerciseFavorite.exercise_id == exercise_id,
+                )
+                .first()
+            )
+            if existing is not None:
+                return self._favorite_item(existing)
+
+            payload: dict[str, Any] = {}
+            try:
+                parsed = json.loads(exercise.content or "{}")
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+
+            knowledge_point = session.get(KnowledgePoint, exercise.knowledge_point_id)
+            row = ExerciseFavorite(
+                user_id=user_id,
+                exercise_id=exercise_id,
+                knowledge_point=str(payload.get("knowledge_point") or (knowledge_point.name if knowledge_point else "")),
+                question_type=str(payload.get("question_type") or exercise.type or ""),
+                difficulty=self._favorite_difficulty(exercise.difficulty, payload.get("difficulty")),
+                prompt=str(payload.get("prompt") or payload.get("exercise_content") or exercise.content or ""),
+                options=self._favorite_options(payload.get("options")),
+                answer=exercise.answer or str(payload.get("standard_answer") or payload.get("reference_answer") or ""),
+                analysis=exercise.analysis or str(payload.get("analysis") or ""),
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+            return self._favorite_item(row)
+
+    def _remove_exercise_favorite(self, user_id: int, exercise_id: int) -> None:
+        with self._session_factory() as session:
+            row = (
+                session.query(ExerciseFavorite)
+                .filter(
+                    ExerciseFavorite.user_id == user_id,
+                    ExerciseFavorite.exercise_id == exercise_id,
+                )
+                .first()
+            )
+            if row is None:
+                return
+            session.delete(row)
+            session.commit()
+
+    def _favorite_item(self, row: ExerciseFavorite) -> ExerciseFavoriteItem:
+        return ExerciseFavoriteItem(
+            id=row.id,
+            exercise_id=row.exercise_id,
+            knowledge_point=row.knowledge_point,
+            question_type=row.question_type,
+            difficulty=row.difficulty,
+            prompt=row.prompt,
+            options=list(row.options or []),
+            answer=row.answer,
+            analysis=row.analysis,
+            created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _favorite_options(value: Any) -> list[str]:
+        return [str(item) for item in value] if isinstance(value, list) else []
+
+    @staticmethod
+    def _favorite_difficulty(value: Any, payload_value: Any) -> str:
+        if payload_value:
+            return str(payload_value)
+        return {1: "foundation", 2: "intermediate", 3: "advanced"}.get(int(value or 2), str(value or ""))
+
+    def _build_mistake_notebook(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> MistakeNotebook:
         wrong_traces = self._filter_active_mistake_traces(traces, profile)
         items = [
             MistakeItem(
@@ -686,11 +847,19 @@ class ReportService:
         """Return a learner dashboard snapshot using only persisted data."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_profile_snapshot(user_id, traces, profile)
+
+    def _build_profile_snapshot(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> dict[str, object]:
         mastery_json = profile.mastery_json if isinstance(profile.mastery_json, dict) else {}
         mastery_values = [
             float(value.get("score", 0))
             for value in mastery_json.values()
-            if isinstance(value, dict)
+            if isinstance(value, dict) and isinstance(value.get("score"), (int, float)) and not isinstance(value.get("score"), bool)
         ]
         mastery_overview = round(mean(mastery_values), 2) if mastery_values else 0.0
         total_time = sum(item.time_spent for item in traces)
@@ -722,7 +891,7 @@ class ReportService:
                     "mastery": round(float(value.get("score", 0)), 2),
                 }
                 for key, value in mastery_json.items()
-                if isinstance(value, dict)
+                if isinstance(value, dict) and isinstance(value.get("score"), (int, float)) and not isinstance(value.get("score"), bool)
             ][:12],
         }
 
@@ -730,6 +899,14 @@ class ReportService:
         """Return personalized suggestions distilled from real traces."""
 
         traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return self._build_learning_suggestions(user_id, traces, profile)
+
+    def _build_learning_suggestions(
+        self,
+        user_id: int,
+        traces: list[AnswerTrace],
+        profile: UserProfile,
+    ) -> AnalyticsSuggestion:
         weak_points = self._find_still_weak(traces, profile)
         avg_time = round(sum(item.time_spent for item in traces) / len(traces), 2) if traces else 0.0
         suggestions: list[str] = []
@@ -760,6 +937,18 @@ class ReportService:
             suggestions=suggestions,
             focus_areas=focus_areas,
             recommended_action=recommended_action,
+        )
+
+    async def generate_dashboard(self, user_id: int) -> ReportDashboardResponse:
+        """Build all report-page data from one consistent database snapshot."""
+
+        traces, profile, _ = await asyncio.to_thread(self._load_user_context, user_id)
+        return ReportDashboardResponse(
+            stage_report=self._build_stage_report_detail(user_id, traces, profile),
+            comprehensive_report=self._build_comprehensive_report_detail(user_id, traces, profile),
+            profile_snapshot=self._build_profile_snapshot(user_id, traces, profile),
+            learning_suggestions=self._build_learning_suggestions(user_id, traces, profile),
+            mistake_notebook=self._build_mistake_notebook(user_id, traces, profile),
         )
 
     async def _evaluate_submission(self, prepared: PreparedSubmission) -> EvaluationOutcome:
@@ -819,18 +1008,29 @@ class ReportService:
     def _prepare_submission(self, payload: AnswerRecordSubmission) -> PreparedSubmission:
         with self._session_factory() as session:
             user = self._resolve_user(session, payload.user_id)
-            exercise_id_int = self._normalize_external_integer(payload.exercise_id)
+            exercise_id_int = self._normalize_external_integer(
+                payload.exercise_id if payload.exercise_id.isdigit() else f"{user.id}:{payload.exercise_id}"
+            )
+            if payload.learning_context_id:
+                from common.learning_context import validate_context_exercise
+                if not payload.client_request_id:
+                    raise ValueError("Workspace submissions require client_request_id")
+                validate_context_exercise(session, user.id, payload.learning_context_id, exercise_id_int)
             exercise = session.get(Exercise, exercise_id_int)
             exercise_content = self._parse_exercise_content(exercise.content) if exercise is not None else {}
+            if exercise_content.get("generated_for_user_id") not in {None, user.id}:
+                raise ValueError(f"Exercise '{exercise_id_int}' not found.")
             normalized_type = normalize_exercise_type(
-                payload.exercise_type
-                or str(exercise_content.get("exercise_type") or exercise.type if exercise is not None else "choice")
+                exercise.type if exercise is not None else payload.exercise_type
             )
             difficulty = normalize_difficulty(
-                payload.difficulty
-                or str(exercise_content.get("difficulty") or self._map_difficulty_level(exercise))
+                self._map_difficulty_level(exercise) if exercise is not None else payload.difficulty
             )
             knowledge_point_ids = list(payload.knowledge_point_ids)
+            if exercise is not None:
+                stored_point = session.get(KnowledgePoint, exercise.knowledge_point_id)
+                if stored_point is not None:
+                    knowledge_point_ids = [stored_point.name]
             if not knowledge_point_ids and exercise_content.get("knowledge_point_ids"):
                 knowledge_point_ids = [str(item) for item in exercise_content["knowledge_point_ids"]]
             if not knowledge_point_ids and exercise is not None:
@@ -841,16 +1041,15 @@ class ReportService:
             if not knowledge_point_ids:
                 raise ValueError("knowledge_point_ids is required when the exercise has no stored metadata.")
 
-            standard_answer = payload.standard_answer or (exercise.answer if exercise is not None else None)
+            standard_answer = exercise.answer if exercise is not None else payload.standard_answer
             reference_answer = (
-                payload.reference_answer
-                or exercise_content.get("reference_answer")
-                or (exercise.answer if exercise is not None and normalized_type in {"short_answer", "code"} else None)
+                exercise.answer if exercise is not None and normalized_type in {"short_answer", "code"}
+                else payload.reference_answer or exercise_content.get("reference_answer")
             )
             max_score = (
-                float(payload.max_score)
-                if payload.max_score is not None
-                else float(exercise_content.get("max_score", 100.0 if normalized_type in {"short_answer", "code"} else 1.0))
+                float(exercise_content.get("max_score", 100.0 if normalized_type in {"short_answer", "code"} else 1.0))
+                if exercise is not None else float(payload.max_score) if payload.max_score is not None
+                else 100.0 if normalized_type in {"short_answer", "code"} else 1.0
             )
             if normalized_type in {"short_answer", "code"} and not reference_answer:
                 raise ValueError("Subjective submissions require reference_answer or stored exercise answer.")
@@ -865,10 +1064,10 @@ class ReportService:
                 or self._infer_subject_from_knowledge_points(knowledge_point_ids)
                 or ""
             )
-            explanation = payload.explanation or (exercise.analysis if exercise is not None else "") or ""
+            explanation = (exercise.analysis if exercise is not None else payload.explanation) or ""
             if not explanation:
                 explanation = self._string_or_none(exercise_content.get("analysis")) or ""
-            prompt_text = payload.exercise_content or self._string_or_none(exercise_content.get("exercise_content")) or ""
+            prompt_text = (None if exercise is not None else payload.exercise_content) or self._string_or_none(exercise_content.get("exercise_content")) or ""
             if not prompt_text and exercise is not None:
                 prompt_text = self._string_or_none(exercise_content.get("prompt")) or ""
 
@@ -892,7 +1091,35 @@ class ReportService:
                 subject=subject,
                 time_spent=payload.time_spent,
                 max_time=self._resolve_max_time(normalized_type, difficulty),
+                client_request_id=payload.client_request_id,
+                learning_context_id=payload.learning_context_id,
             )
+
+    @staticmethod
+    def _submission_fingerprint(prepared: PreparedSubmission) -> str:
+        # Time spent can change on a network retry. The attempt identifies the
+        # same question and answer; grading criteria come from the stored question.
+        values = [prepared.exercise_id_str, prepared.user_answer]
+        if prepared.learning_context_id:
+            values.append(prepared.learning_context_id)
+        canonical = json.dumps(values, ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _find_submission_receipt(self, session: Session, prepared: PreparedSubmission) -> AnswerEvaluationResult | None:
+        record = session.query(AnswerRecord).filter(
+            AnswerRecord.user_id == prepared.user_id_int,
+            AnswerRecord.evaluation_json["submission_receipt"]["request_id"].as_string() == prepared.client_request_id,
+        ).first()
+        if record is None:
+            return None
+        receipt = record.evaluation_json["submission_receipt"]
+        if receipt["fingerprint"] != self._submission_fingerprint(prepared):
+            raise SubmissionRequestConflict("本次作答标识已用于其他答案，请恢复原答案后重试，或开始新的练习。")
+        return AnswerEvaluationResult.model_validate(receipt["result"])
+
+    def _load_submission_receipt(self, prepared: PreparedSubmission) -> AnswerEvaluationResult | None:
+        with self._session_factory() as session:
+            return self._find_submission_receipt(session, prepared)
 
     def _persist_submission(
         self,
@@ -906,7 +1133,18 @@ class ReportService:
             outcome.is_correct,
         )
         with self._session_factory() as session:
+            if prepared.client_request_id:
+                # Serialize one user's profile/receipt transaction across API
+                # processes (SQLite writer lock / SQL row lock). Recheck after
+                # the lock: concurrent graders must persist and publish once.
+                session.execute(update(User).where(User.id == prepared.user_id_int).values(id=User.id))
+                replay = self._find_submission_receipt(session, prepared)
+                if replay is not None:
+                    return replay, []
             user = session.get(User, prepared.user_id_int)
+            if prepared.learning_context_id:
+                from common.learning_context import validate_context_exercise
+                validate_context_exercise(session, prepared.user_id_int, prepared.learning_context_id, prepared.exercise_id_int)
             if user is None:
                 raise ValueError(f"User {prepared.user_id_int} not found.")
 
@@ -962,9 +1200,6 @@ class ReportService:
             )
             self._update_profile_side_channels(profile, updates, prepared, outcome, answered_at)
             session.add(profile)
-            session.commit()
-            session.refresh(answer_record)
-
             weak_points = [item.knowledge_point_id for item in updates if item.weak]
             result = AnswerEvaluationResult(
                 user_id=prepared.user_id_str,
@@ -993,6 +1228,21 @@ class ReportService:
                 ],
                 created_at=answered_at,
             )
+            if prepared.client_request_id:
+                answer_record.evaluation_json = {
+                    **answer_record.evaluation_json,
+                    "submission_receipt": {
+                        "request_id": prepared.client_request_id,
+                        "fingerprint": self._submission_fingerprint(prepared),
+                        "result": result.model_dump(mode="json"),
+                    },
+                }
+            if prepared.learning_context_id:
+                from common.learning_context import record_context_feedback
+                answer_record.evaluation_json = {**answer_record.evaluation_json, "learning_context_id": prepared.learning_context_id}
+                record_context_feedback(session, prepared.user_id_int, prepared.learning_context_id, prepared.exercise_id_int,
+                                        {**result.model_dump(mode="json"), "answer_record_id": answer_record.id})
+            session.commit()
             events = self._build_events(prepared, updates, answered_at)
             logger.info(
                 "evaluation persisted answer_record_id=%s weak_points=%s",
@@ -1035,20 +1285,19 @@ class ReportService:
 
     def _get_user_traces(self, session: Session, user_id: int) -> list[AnswerTrace]:
         query = (
-            session.query(AnswerRecord, Exercise)
+            session.query(AnswerRecord, Exercise, KnowledgePoint)
             .join(Exercise, Exercise.id == AnswerRecord.exercise_id)
+            .outerjoin(KnowledgePoint, KnowledgePoint.id == Exercise.knowledge_point_id)
             .filter(AnswerRecord.user_id == user_id)
             .order_by(AnswerRecord.created_at.asc(), AnswerRecord.id.asc())
         )
         traces: list[AnswerTrace] = []
-        for answer_record, exercise in query.all():
+        for answer_record, exercise, knowledge_point in query.all():
             metadata = answer_record.evaluation_json if isinstance(answer_record.evaluation_json, dict) else {}
             content = self._parse_exercise_content(exercise.content)
             knowledge_point_ids = metadata.get("knowledge_point_ids") or content.get("knowledge_point_ids") or []
-            if not knowledge_point_ids:
-                knowledge_point = session.get(KnowledgePoint, exercise.knowledge_point_id)
-                if knowledge_point is not None:
-                    knowledge_point_ids = [knowledge_point.name]
+            if not knowledge_point_ids and knowledge_point is not None:
+                knowledge_point_ids = [knowledge_point.name]
             question_type = normalize_exercise_type(
                 str(metadata.get("exercise_type") or content.get("exercise_type") or exercise.type or "choice")
             )
@@ -1315,13 +1564,30 @@ class ReportService:
         return events
 
     async def _publish_events(self, events: list[tuple[str, dict[str, Any]]]) -> None:
-        for queue_name, message in events:
-            await asyncio.to_thread(self._publisher.publish, queue_name, message)
+        for index, (queue_name, message) in enumerate(events):
+            try:
+                await asyncio.to_thread(self._publisher.publish, queue_name, message)
+            except Exception:
+                # The answer and learner profile have already been committed. A
+                # broker outage must not tell the learner to retry that write.
+                logger.exception(
+                    "evaluation event delivery failed after commit; queue=%s event_type=%s; "
+                    "remaining_events=%s",
+                    queue_name,
+                    message.get("event_type"),
+                    len(events) - index,
+                )
+                break
 
     def _upsert_exercise(self, session: Session, prepared: PreparedSubmission) -> Exercise:
-        primary_knowledge_point = self._get_or_create_knowledge_point(session, prepared.knowledge_point_ids[0])
         exercise = session.get(Exercise, prepared.exercise_id_int)
+        if exercise is not None:
+            # A learner submission cannot replace the stored question, answer,
+            # options or ownership metadata for everyone using this exercise.
+            return exercise
+        primary_knowledge_point = self._get_or_create_knowledge_point(session, prepared.knowledge_point_ids[0])
         content_payload = {
+            "generated_for_user_id": prepared.user_id_int,
             "external_exercise_id": prepared.exercise_id_str,
             "exercise_content": prepared.exercise_content,
             "knowledge_point_ids": prepared.knowledge_point_ids,
@@ -1336,26 +1602,15 @@ class ReportService:
             "analysis": prepared.explanation,
         }
         answer = prepared.standard_answer or prepared.reference_answer or ""
-        if exercise is None:
-            exercise = Exercise(
-                id=prepared.exercise_id_int,
-                knowledge_point_id=primary_knowledge_point.id,
-                type=prepared.exercise_type,
-                difficulty=self._difficulty_to_level(prepared.difficulty),
-                content=json.dumps(content_payload, ensure_ascii=False),
-                answer=answer,
-                analysis=prepared.explanation,
-            )
-            session.add(exercise)
-            session.flush()
-            return exercise
-
-        exercise.knowledge_point_id = primary_knowledge_point.id
-        exercise.type = prepared.exercise_type
-        exercise.difficulty = self._difficulty_to_level(prepared.difficulty)
-        exercise.content = json.dumps(content_payload, ensure_ascii=False)
-        exercise.answer = answer
-        exercise.analysis = prepared.explanation
+        exercise = Exercise(
+            id=prepared.exercise_id_int,
+            knowledge_point_id=primary_knowledge_point.id,
+            type=prepared.exercise_type,
+            difficulty=self._difficulty_to_level(prepared.difficulty),
+            content=json.dumps(content_payload, ensure_ascii=False),
+            answer=answer,
+            analysis=prepared.explanation,
+        )
         session.add(exercise)
         session.flush()
         return exercise

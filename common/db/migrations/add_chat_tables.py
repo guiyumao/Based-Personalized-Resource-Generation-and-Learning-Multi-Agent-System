@@ -5,9 +5,9 @@ Create Date: 2026-06-10
 
 """
 
-from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import sqlite
+
+from alembic import op
 
 
 def upgrade():

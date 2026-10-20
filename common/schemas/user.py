@@ -1,10 +1,9 @@
 """User-related API schemas."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
 
 PROFILE_DIMENSION_KEYS = (
     "knowledgeBase",
@@ -57,7 +56,7 @@ class UserCreate(BaseModel):
 
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=6, max_length=128)
-    role: str = "student"
+    role: Literal["student", "teacher", "admin"] = "student"
     email: str | None = None
 
 
@@ -66,7 +65,7 @@ class UserRegister(BaseModel):
 
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=6, max_length=128)
-    role: str = "student"
+    role: Literal["student"] = "student"
     email: str | None = None
 
 
@@ -89,6 +88,7 @@ class UserProfileRead(BaseModel):
     cognitive_abilities: dict[str, Any]
     habits: dict[str, Any]
     profile_dimensions: dict[str, str] = Field(default_factory=dict)
+    zhishu_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class UserProfileUpdate(BaseModel):
@@ -137,6 +137,7 @@ class LearnerProfileDashboard(BaseModel):
     habit_summary: str
     radar_metrics: list[LearnerRadarMetric]
     heatmap: list[LearnerHeatmapCell]
+    learning_content: dict[str, Any] = Field(default_factory=dict)
 
 
 class UserLogin(BaseModel):
@@ -160,27 +161,32 @@ def to_user_read(user: object) -> UserRead:
     """Convert an ORM-like user object to `UserRead`."""
 
     return UserRead(
-        id=getattr(user, "id"),
-        username=getattr(user, "username"),
-        role=getattr(user, "role"),
-        email=getattr(user, "email"),
-        created_at=getattr(user, "created_at"),
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        email=user.email,
+        created_at=user.created_at,
     )
 
 
-def to_user_profile_read(profile: object) -> UserProfileRead:
+def to_user_profile_read(
+    profile: object,
+    *,
+    zhishu_profile: dict[str, Any] | None = None,
+) -> UserProfileRead:
     """Convert an ORM-like user profile object to `UserProfileRead`."""
 
-    habits = getattr(profile, "habits")
+    habits = profile.habits
     profile_dimensions: dict[str, str] = {}
     if isinstance(habits, dict):
         profile_dimensions = sanitize_profile_dimensions(habits.get("profile_dimensions"))
 
     return UserProfileRead(
-        user_id=getattr(profile, "user_id"),
-        mastery_json=getattr(profile, "mastery_json"),
-        learning_style=getattr(profile, "learning_style"),
-        cognitive_abilities=getattr(profile, "cognitive_abilities"),
+        user_id=profile.user_id,
+        mastery_json=profile.mastery_json,
+        learning_style=profile.learning_style,
+        cognitive_abilities=profile.cognitive_abilities,
         habits=habits,
         profile_dimensions=profile_dimensions,
+        zhishu_profile=zhishu_profile or {},
     )

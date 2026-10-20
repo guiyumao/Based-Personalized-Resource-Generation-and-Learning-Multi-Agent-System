@@ -1,6 +1,8 @@
 """Unit tests for graph visualization and remedial exercise generation."""
 
 import asyncio
+import pytest
+from types import SimpleNamespace
 
 from services.agent_service.app.connectors.neo4j_connector import KnowledgeGraphRepository
 from services.evaluation_service.app.schemas.report import PracticeSubmission
@@ -65,6 +67,16 @@ class _SparseSession:
 class _SparseDriver:
     def session(self):
         return _SparseSession()
+
+
+@pytest.fixture(autouse=True)
+def explicit_public_courseware(monkeypatch):
+    # Graph tests must declare the public source they exercise. They cannot
+    # depend on private drafts left by a previous test or an implicit LLM.
+    article = SimpleNamespace(concepts=["变量基础", "表达式基础", "函数基础"],checks=["复习检查"],applications=["综合应用"])
+    monkeypatch.setattr(KnowledgeGraphRepository,"_get_article_for_graph",lambda *_:article)
+    from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
+    monkeypatch.setattr(KnowledgeBaseService,"article_to_dict",lambda *_:{"external_resources":[{"title":"公开学习资料","url":"https://example.edu/lesson","kind":"article"}]})
 
 
 def test_graph_visualization_contains_nodes_and_edges() -> None:

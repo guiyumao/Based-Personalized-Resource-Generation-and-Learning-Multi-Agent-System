@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from common.cors import get_cors_allow_origins
+from common.db.bootstrap import ensure_database_schema
 from common.logging.setup import configure_logging
 from services.system_service.app.api.routes import admin
 
@@ -22,6 +23,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(admin.router, prefix="/system", tags=["system"])
+
+
+@app.on_event("startup")
+def startup_bootstrap() -> None:
+    """Ensure shared persistence tables exist when the service runs alone."""
+
+    ensure_database_schema()
 
 
 @app.get("/health")

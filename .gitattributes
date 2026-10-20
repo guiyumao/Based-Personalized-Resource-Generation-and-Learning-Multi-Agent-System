@@ -1,0 +1,31 @@
+# Line-ending policy.
+#
+# The working copy runs with core.autocrlf=true but the repository stores LF, so
+# every touched file was reported as "LF will be replaced by CRLF" and appeared
+# fully rewritten in `git diff` for reasons unrelated to content. Pinning the
+# policy here removes that churn and keeps diffs reviewable.
+#
+# Text files: always LF in the repository and in the working tree.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+*.zip binary
+*.db binary
+*.db-wal binary
+*.db-shm binary
+*.woff binary
+*.woff2 binary
+
+# Windows-only scripts keep CRLF so they run under cmd.exe/powershell as-is.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf

@@ -35,6 +35,8 @@ def _learning_path_payload(user_id: int, knowledge_point: str) -> dict[str, obje
 
 
 def test_adjust_learning_path_marks_task_completed(db_session, test_user, monkeypatch) -> None:
+    from services.agent_service.app.services import plan_knowledge
+    monkeypatch.setattr(plan_knowledge,"require_plan_knowledge",lambda *_:{"knowledge_point":"Python 循环","subject_id":1,"point_id":1,"published_versions":[1],"usable_chunks":[]})
     """The persisted active path should support task completion updates."""
 
     service = LearningPathService(db_session)

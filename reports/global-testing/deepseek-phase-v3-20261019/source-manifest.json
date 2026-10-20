@@ -1,0 +1,66 @@
+[
+  {
+    "path": "common/config.py",
+    "sha256": "46dc8244524605e15ac912ea70580236e4dd7b182c253800c4ce62217f3746a6"
+  },
+  {
+    "path": "tests/conftest.py",
+    "sha256": "84c8703662501079f57e5c5badd4e475fd5ea0093417f19495f43ae98951e1a7"
+  },
+  {
+    "path": "scripts/run_no_cost_tests.py",
+    "sha256": "c64cd32b2c94a3def5853c93b16bef27dc7b86ba945e21590a71733fd5bf191d"
+  },
+  {
+    "path": "scripts/no_cost_runtime/guard.py",
+    "sha256": "73acbe18ba83400bc8089d8fa85e5bbf52433724b0c78d80336a5f34bf0368ca"
+  },
+  {
+    "path": "scripts/no_cost_runtime/sitecustomize.py",
+    "sha256": "f9a8c4710064baba1badc76cbdbbb0a49553accdfee9d0a18a186b058e101c2a"
+  },
+  {
+    "path": "scripts/no_cost_mock_provider.py",
+    "sha256": "4a69c8236d24ccb50f0ff02d6c079e9cfb97fb962cafbcfdfa8c7e02f167e644"
+  },
+  {
+    "path": "scripts/verify_no_cost_e2e.py",
+    "sha256": "62310ae4ab94ea702d01a90fe748df4bf45cb5cdcad59f23bab64b4b27eb053c"
+  },
+  {
+    "path": "scripts/verify_authorized_deepseek.py",
+    "sha256": "0b308dadf921437dd7dc75127c7046498208d3480246ac65dde4793ee653b352"
+  },
+  {
+    "path": "scripts/verify_live_business.py",
+    "sha256": "375bce7552b1fa6737d626e6260d456b12f088df17183295e211babe1830fb31"
+  },
+  {
+    "path": "scripts/report_deepseek_phase_v3.py",
+    "sha256": "6e9cf9aa5c221e5362322fcfbdbd1db94147f4cae4052b59f299e07f6aa7c492"
+  },
+  {
+    "path": "tests/integration/test_no_cost_isolation.py",
+    "sha256": "5e78e2287360ca61c2b6fb2b61184f3e7fd05435aed1c5221416eb9672361e3e"
+  },
+  {
+    "path": "tests/integration/test_authorized_gateway_budget.py",
+    "sha256": "08d9ae8a7d9c1a71a8ecab686c1ecf77fbd3d8ecf875b3b8513078b551e1653b"
+  },
+  {
+    "path": "tests/integration/test_deepseek_failure_semantics.py",
+    "sha256": "4ec3d5c78107f7aa156e281c3d854539a62befcbb9ece59a6e0513a417882874"
+  },
+  {
+    "path": "tests/e2e/run-no-cost.mjs",
+    "sha256": "d8d13596e778a9711deb98a17b0ac047e27dc013eb8b669c0b8b14ffed7caefa"
+  },
+  {
+    "path": "tests/e2e/run-live-authorized.mjs",
+    "sha256": "1e6057ce4fb46233f9c3269b55e729c2e5dbbd935ee0c808b9d0ab67740be593"
+  },
+  {
+    "path": "docs/testing/deepseek-live-test-prompt.md",
+    "sha256": "2c9fdb139b6755be0c4b3461f7d4dd0aa86dd5108e7552208c3f0dd98fe2046c"
+  }
+]

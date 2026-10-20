@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from common.cors import get_cors_allow_origins
 from common.db.bootstrap import ensure_database_schema
 from common.logging.setup import configure_logging
-from services.teacher_service.app.api.routes import classes
+from services.teacher_service.app.api.routes import classes, community
 
 configure_logging("teacher-service")
 
@@ -23,6 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(classes.router, prefix="/teacher", tags=["teacher"])
+app.include_router(community.router, prefix="/learning", tags=["learning-community"])
 
 
 @app.on_event("startup")

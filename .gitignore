@@ -18,15 +18,33 @@ learning_system.db
 *.db
 *.sqlite
 *.sqlite3
+*.db-shm
+*.db-wal
+*.db-journal
+
+.coverage
+.coverage.*
+*.egg-info/
 
 .local_queue/
 .sixth/
 .chroma/
+/knowledge_base/index/
 
 .DS_Store
 Thumbs.db
 *.log
+logs/
 .vscode/
 ~$*.docx
 .codex-artifacts/
 storage/
+/deployment/sakurafrp/runtime/
+/deployment/sakurafrp/config.ps1
+
+# Local delivery artifacts and historical snapshots. Keep artifacts/README.md.
+/artifacts/*
+!/artifacts/README.md
+
+# Frontend deployment build flags (non-secret env files).
+web-app/.env.sakurafrp

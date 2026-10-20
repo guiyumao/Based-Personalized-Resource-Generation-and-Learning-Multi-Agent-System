@@ -15,6 +15,8 @@ class AnswerRecordSubmission(BaseModel):
     """One answer submission pushed from the frontend or user-service."""
 
     user_id: str
+    learning_context_id: str | None = Field(default=None, max_length=36)
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     exercise_id: str
     user_answer: str
     is_correct: bool | None = None
@@ -33,7 +35,7 @@ class AnswerRecordSubmission(BaseModel):
     subject: str | None = None
 
     @model_validator(mode="after")
-    def validate_subjective_requirements(self) -> "AnswerRecordSubmission":
+    def validate_subjective_requirements(self) -> AnswerRecordSubmission:
         normalized_type = normalize_exercise_type(self.exercise_type)
         if normalized_type in {"short_answer", "code"}:
             if not self.reference_answer:
@@ -183,6 +185,8 @@ class PracticeSubmission(BaseModel):
     """Legacy practice submission payload."""
 
     user_id: int
+    learning_context_id: str | None = Field(default=None, max_length=36)
+    client_request_id: str | None = Field(default=None, min_length=8, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     exercise_id: int
     knowledge_point: str
     question_type: ExerciseType
@@ -210,6 +214,29 @@ class PracticeFeedback(BaseModel):
     suggested_action: str
     analysis: str
     mastery_after_update: int | None = Field(default=None, ge=0, le=100)
+
+
+class ExerciseFavoriteItem(BaseModel):
+    """One learner-saved exercise."""
+
+    id: int
+    exercise_id: int
+    knowledge_point: str = ""
+    question_type: str = ""
+    difficulty: str = ""
+    prompt: str
+    options: list[str] = Field(default_factory=list)
+    answer: str = ""
+    analysis: str = ""
+    created_at: datetime
+
+
+class ExerciseFavoriteNotebook(BaseModel):
+    """The learner's saved exercise notebook."""
+
+    user_id: int
+    favorite_count: int = Field(ge=0)
+    items: list[ExerciseFavoriteItem] = Field(default_factory=list)
 
 
 class QAMistakeSubmission(BaseModel):
@@ -292,6 +319,16 @@ class AnalyticsSuggestion(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     focus_areas: list[str] = Field(default_factory=list)
     recommended_action: str
+
+
+class ReportDashboardResponse(BaseModel):
+    """One-query payload used by the student report dashboard."""
+
+    stage_report: ReportDetail
+    comprehensive_report: ReportDetail
+    profile_snapshot: dict[str, Any]
+    learning_suggestions: AnalyticsSuggestion
+    mistake_notebook: MistakeNotebook
 
 
 class AnswerRecordIn(BaseModel):

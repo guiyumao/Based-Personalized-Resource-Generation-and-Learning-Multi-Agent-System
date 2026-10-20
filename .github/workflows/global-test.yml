@@ -1,0 +1,175 @@
+name: global-test
+
+# Global test pipeline for the personalized-learning multi-agent system.
+#
+# Stages are ordered so the cheapest, highest-signal failures surface first:
+#   static-analysis -> unit -> integration/api -> security -> quality-gate
+#
+# The security job is not optional: JWT signature verification used to be
+# silently skipped whenever `python-jose` was missing, so the pipeline asserts
+# that the dependency is importable and that forged tokens are rejected.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+  # Test-only secret. Production secrets must come from the platform secret store.
+  JWT_SECRET_KEY: ci-test-secret-key-not-for-production
+  ENVIRONMENT: test
+
+concurrency:
+  group: global-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-analysis:
+    name: Static analysis (dependency + lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install project with dev extras
+        # `-e .[dev]` is mandatory: omitting it is what caused the JWT
+        # verification fallback to be taken in the first place.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Assert security-critical imports resolve
+        run: |
+          python - <<'PY'
+          import importlib, sys
+          required = ["jose", "bcrypt", "fastapi", "sqlalchemy", "pydantic"]
+          missing = [name for name in required if importlib.util.find_spec(name) is None]
+          if missing:
+              sys.exit(f"Missing security-critical dependencies: {missing}")
+          print("security-critical imports OK")
+          PY
+
+      - name: Ruff lint
+        run: ruff check common services scripts tests --output-format=github
+
+      - name: Dependency vulnerability audit
+        run: pip-audit --strict --progress-spinner off
+
+  unit-tests:
+    name: Unit + regression tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run test suite with coverage
+        run: |
+          pytest tests -q --ignore=tests/integration \
+            --cov=common --cov=services --cov-report=xml --cov-report=term-missing \
+            -p no:cacheprovider
+
+      - name: Enforce coverage floor
+        run: |
+          python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse("coverage.xml").getroot()
+          rate = float(root.get("line-rate", "0"))
+          print(f"line coverage = {rate:.2%}")
+          if rate < 0.60:
+              sys.exit("Coverage below the 60% project floor")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  integration-and-security:
+    name: Live API + security regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [static-analysis, unit-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Bootstrap the schema
+        run: python scripts/create_tables.py
+
+      - name: Start the API services
+        run: |
+          set -e
+          for spec in \
+            "user_service 8001" "agent_service 8002" "resource_service 8003" \
+            "evaluation_service 8004" "teacher_service 8005" "system_service 8006"; do
+            set -- $spec
+            nohup python -m uvicorn "services.$1.app.main:app" \
+              --host 127.0.0.1 --port "$2" > "logs-$1.txt" 2>&1 &
+          done
+          for port in 8001 8002 8003 8004 8005 8006; do
+            for i in $(seq 1 30); do
+              if curl -sf "http://127.0.0.1:$port/health" > /dev/null; then break; fi
+              sleep 2
+            done
+          done
+
+      - name: Health gate
+        run: |
+          for port in 8001 8002 8003 8004 8005 8006; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$port/health")
+            echo "port $port -> $code"
+            test "$code" = "200"
+          done
+
+      - name: Security regression suite
+        run: pytest tests/unit/test_security_auth.py -v -p no:cacheprovider
+
+      - name: Non-destructive live API probe
+        run: python tests/global/probe_api.py --out artifacts/global-testing/api-probe-ci.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-probe-report
+          path: |
+            artifacts/global-testing/api-probe-ci.json
+            logs-*.txt
+
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-and-security]
+    if: always()
+    steps:
+      - name: Evaluate gate
+        run: |
+          echo "Gate rules (see artifacts/global-testing/03-test-report.md):"
+          echo " - unit pass rate 100%          : ${{ needs.unit-tests.result }}"
+          echo " - api probe pass rate 100%     : ${{ needs.integration-and-security.result }}"
+          echo " - no S1/S2 open defect         : manual review required"
+          if [ "${{ needs.unit-tests.result }}" != "success" ] \
+             || [ "${{ needs.integration-and-security.result }}" != "success" ]; then
+            echo "::error::Quality gate failed - release blocked"
+            exit 1
+          fi
+          echo "Quality gate passed"

@@ -22,7 +22,7 @@ def test_coordinator_executes_qa_and_evaluation_agents(monkeypatch):
             return None
 
     class FakeQAService:
-        def __init__(self, db):
+        def __init__(self, db, personalization_snapshot=None):
             self.db = db
 
         def analyze_question(self, request):
@@ -53,19 +53,24 @@ def test_coordinator_executes_qa_and_evaluation_agents(monkeypatch):
             }
 
     class FakeReportService:
-        async def generate_learning_suggestions(self, user_id: int):
-            return AnalyticsSuggestion(
-                user_id=user_id,
-                suggestions=["review loops"],
-                focus_areas=["Python loops"],
-                recommended_action="practice next",
+        async def generate_dashboard(self, user_id: int):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
+                learning_suggestions=AnalyticsSuggestion(
+                    user_id=user_id,
+                    suggestions=["review loops"],
+                    focus_areas=["Python loops"],
+                    recommended_action="practice next",
+                ),
+                profile_snapshot={"user_id": user_id, "mastery": 70},
+                mistake_notebook=SimpleNamespace(
+                    mistake_count=1,
+                    items=[SimpleNamespace(exercise_id=1)],
+                ),
+                stage_report=SimpleNamespace(model_dump=lambda mode=None: {}),
+                comprehensive_report=SimpleNamespace(model_dump=lambda mode=None: {}),
             )
-
-        async def generate_profile_snapshot(self, user_id: int):
-            return {"user_id": user_id, "mastery": 70}
-
-        async def get_mistake_statistics(self, user_id: int):
-            return {"user_id": user_id, "mistake_count": 1}
 
     workflow = CoordinatorWorkflow(db=object())
     monkeypatch.setattr(
@@ -97,7 +102,7 @@ def test_coordinator_executes_qa_and_evaluation_agents(monkeypatch):
         "knowledge_graph_agent",
         "qa_agent",
     ]
-    assert len(published_messages) == 3
+    assert published_messages == []
     assert result["outputs"]["qa_agent"]["qa"]["student_response"] == "answer: Why does my loop never stop?"
     assert result["outputs"]["qa_agent"]["qa"]["structured_analysis"]["identified_knowledge_gaps"] == ["Python loops"]
     evaluation = result["outputs"]["evaluation_feedback_agent"]["evaluation"]

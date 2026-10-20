@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Download } from '@element-plus/icons-vue'
+import { renderLearningMarkdown } from '../utils/renderLearningMarkdown'
 
 import {
   agentApi,
@@ -13,16 +14,10 @@ import {
 } from '../api'
 import { useAuthStore } from '../stores/auth'
 
-type CoursewareBlock =
-  | { type: 'paragraph'; lines: string[] }
-  | { type: 'unordered'; lines: string[] }
-  | { type: 'ordered'; lines: string[] }
-  | { type: 'code'; lines: string[]; language: string }
-
 type CoursewareSection = {
   heading: string
   anchor: string
-  blocks: CoursewareBlock[]
+  html: string
 }
 
 type StoredCoursewareSnapshot = {
@@ -51,6 +46,7 @@ const selectedVariantId = ref(snapshot.value?.selectedVariantId ?? '')
 const autoGenerating = ref(false)
 const generationProgress = ref(0)
 const progressStages = ref<ProgressStage[]>(createProgressStages())
+const pathMissing = ref(false)
 
 const coursewareVariants = computed<ResourceVariant[]>(() => snapshot.value?.resourceResult.variants ?? [])
 const activeCoursewareVariant = computed<ResourceVariant | null>(() => {
@@ -79,7 +75,7 @@ const readingProgress = computed(() => {
   if (!resourceSections.value.length) {
     return 0
   }
-  return Math.round((resourceSections.value.filter((section) => section.blocks.length > 0).length / resourceSections.value.length) * 100)
+  return Math.round((resourceSections.value.filter((section) => section.html.trim()).length / resourceSections.value.length) * 100)
 })
 const generatedTimeLabel = computed(() => {
   if (!snapshot.value?.generatedAt) {
@@ -199,7 +195,6 @@ function buildDownloadMarkdown() {
     : '刚刚生成'
   const topic = currentSnapshot?.topic || currentSnapshot?.resourceResult.knowledge_point || '当前学习主题'
   const content = ensureMarkdownTitle(coursewareContent.value.trim(), coursewareTitle.value)
-  const references = currentSnapshot?.resourceResult.references ?? []
   const metadata = [
     '<!--',
     `主题: ${topic}`,
@@ -210,20 +205,7 @@ function buildDownloadMarkdown() {
     '',
   ]
 
-  if (!references.length) {
-    return `${metadata.join('\n')}${content}\n`
-  }
-
-  const referenceLines = references
-    .map((reference, index) => {
-      const title = reference.id || `参考材料 ${index + 1}`
-      const source = String(reference.metadata?.source ?? 'RAG 检索')
-      const body = reference.content?.trim() || '暂无摘要'
-      return [`### ${title}`, '', `来源: ${source}`, '', body].join('\n')
-    })
-    .join('\n\n')
-
-  return `${metadata.join('\n')}${content}\n\n---\n\n## 参考材料\n\n${referenceLines}\n`
+  return `${metadata.join('\n')}${content}\n`
 }
 
 function ensureMarkdownTitle(content: string, title: string) {
@@ -252,6 +234,7 @@ async function generateFromLatestPath() {
   }
 
   autoGenerating.value = true
+  pathMissing.value = false
   generationProgress.value = 0
   progressStages.value = createProgressStages()
   try {
@@ -259,6 +242,7 @@ async function generateFromLatestPath() {
     const pathResponse = await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)
     const path = pathResponse.data
     if (!path?.knowledge_point) {
+      pathMissing.value = true
       return
     }
 
@@ -295,6 +279,10 @@ async function generateFromLatestPath() {
     finishProgress()
     ElMessage.success('已根据最新学习路径生成课件')
   } catch (error: any) {
+    if (error?.response?.status === 404) {
+      pathMissing.value = true
+      return
+    }
     ElMessage.error(`课件生成失败：${error?.response?.data?.detail ?? error?.message ?? '未知错误'}`)
   } finally {
     autoGenerating.value = false
@@ -303,91 +291,32 @@ async function generateFromLatestPath() {
 
 function buildCoursewareSections(content: string): CoursewareSection[] {
   const normalized = content.trim().replace(/\r\n/g, '\n')
-  if (!normalized) {
-    return []
+  if (!normalized) return []
+
+  const sections: Array<{ heading: string; lines: string[] }> = []
+  let current: { heading: string; lines: string[] } | null = null
+  let inCodeFence = false
+  for (const line of normalized.split('\n')) {
+    if (/^\s*```/.test(line)) inCodeFence = !inCodeFence
+    if (!inCodeFence && /^#\s+/.test(line) && !current && sections.length === 0) continue
+    const heading = !inCodeFence ? line.match(/^##\s+(.+?)\s*$/) : null
+    if (heading) {
+      current = { heading: heading[1].replace(/\*\*|`/g, '').trim(), lines: [] }
+      sections.push(current)
+      continue
+    }
+    if (!current) {
+      current = { heading: '课件内容', lines: [] }
+      sections.push(current)
+    }
+    current.lines.push(line)
   }
 
-  const titleRemoved = normalized.replace(/^# .+\n?/, '').trim()
-  const chunks = titleRemoved.split(/\n##\s+/).filter(Boolean)
-
-  return chunks.map((chunk, index) => {
-    const lines = chunk.trim().split('\n')
-    const firstLine = lines.shift() ?? `章节 ${index + 1}`
-    return {
-      heading: firstLine.trim(),
-      anchor: `courseware-page-section-${index + 1}`,
-      blocks: parseMarkdownBlocks(lines.join('\n').trim()),
-    }
-  })
-}
-
-function parseMarkdownBlocks(body: string): CoursewareBlock[] {
-  if (!body) {
-    return []
-  }
-
-  const blocks: CoursewareBlock[] = []
-  const lines = body.split('\n')
-  let index = 0
-
-  while (index < lines.length) {
-    const line = lines[index].trimEnd()
-    const trimmed = line.trim()
-
-    if (!trimmed) {
-      index += 1
-      continue
-    }
-
-    if (trimmed.startsWith('```')) {
-      const language = trimmed.slice(3).trim()
-      const codeLines: string[] = []
-      index += 1
-      while (index < lines.length && !lines[index].trim().startsWith('```')) {
-        codeLines.push(lines[index])
-        index += 1
-      }
-      if (index < lines.length) {
-        index += 1
-      }
-      blocks.push({ type: 'code', lines: codeLines, language })
-      continue
-    }
-
-    if (/^-\s+/.test(trimmed)) {
-      const listLines: string[] = []
-      while (index < lines.length && /^-\s+/.test(lines[index].trim())) {
-        listLines.push(lines[index].trim().replace(/^-\s+/, ''))
-        index += 1
-      }
-      blocks.push({ type: 'unordered', lines: listLines })
-      continue
-    }
-
-    if (/^\d+\.\s+/.test(trimmed)) {
-      const listLines: string[] = []
-      while (index < lines.length && /^\d+\.\s+/.test(lines[index].trim())) {
-        listLines.push(lines[index].trim().replace(/^\d+\.\s+/, ''))
-        index += 1
-      }
-      blocks.push({ type: 'ordered', lines: listLines })
-      continue
-    }
-
-    const paragraphLines: string[] = []
-    while (index < lines.length) {
-      const current = lines[index].trimEnd()
-      const currentTrimmed = current.trim()
-      if (!currentTrimmed || currentTrimmed.startsWith('```') || /^-\s+/.test(currentTrimmed) || /^\d+\.\s+/.test(currentTrimmed)) {
-        break
-      }
-      paragraphLines.push(currentTrimmed)
-      index += 1
-    }
-    blocks.push({ type: 'paragraph', lines: paragraphLines })
-  }
-
-  return blocks
+  return sections.filter((section) => section.lines.some((line) => line.trim())).map((section, index) => ({
+    heading: section.heading,
+    anchor: `courseware-page-section-${index + 1}`,
+    html: renderLearningMarkdown(section.lines.join('\n').trim()),
+  }))
 }
 </script>
 
@@ -412,7 +341,7 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
           </el-button>
         </div>
         <p v-if="snapshot" style="margin:10px 0 0;font-size:12px;color:var(--muted)">
-          将当前选中的课件版本导出为 {{ downloadFileName }}，包含正文和参考材料。
+          将当前选中的课件版本导出为 {{ downloadFileName }}。
         </p>
       </div>
 
@@ -561,47 +490,18 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
             class="learning-section"
           >
             <h3>{{ section.heading }}</h3>
-            <template v-for="block in section.blocks" :key="`${section.anchor}-${block.type}-${block.lines.join('-')}`">
-              <p v-if="block.type === 'paragraph'" class="learning-line">
-                {{ block.lines.join(' ') }}
-              </p>
-              <ul v-else-if="block.type === 'unordered'" class="markdown-list">
-                <li v-for="line in block.lines" :key="line">{{ line }}</li>
-              </ul>
-              <ol v-else-if="block.type === 'ordered'" class="markdown-list markdown-list-ordered">
-                <li v-for="line in block.lines" :key="line">{{ line }}</li>
-              </ol>
-              <div v-else class="code-block">
-                <div v-if="block.language" class="code-block-label">{{ block.language }}</div>
-                <pre><code>{{ block.lines.join('\n') }}</code></pre>
-              </div>
-            </template>
+            <div class="learning-markdown" v-html="section.html"></div>
           </section>
 
-          <article v-if="snapshot.resourceResult.references?.length" class="learning-section">
-            <h3>参考材料</h3>
-            <div class="reference-list">
-              <article
-                v-for="reference in snapshot.resourceResult.references"
-                :key="reference.id ?? reference.content"
-                class="reference-card"
-              >
-                <strong>{{ reference.id ?? '参考片段' }}</strong>
-                <p>{{ reference.content }}</p>
-                <span class="reference-meta">
-                  来源：{{ String(reference.metadata?.source ?? 'RAG 检索') }}
-                </span>
-              </article>
-            </div>
-          </article>
         </div>
       </div>
     </section>
 
     <section v-else class="workspace-panel wide">
       <div class="empty-state courseware-page-empty">
-        <strong>当前没有可展示的正式课件。</strong>
-        <p>先回到学生工作台生成课件，再进入这里查看独立页面。</p>
+        <strong>{{ pathMissing ? '当前还没有学习路径，暂时无法生成课件。' : '当前没有可展示的正式课件。' }}</strong>
+        <p>{{ pathMissing ? '先生成学习路径，系统会根据路径主题继续生成正式课件。' : '先回到学生工作台生成课件，再进入这里查看独立页面。' }}</p>
+        <el-button v-if="pathMissing" type="primary" @click="router.push('/student/learning-path')">去生成学习路径</el-button>
       </div>
     </section>
   </div>
@@ -738,6 +638,32 @@ function parseMarkdownBlocks(body: string): CoursewareBlock[] {
 .learning-line {
   line-height: 1.8;
 }
+
+.learning-markdown {
+  color: var(--muted);
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+}
+
+.learning-markdown :deep(p),
+.learning-markdown :deep(ul),
+.learning-markdown :deep(ol),
+.learning-markdown :deep(pre),
+.learning-markdown :deep(.learning-math-block) {
+  margin: 0 0 14px;
+}
+
+.learning-markdown :deep(:last-child) { margin-bottom: 0; }
+.learning-markdown :deep(ul),
+.learning-markdown :deep(ol) { padding-left: 24px; }
+.learning-markdown :deep(li) { margin: 4px 0; }
+.learning-markdown :deep(strong),
+.learning-markdown :deep(h4) { color: var(--text); }
+.learning-markdown :deep(h4) { margin: 18px 0 8px; }
+.learning-markdown :deep(code) { background: var(--bg); border-radius: 4px; padding: 2px 5px; }
+.learning-markdown :deep(pre) { padding: 14px; overflow: auto; border-radius: 10px; background: var(--bg); }
+.learning-markdown :deep(pre code) { padding: 0; }
+.learning-markdown :deep(.learning-math-block) { overflow-x: auto; }
 
 .tag-row,
 .reference-list {

@@ -1,0 +1,192 @@
+[
+  {
+    "file": "services\\agent_service\\app\\connectors\\neo4j_connector.py",
+    "line": 786,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.1)"
+  },
+  {
+    "file": "services\\agent_service\\app\\connectors\\neo4j_connector.py",
+    "line": 1270,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.2)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\audit_service.py",
+    "line": 182,
+    "call": "llm = LLMFactory(self.settings).build_chat_model(temperature=0.0)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\chat_service.py",
+    "line": 269,
+    "call": "model = self.llm_factory.build_chat_model(temperature=0.3) if use_large_model else self.llm_factory.build_for_task(\"summarize\", temperature=0.2)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\chat_service.py",
+    "line": 448,
+    "call": "llm = self.llm_factory.build_for_task(\"summarize\", temperature=0.2)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\chat_service.py",
+    "line": 493,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.3)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\chat_service.py",
+    "line": 558,
+    "call": "llm = self.llm_factory.build_for_task(\"classify\", temperature=0.1)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\deepseek_search.py",
+    "line": 64,
+    "call": "reserve_usage(\"fetch\" if path.endswith(\"/fetch\") else \"search\")"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\deepseek_search.py",
+    "line": 86,
+    "call": "def search_sources(query: str, *, count: int = 5) -> list[dict[str, str]]:"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\deepseek_search.py",
+    "line": 104,
+    "call": "def fetch_source(url: str) -> dict[str, Any]:"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\exercise_generation.py",
+    "line": 158,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.15)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\exercise_generation.py",
+    "line": 336,
+    "call": "llm = LLMFactory(self.settings).build_chat_model(temperature=retry_temp)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\feedback_synthesis.py",
+    "line": 367,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.4)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\knowledge_budget.py",
+    "line": 20,
+    "call": "def reserve_usage(kind: str, *, input_tokens: int = 0, output_tokens: int = 0) -> None:"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\knowledge_construction.py",
+    "line": 57,
+    "call": "model = LLMFactory(settings).build_chat_model(temperature=0)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\knowledge_construction.py",
+    "line": 68,
+    "call": "reserve_usage(\"model\", input_tokens=len(prompt), output_tokens=4000)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\knowledge_construction.py",
+    "line": 93,
+    "call": "model = LLMFactory(settings).build_chat_model(temperature=0)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\knowledge_construction.py",
+    "line": 102,
+    "call": "reserve_usage(\"model\", input_tokens=len(prompt), output_tokens=6000)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\knowledge_tasks.py",
+    "line": 367,
+    "call": "result = {\"query\": query, \"sources\": search_sources(query)}"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\knowledge_tasks.py",
+    "line": 373,
+    "call": "result = {\"source\": fetch_source(str(source[\"url\"])), \"review_status\": \"PENDING\"}"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\learning_path.py",
+    "line": 128,
+    "call": "llm = LLMFactory(settings).build_chat_model(temperature=0.25)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\llm_factory.py",
+    "line": 27,
+    "call": "def build_chat_model(self, temperature: float = 0.3, model_name: str | None = None):"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\llm_factory.py",
+    "line": 113,
+    "call": "def build_for_task(self, task: str, *, temperature: float = 0.0):"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\llm_factory.py",
+    "line": 117,
+    "call": "return self.build_chat_model(temperature=temperature, model_name=model_name or None)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\llm_factory.py",
+    "line": 135,
+    "call": "model = self.build_chat_model(model_name=model_name)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\qa_service.py",
+    "line": 909,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.2)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\qa_service.py",
+    "line": 974,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.25)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\qa_service.py",
+    "line": 1021,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.25)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\qa_service.py",
+    "line": 1125,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.2)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\rag.py",
+    "line": 416,
+    "call": "llm = LLMFactory(self.settings).build_for_task(\"rewrite\", temperature=0.0)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\resource_generation.py",
+    "line": 551,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=temperature)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\resource_generation.py",
+    "line": 703,
+    "call": "llm = self.llm_factory.build_chat_model(temperature=0.2)"
+  },
+  {
+    "file": "services\\agent_service\\app\\services\\tag_analysis.py",
+    "line": 108,
+    "call": "llm = LLMFactory(self.settings).build_chat_model(temperature=0.1)"
+  },
+  {
+    "file": "services\\user_service\\app\\services\\profile_analysis.py",
+    "line": 307,
+    "call": "model = LLMFactory(self.settings).build_chat_model(temperature=0.5)"
+  },
+  {
+    "file": "services\\user_service\\app\\services\\profile_builder.py",
+    "line": 318,
+    "call": "model = LLMFactory(self.settings).build_chat_model("
+  },
+  {
+    "file": "services\\user_service\\app\\services\\profile_builder.py",
+    "line": 350,
+    "call": "model = LLMFactory(self.settings).build_chat_model("
+  },
+  {
+    "file": "services\\user_service\\app\\services\\profile_builder.py",
+    "line": 404,
+    "call": "model = LLMFactory(self.settings).build_chat_model("
+  },
+  {
+    "file": "services\\user_service\\app\\api\\routes\\study_tools.py",
+    "line": 165,
+    "call": "model = LLMFactory(get_settings()).build_for_task(\"summarize\", temperature=0.2)"
+  }
+]

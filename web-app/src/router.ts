@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from './stores/auth'
+import { adminNavigation } from './config/adminNavigation'
+import { userApi } from './api/http'
 
 import AdminView from './views/AdminView.vue'
 import CoursewareView from './views/CoursewareView.vue'
@@ -8,6 +10,7 @@ import LoginView from './views/LoginView.vue'
 import MistakeNotebookView from './views/MistakeNotebookView.vue'
 import RegisterView from './views/RegisterView.vue'
 import TeacherView from './views/TeacherView.vue'
+import TranscriptAnalysisView from './views/TranscriptAnalysisView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -58,10 +61,16 @@ const router = createRouter({
           name: 'student-learning-path',
           component: () => import('./views/student/LearningPathView.vue'),
         },
+        { path: 'workspace/:contextId?', name: 'student-workspace', component: () => import('./views/student/LearningWorkspaceView.vue') },
         {
           path: 'courseware',
           name: 'student-courseware',
           component: CoursewareView,
+        },
+        {
+          path: 'classroom',
+          name: 'student-classroom',
+          component: () => import('./views/student/ClassroomView.vue'),
         },
         {
           path: 'knowledge-base',
@@ -79,6 +88,16 @@ const router = createRouter({
           component: MistakeNotebookView,
         },
         {
+          path: 'favorites',
+          name: 'student-favorites',
+          component: () => import('./views/student/FavoriteNotebookView.vue'),
+        },
+        {
+          path: 'study-tools',
+          name: 'student-study-tools',
+          component: () => import('./views/student/StudyToolsView.vue'),
+        },
+        {
           path: 'knowledge-graph',
           name: 'student-knowledge-graph',
           component: () => import('./views/student/KnowledgeGraphView.vue'),
@@ -87,6 +106,11 @@ const router = createRouter({
           path: 'report',
           name: 'student-report',
           component: () => import('./views/student/ReportView.vue'),
+        },
+        {
+          path: 'transcripts',
+          name: 'student-transcripts',
+          component: TranscriptAnalysisView,
         },
         {
           path: 'qa',
@@ -144,6 +168,11 @@ const router = createRouter({
           component: TeacherView,
         },
         {
+          path: 'transcripts',
+          name: 'teacher-transcripts',
+          component: TranscriptAnalysisView,
+        },
+        {
           path: 'homework',
           name: 'teacher-homework',
           component: TeacherView,
@@ -152,16 +181,17 @@ const router = createRouter({
     },
 
     // ── 管理控制台 ──
-    {
-      path: '/admin',
-      name: 'admin',
-      component: AdminView,
-      meta: { requiresAuth: true, roles: ['admin'] },
-    },
+    ...adminNavigation.map(item => ({
+      path: item.route,
+      name: item.routeName,
+      component: item.key === 'overview' ? AdminView : () => import(`./views/admin/${item.key}.vue`),
+      meta: { requiresAuth: true, roles: [...item.roles], feature: item.key },
+    })),
+    { path: '/admin/:pathMatch(.*)*', redirect: '/admin', meta: { requiresAuth: true, roles: ['admin'] } },
   ],
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const authStore = useAuthStore()
 
   // '/' is the public landing page — always allow
@@ -175,7 +205,7 @@ router.beforeEach((to) => {
   }
 
   // Check auth requirement
-  if (to.meta.requiresAuth && !authStore.isAuthenticated) {
+  if (to.meta.requiresAuth && (!authStore.isAuthenticated || !authStore.user)) {
     return { name: 'login' }
   }
 
@@ -189,8 +219,21 @@ router.beforeEach((to) => {
 
   // Check role requirement
   const allowedRoles = to.meta.roles as string[] | undefined
-  if (allowedRoles && authStore.user && !allowedRoles.includes(authStore.user.role)) {
+  if (allowedRoles && !allowedRoles.includes(authStore.user?.role ?? '')) {
     return authStore.homeRoute
+  }
+
+  // Revalidate the durable role before opening any administrator module. Local
+  // storage is a UI cache; the API validates this token against the current user.
+  if (allowedRoles?.includes('admin')) {
+    try {
+      const { data } = await userApi.get<{ id: number; username: string; role: 'student' | 'teacher' | 'admin' }>('/users/me')
+      authStore.setAuth({ token: authStore.token, user: { userId: data.id, username: data.username, role: data.role } })
+      if (data.role !== 'admin') return authStore.homeRoute
+    } catch {
+      authStore.clear()
+      return { name: 'login', query: { reason: 'permission-unavailable' } }
+    }
   }
 
   return true

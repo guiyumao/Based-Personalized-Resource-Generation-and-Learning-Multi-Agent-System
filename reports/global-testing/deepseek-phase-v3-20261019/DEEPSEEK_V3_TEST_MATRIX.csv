@@ -1,0 +1,31 @@
+﻿id,status,historical_status,evidence,notes
+DS-01,PASS_LIVE_AUTHORIZED,BLOCKED,artifacts\deepseek-authorized-20261019-v1\request-ledger.jsonl,本轮授权范围已执行；smoke，不代表整模块所有子场景通过
+DS-02,PASS_UNAUTHORIZED,PASS_UNAUTHORIZED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,INC-01: test passed; no usage/model/id; not authorized acceptance
+DS-03,PASS_UNAUTHORIZED,PASS_UNAUTHORIZED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,INC-01: test passed; no usage/model/id; not authorized acceptance
+DS-04,PASS_UNAUTHORIZED,PASS_UNAUTHORIZED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,INC-01: test passed; no usage/model/id; not authorized acceptance
+DS-05,PASS_LIVE_AUTHORIZED,BLOCKED,artifacts\deepseek-authorized-20261019-v1\request-ledger.jsonl,本轮授权范围已执行；courseware，不代表整模块所有子场景通过
+DS-06,PASS_LIVE_AUTHORIZED,BLOCKED,artifacts\deepseek-authorized-20261019-v1\request-ledger.jsonl,本轮授权范围已执行；exercise，不代表整模块所有子场景通过
+DS-07,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,Typical 2 generation calls; upper bound 12 attempts
+DS-08,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,No Chat authorization
+DS-09,PASS_LIVE_AUTHORIZED,BLOCKED,artifacts\deepseek-authorized-20261019-v1\request-ledger.jsonl,本轮授权范围已执行；qa，不代表整模块所有子场景通过
+DS-10,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,Graph enrichment is async and not guaranteed
+DS-11,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,No Chat authorization
+DS-12,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,Only requested outputs
+DS-13,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,History profile off by default
+DS-14,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,No Chat authorization
+DS-15,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,Knowledge budget exists but no authorization
+DS-16,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,No authorization
+DS-17,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,1 search + up to 2 fetch + 1 model
+DS-18,NOT_RUN,NOT_RUN,artifacts\deepseek-live-20261019-173354\test-matrix.csv,"Async 0-1, not guaranteed"
+DS-19,NOT_RUN,NOT_RUN,artifacts\deepseek-live-20261019-173354\test-matrix.csv,原矩阵未找到定义，不能补造通过
+DS-20,PASS_LIVE_AUTHORIZED,BLOCKED,artifacts\deepseek-authorized-20261019-v1\request-ledger.jsonl,本轮授权范围已执行；search，不代表整模块所有子场景通过
+DS-21,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,Fetch未通过安全校验；未执行完整来源发布链
+DS-22,BLOCKED,BLOCKED,artifacts\deepseek-live-20261019-173354\test-matrix.csv,Fetch未通过安全校验；未执行完整来源发布链
+DS-23,PASS_MOCK,BLOCKED,artifacts\deepseek-phase-v3-20261019,本地受控/Worker证据；不声称真实远端取消、计费或故障语义通过
+DS-24,PASS_MOCK,BLOCKED,artifacts\deepseek-phase-v3-20261019,本地受控/Worker证据；不声称真实远端取消、计费或故障语义通过
+DS-25,PASS_MOCK,PASS,artifacts\deepseek-phase-v3-20261019,本地受控/Worker证据；不声称真实远端取消、计费或故障语义通过
+DS-26,PASS_MOCK,PASS,artifacts\deepseek-phase-v3-20261019,本地受控/Worker证据；不声称真实远端取消、计费或故障语义通过
+DS-27,PASS_MOCK,PASS,artifacts\deepseek-phase-v3-20261019,本地受控/Worker证据；不声称真实远端取消、计费或故障语义通过
+DS-28,PASS_MOCK,PASS_UNAUTHORIZED,artifacts\deepseek-phase-v3-20261019,本地受控/Worker证据；不声称真实远端取消、计费或故障语义通过
+DS-29,PASS_MOCK,NOT_RUN,artifacts\deepseek-phase-v3-20261019,本地受控/Worker证据；不声称真实远端取消、计费或故障语义通过
+DS-30,NOT_RUN,NOT_RUN,artifacts\deepseek-live-20261019-173354\test-matrix.csv,No real artifacts available

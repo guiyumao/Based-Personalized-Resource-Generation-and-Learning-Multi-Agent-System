@@ -1,0 +1,11 @@
+{
+  "name": "learning-system-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Playwright E2E suite for web-app (127.0.0.1:5175). Playwright is consumed from workspace/node_modules; axe-core is installed locally here.",
+  "scripts": {
+    "test": "node run-all.mjs",
+    "test:assistant": "node run-assistant-pet.mjs"
+  }
+}

@@ -7,7 +7,7 @@ from common.cors import get_cors_allow_origins
 from common.db.bootstrap import ensure_database_schema, ensure_default_admin
 from common.db.session import SessionLocal
 from common.logging.setup import configure_logging
-from services.user_service.app.api.routes import users
+from services.user_service.app.api.routes import study_tools, users
 
 configure_logging("user-service")
 
@@ -24,6 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(users.router, prefix="/users", tags=["users"])
+app.include_router(study_tools.router, prefix="/study", tags=["study-tools"])
 
 
 @app.on_event("startup")

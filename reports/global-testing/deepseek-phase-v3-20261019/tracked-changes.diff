@@ -1,0 +1,342 @@
+diff --git a/common/config.py b/common/config.py
+index 281aaf3..b8f9e3d 100644
+--- a/common/config.py
++++ b/common/config.py
+@@ -11,6 +11,11 @@ from pathlib import Path
+ def _load_dotenv_file() -> None:
+     """Load a local `.env` file into process environment if present."""
+ 
++    # The dedicated no-cost runner must never discover developer credentials.
++    # Normal development retains the existing dotenv behavior.
++    if os.getenv("NO_COST_TEST") == "1" or os.getenv("APP_LOAD_DOTENV", "true").lower() in {"0", "false", "no"}:
++        return
++
+     env_path = Path(".env")
+     if not env_path.exists():
+         return
+@@ -20,7 +25,9 @@ def _load_dotenv_file() -> None:
+         if not line or line.startswith("#") or "=" not in line:
+             continue
+         key, value = line.split("=", 1)
+-        os.environ[key.strip()] = value.strip()
++        # Deployment-provided environment variables must take precedence over
++        # developer defaults stored in the local .env file.
++        os.environ.setdefault(key.strip(), value.strip())
+ 
+ 
+ _load_dotenv_file()
+@@ -47,6 +54,18 @@ def _get_int(name: str, default: int) -> int:
+         return default
+ 
+ 
++def _get_float(name: str, default: float) -> float:
++    """Read a floating-point environment variable with fallback."""
++
++    value = os.getenv(name)
++    if value is None:
++        return default
++    try:
++        return float(value)
++    except ValueError:
++        return default
++
++
+ def _get_required(name: str) -> str:
+     """Read a required environment variable."""
+ 
+@@ -74,6 +93,13 @@ class Settings:
+     database_url: str = os.getenv("DATABASE_URL", "sqlite+pysqlite:///./learning_system.db")
+     redis_url: str = os.getenv("REDIS_URL", "")
+     rabbitmq_url: str = os.getenv("RABBITMQ_URL", "")
++    assistant_task_execution_mode: str = os.getenv("ASSISTANT_TASK_EXECUTION_MODE", "background").strip().lower()
++    assistant_worker_heartbeat_seconds: int = _get_int("ASSISTANT_WORKER_HEARTBEAT_SECONDS", 5)
++    assistant_worker_stale_seconds: int = _get_int("ASSISTANT_WORKER_STALE_SECONDS", 45)
++    assistant_task_max_seconds: int = _get_int("ASSISTANT_TASK_MAX_SECONDS", 1800)
++    assistant_cancel_wait_seconds: int = _get_int("ASSISTANT_CANCEL_WAIT_SECONDS", 60)
++    assistant_safe_retry_limit: int = _get_int("ASSISTANT_SAFE_RETRY_LIMIT", 2)
++    assistant_safe_retry_backoff_seconds: int = _get_int("ASSISTANT_SAFE_RETRY_BACKOFF_SECONDS", 5)
+     elasticsearch_url: str = os.getenv("ELASTICSEARCH_URL", "")
+     user_service_url: str = os.getenv("USER_SERVICE_URL", "")
+     agent_service_url: str = os.getenv("AGENT_SERVICE_URL", "")
+@@ -113,12 +139,78 @@ class Settings:
+     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
+     deepseek_api_base: str = os.getenv("DEEPSEEK_API_BASE", "")
+     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+-    chroma_persist_directory: str = os.getenv("CHROMA_PERSIST_DIRECTORY", "./.chroma")
+-    llm_request_timeout_seconds: int = _get_int("LLM_REQUEST_TIMEOUT_SECONDS", 30)
+-    resource_rag_top_k: int = _get_int("RESOURCE_RAG_TOP_K", 2)
++    llm_light_model: str = os.getenv("LLM_LIGHT_MODEL", "")
++    chroma_mode: str = os.getenv("CHROMA_MODE", "persistent").strip().lower()
++    chroma_persist_directory: str = os.getenv("CHROMA_PERSIST_DIRECTORY", "./knowledge_base/index")
++    chroma_host: str = os.getenv("CHROMA_HOST", "chroma")
++    chroma_port: int = _get_int("CHROMA_PORT", 8000)
++    chroma_ssl: bool = _get_bool("CHROMA_SSL", False)
++    chroma_collection_name: str = os.getenv("CHROMA_COLLECTION_NAME", "education_resources")
++    chroma_collection_version: str = os.getenv("CHROMA_COLLECTION_VERSION", "v1")
++    #: Chroma 0.5.x has no authentication, so the service refuses to connect to a
++    #: non-loopback/non-private host unless this is explicitly enabled.
++    chroma_allow_remote_host: bool = _get_bool("CHROMA_ALLOW_REMOTE_HOST", False)
++    knowledge_base_version: str = os.getenv("KNOWLEDGE_BASE_VERSION", "v1")
++    corpus_version: str = os.getenv("RAG_CORPUS_VERSION", "v1")
++    embedding_model_version: str = os.getenv("EMBEDDING_MODEL_VERSION", "chroma-default-v1")
++    retrieval_config_version: str = os.getenv("RAG_RETRIEVAL_CONFIG_VERSION", "v2")
++    ai_performance_log_path: str = os.getenv(
++        "AI_PERFORMANCE_LOG_PATH", "./logs/ai-performance.jsonl"
++    )
++    rag_chunk_size: int = _get_int("RAG_CHUNK_SIZE", 800)
++    rag_chunk_overlap: int = _get_int("RAG_CHUNK_OVERLAP", 120)
++    rag_chunker_version: str = os.getenv("RAG_CHUNKER_VERSION", "markdown-heading-v2")
++    rag_retrieval_top_k: int = _get_int("RAG_RETRIEVAL_TOP_K", 5)
++    rag_final_top_k: int = _get_int("RAG_FINAL_TOP_K", 4)
++    rag_cache_ttl_seconds: int = _get_int("RAG_CACHE_TTL_SECONDS", 900)
++    rag_cache_max_entries: int = _get_int("RAG_CACHE_MAX_ENTRIES", 512)
++    rag_lexical_fast_path: bool = _get_bool("RAG_LEXICAL_FAST_PATH", True)
++    rag_lexical_min_score: float = _get_float("RAG_LEXICAL_MIN_SCORE", 0.35)
++    rag_index_use_llm_tags: bool = _get_bool("RAG_INDEX_USE_LLM_TAGS", False)
++    rag_score_ambiguity_threshold: float = _get_float("RAG_SCORE_AMBIGUITY_THRESHOLD", 0.03)
++    max_total_retries: int = _get_int("MAX_TOTAL_RETRIES", 2)
++    qa_deadline_seconds: int = _get_int("QA_DEADLINE_SECONDS", 60)
++    chat_deadline_seconds: int = _get_int("CHAT_DEADLINE_SECONDS", 60)
++    exercise_deadline_seconds: int = _get_int("EXERCISE_DEADLINE_SECONDS", 20)
++    learning_path_deadline_seconds: int = _get_int("LEARNING_PATH_DEADLINE_SECONDS", 30)
++    courseware_deadline_seconds: int = _get_int("COURSEWARE_DEADLINE_SECONDS", 60)
++    report_deadline_seconds: int = _get_int("REPORT_DEADLINE_SECONDS", 30)
++    llm_request_timeout_seconds: int = _get_int("LLM_REQUEST_TIMEOUT_SECONDS", 45)
++    llm_prewarm_enabled: bool = _get_bool("LLM_PREWARM_ENABLED", True)
++    resource_rag_top_k: int = _get_int("RESOURCE_RAG_TOP_K", 5)
+     resource_courseware_variant_count: int = _get_int("RESOURCE_COURSEWARE_VARIANT_COUNT", 1)
+     exercise_context_max_chars: int = _get_int("EXERCISE_CONTEXT_MAX_CHARS", 900)
+ 
++    # Learning-path unlocking. The prerequisite gate is enforced in the backend
++    # rather than in the browser, because a client-side-only check can be
++    # bypassed by calling the API directly.
++    learning_path_enforce_prerequisites: bool = _get_bool(
++        "LEARNING_PATH_ENFORCE_PREREQUISITES", True
++    )
++    learning_path_pass_threshold: int = _get_int("LEARNING_PATH_PASS_THRESHOLD", 60)
++    learning_path_allow_skip: bool = _get_bool("LEARNING_PATH_ALLOW_SKIP", True)
++
++    # Knowledge-graph visualization. The visualization payload is derived from
++    # Neo4j/SQL/courseware content; the LLM may only *enrich* it in the
++    # background, never block the request (DEF-012).
++    graph_cache_ttl_seconds: int = _get_int("GRAPH_CACHE_TTL_SECONDS", 900)
++    graph_cache_max_entries: int = _get_int("GRAPH_CACHE_MAX_ENTRIES", 256)
++    graph_llm_enrich_enabled: bool = _get_bool("GRAPH_LLM_ENRICH_ENABLED", True)
++    graph_llm_enrich_timeout_seconds: int = _get_int("GRAPH_LLM_ENRICH_TIMEOUT_SECONDS", 20)
++    graph_enrich_max_workers: int = _get_int("GRAPH_ENRICH_MAX_WORKERS", 4)
++    # Minimum spacing between background enrichment jobs, plus a startup grace
++    # period. Running LLM work during a request intermittently stalled the caller
++    # by ~2.2s, so enrichment is deferred and serialized instead.
++    graph_enrich_min_interval_seconds: float = _get_float("GRAPH_ENRICH_MIN_INTERVAL_SECONDS", 2.0)
++    graph_enrich_startup_delay_seconds: float = _get_float("GRAPH_ENRICH_STARTUP_DELAY_SECONDS", 20.0)
++    # A configured-but-unreachable Neo4j used to add ~4s to *every* graph request
++    # (driver default connection timeout). Bound it and trip a breaker after
++    # repeated failures so an outage degrades instead of stalling (DEF-012).
++    neo4j_connection_timeout_seconds: float = _get_float("NEO4J_CONNECTION_TIMEOUT_SECONDS", 1.0)
++    neo4j_query_timeout_seconds: float = _get_float("NEO4J_QUERY_TIMEOUT_SECONDS", 2.0)
++    neo4j_failure_threshold: int = _get_int("NEO4J_FAILURE_THRESHOLD", 2)
++    neo4j_cooldown_seconds: int = _get_int("NEO4J_COOLDOWN_SECONDS", 60)
++
+ 
+ @lru_cache(maxsize=1)
+ def get_settings() -> Settings:
+diff --git a/tests/conftest.py b/tests/conftest.py
+index c013111..0e4a4ee 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -1,15 +1,62 @@
+ """Shared pytest fixtures for database-backed tests."""
+ 
++# ruff: noqa: E402 -- install safety boundary before project imports
++
+ from __future__ import annotations
+ 
++# Must run before importing common.config, session, fixtures, or LLM clients.
++from scripts.run_no_cost_tests import bootstrap_pytest
++
++bootstrap_pytest()
++
+ from uuid import uuid4
+ 
+ import pytest
+ 
+ from common.db.bootstrap import ensure_database_schema
+ from common.db.session import SessionLocal
+-from common.models.learning import AnswerRecord, Exercise, LearningReport, User, UserProfile
+-from common.security.auth import hash_password
++from common.models.learning import (
++    AnswerRecord,
++    AssistantAgentExecution,
++    AssistantTask,
++    ChatMessage,
++    ChatSession,
++    Exercise,
++    LearningReport,
++    ResourceInteraction,
++    User,
++    UserProfile,
++)
++from common.security.auth import create_access_token, hash_password
++
++
++def _purge_user_chat_data(db, user_id: int) -> None:
++    """Delete a test user's chat rows.
++
++    Chat messages reference sessions but there is no ORM cascade from the
++    fixture, so leftovers used to survive teardown and leak into later runs.
++    """
++
++    session_ids = [
++        sid for (sid,) in db.query(ChatSession.id).filter(ChatSession.user_id == user_id).all()
++    ]
++    if session_ids:
++        task_ids = [task_id for (task_id,) in db.query(AssistantTask.id).filter(
++            AssistantTask.session_id.in_(session_ids)
++        ).all()]
++        if task_ids:
++            db.query(AssistantAgentExecution).filter(AssistantAgentExecution.task_id.in_(task_ids)).delete(
++                synchronize_session=False
++            )
++            db.query(AssistantTask).filter(AssistantTask.id.in_(task_ids)).delete(
++                synchronize_session=False
++            )
++        db.query(ChatMessage).filter(ChatMessage.session_id.in_(session_ids)).delete(
++            synchronize_session=False
++        )
++        db.query(ChatSession).filter(ChatSession.id.in_(session_ids)).delete(
++            synchronize_session=False
++        )
+ 
+ 
+ @pytest.fixture(scope="session", autouse=True)
+@@ -49,17 +96,128 @@ def test_user(db_session):
+ 
+     exercise_ids = [
+         exercise_id
+-        for (exercise_id,) in db_session.query(AnswerRecord.exercise_id).filter(AnswerRecord.user_id == user.id).all()
++        for (exercise_id,) in db_session.query(AnswerRecord.exercise_id)
++        .filter(AnswerRecord.user_id == user.id)
++        .all()
+     ]
+     db_session.query(AnswerRecord).filter(AnswerRecord.user_id == user.id).delete()
+     db_session.query(LearningReport).filter(LearningReport.user_id == user.id).delete()
++    db_session.query(ResourceInteraction).filter(ResourceInteraction.user_id == user.id).delete()
++    _purge_user_chat_data(db_session, user.id)
+ 
+     profile = db_session.get(UserProfile, user.id)
+     if profile is not None:
+         db_session.delete(profile)
+ 
+     if exercise_ids:
+-        db_session.query(Exercise).filter(Exercise.id.in_(exercise_ids)).delete(synchronize_session=False)
++        db_session.query(Exercise).filter(Exercise.id.in_(exercise_ids)).delete(
++            synchronize_session=False
++        )
++
++    db_session.query(User).filter(User.id == user.id).delete()
++    db_session.commit()
++
++
++@pytest.fixture
++def auth_headers(test_user) -> dict[str, str]:
++    """Bearer header for ``test_user``.
++
++    The ``/users/{user_id}/...`` endpoints are object-level protected, so tests
++    must present the token of the user they operate on.
++    """
++
++    return {"Authorization": f"Bearer {create_access_token(str(test_user.id))}"}
++
++
++@pytest.fixture
++def other_user(db_session):
++    """A second isolated user, used for cross-account authorization tests."""
++
++    username = f"pytest_other_{uuid4().hex[:8]}"
++    user = User(
++        username=username,
++        password_hash=hash_password("pytest-password"),
++        role="student",
++        email=f"{username}@example.com",
++    )
++    db_session.add(user)
++    db_session.commit()
++    db_session.refresh(user)
++
++    yield user
++
++    _purge_user_chat_data(db_session, user.id)
++    profile = db_session.get(UserProfile, user.id)
++    if profile is not None:
++        db_session.delete(profile)
++    db_session.query(User).filter(User.id == user.id).delete()
++    db_session.commit()
++
+ 
++def _create_role_user(db_session, role: str) -> User:
++    """Create a committed user with the requested role plus an empty profile."""
++
++    username = f"pytest_{role}_{uuid4().hex[:8]}"
++    user = User(
++        username=username,
++        password_hash=hash_password("pytest-password"),
++        role=role,
++        email=f"{username}@example.com",
++    )
++    db_session.add(user)
++    db_session.flush()
++    db_session.add(
++        UserProfile(
++            user_id=user.id,
++            mastery_json={},
++            learning_style="",
++            cognitive_abilities={},
++            habits={},
++        )
++    )
++    db_session.commit()
++    db_session.refresh(user)
++    return user
++
++
++def _teardown_role_user(db_session, user: User) -> None:
++    """Remove a role user created by ``_create_role_user``."""
++
++    _purge_user_chat_data(db_session, user.id)
++    profile = db_session.get(UserProfile, user.id)
++    if profile is not None:
++        db_session.delete(profile)
+     db_session.query(User).filter(User.id == user.id).delete()
+     db_session.commit()
++
++
++@pytest.fixture
++def teacher_user(db_session):
++    """A committed teacher account scoped to one test."""
++
++    user = _create_role_user(db_session, "teacher")
++    yield user
++    _teardown_role_user(db_session, user)
++
++
++@pytest.fixture
++def admin_user(db_session):
++    """A committed admin account scoped to one test."""
++
++    user = _create_role_user(db_session, "admin")
++    yield user
++    _teardown_role_user(db_session, user)
++
++
++@pytest.fixture
++def teacher_headers(teacher_user) -> dict[str, str]:
++    """Bearer header for ``teacher_user``."""
++
++    return {"Authorization": f"Bearer {create_access_token(str(teacher_user.id))}"}
++
++
++@pytest.fixture
++def admin_headers(admin_user) -> dict[str, str]:
++    """Bearer header for ``admin_user``."""
++
++    return {"Authorization": f"Bearer {create_access_token(str(admin_user.id))}"}

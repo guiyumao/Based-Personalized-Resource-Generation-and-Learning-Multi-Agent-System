@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from services.user_service.app.main import app
 
 
-def test_profile_chat_updates_dimensions_and_profile_read(test_user) -> None:
+def test_profile_chat_updates_dimensions_and_profile_read(test_user, auth_headers) -> None:
     """Profile chat should extract dimensions and persist them into the learner profile."""
 
     client = TestClient(app)
@@ -15,6 +15,7 @@ def test_profile_chat_updates_dimensions_and_profile_read(test_user) -> None:
         json={
             "message": "我学过 Python 基础，比较喜欢动手实践，最近目标是找后端实习。",
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -23,14 +24,17 @@ def test_profile_chat_updates_dimensions_and_profile_read(test_user) -> None:
     assert payload["profile_updates"]["cognitiveStyle"] == "动手实践型"
     assert payload["estimated_remaining_rounds"] >= 0
 
-    profile_response = client.get(f"/users/{test_user.id}/profile")
+    profile_response = client.get(
+        f"/users/{test_user.id}/profile",
+        headers=auth_headers,
+    )
     assert profile_response.status_code == 200
     profile = profile_response.json()
     assert profile["profile_dimensions"]["knowledgeBase"]
     assert profile["profile_dimensions"]["goalOrientation"]
 
 
-def test_profile_chat_accepts_multi_dimension_quick_choices(test_user) -> None:
+def test_profile_chat_accepts_multi_dimension_quick_choices(test_user, auth_headers) -> None:
     """Profile chat should persist grouped quick-choice answers across dimensions."""
 
     client = TestClient(app)
@@ -50,6 +54,7 @@ def test_profile_chat_accepts_multi_dimension_quick_choices(test_user) -> None:
                 ]
             ),
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -64,7 +69,10 @@ def test_profile_chat_accepts_multi_dimension_quick_choices(test_user) -> None:
     }
     assert payload["estimated_remaining_rounds"] == 0
 
-    profile_response = client.get(f"/users/{test_user.id}/profile")
+    profile_response = client.get(
+        f"/users/{test_user.id}/profile",
+        headers=auth_headers,
+    )
     assert profile_response.status_code == 200
     dimensions = profile_response.json()["profile_dimensions"]
     assert dimensions["knowledgeBase"] == "学过基础概念、做过小项目"
@@ -75,7 +83,7 @@ def test_profile_chat_accepts_multi_dimension_quick_choices(test_user) -> None:
     assert dimensions["goalOrientation"] == "求职实习、完成项目"
 
 
-def test_manual_profile_update_allows_dimension_patch(test_user) -> None:
+def test_manual_profile_update_allows_dimension_patch(test_user, auth_headers) -> None:
     """Manual profile updates should merge dimension fields into the stored profile."""
 
     client = TestClient(app)
@@ -88,6 +96,7 @@ def test_manual_profile_update_allows_dimension_patch(test_user) -> None:
                 "learningSpeed": "适中",
             },
         },
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
@@ -99,7 +108,7 @@ def test_manual_profile_update_allows_dimension_patch(test_user) -> None:
     assert context["agent_handoff"]["resource_generation_agent"]
 
 
-def test_profile_dimension_delete_updates_status_and_agent_context(test_user) -> None:
+def test_profile_dimension_delete_updates_status_and_agent_context(test_user, auth_headers) -> None:
     """Deleting a profile record should remove it from status and downstream agent context."""
 
     client = TestClient(app)
@@ -113,10 +122,14 @@ def test_profile_dimension_delete_updates_status_and_agent_context(test_user) ->
                 "learningSpeed": "适中",
             },
         },
+        headers=auth_headers,
     )
     assert update_response.status_code == 200
 
-    response = client.delete(f"/users/{test_user.id}/profile/dimensions/cognitiveStyle")
+    response = client.delete(
+        f"/users/{test_user.id}/profile/dimensions/cognitiveStyle",
+        headers=auth_headers,
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -128,7 +141,10 @@ def test_profile_dimension_delete_updates_status_and_agent_context(test_user) ->
     assert context["preferred_resource_modes"] == ["worked_example", "guided_practice"]
     assert not context["agent_handoff"]["resource_generation_agent"]
 
-    status_response = client.get(f"/users/{test_user.id}/profile/status")
+    status_response = client.get(
+        f"/users/{test_user.id}/profile/status",
+        headers=auth_headers,
+    )
     assert status_response.status_code == 200
     status_payload = status_response.json()
     assert status_payload["dimensions_filled"] == 2
@@ -136,7 +152,7 @@ def test_profile_dimension_delete_updates_status_and_agent_context(test_user) ->
     assert status_payload["dimensions"]["cognitiveStyle"] is False
 
 
-def test_profile_status_and_read_ignore_bulk_dump_values(test_user) -> None:
+def test_profile_status_and_read_ignore_bulk_dump_values(test_user, auth_headers) -> None:
     """Malformed bulk-dump values should not be treated as completed profile dimensions."""
 
     client = TestClient(app)
@@ -150,33 +166,44 @@ def test_profile_status_and_read_ignore_bulk_dump_values(test_user) -> None:
                 "goalOrientation": "我想一次补充画像多维度：\n目标导向：通过认证\n兴趣方向：真实业务案例",
             },
         },
+        headers=auth_headers,
     )
     assert response.status_code == 200
 
-    profile_payload = client.get(f"/users/{test_user.id}/profile").json()
+    profile_payload = client.get(
+           f"/users/{test_user.id}/profile", headers=auth_headers
+    ).json()
     assert "knowledgeBase" not in profile_payload["profile_dimensions"]
     assert "goalOrientation" not in profile_payload["profile_dimensions"]
     assert profile_payload["profile_dimensions"]["cognitiveStyle"] == "文本型"
 
-    status_payload = client.get(f"/users/{test_user.id}/profile/status").json()
+    status_payload = client.get(
+           f"/users/{test_user.id}/profile/status", headers=auth_headers
+    ).json()
     assert status_payload["dimensions_filled"] == 1
     assert status_payload["dimensions"]["knowledgeBase"] is False
     assert status_payload["dimensions"]["goalOrientation"] is False
     assert status_payload["dimensions"]["cognitiveStyle"] is True
 
 
-def test_profile_chat_analyzes_generic_short_answers_and_builds_agent_context(test_user) -> None:
+def test_profile_chat_analyzes_generic_short_answers_and_builds_agent_context(test_user, auth_headers) -> None:
     """Profile chat should analyze short answers by the active dimension, without subject-specific rules."""
 
     client = TestClient(app)
 
-    opening = client.post(f"/users/{test_user.id}/profile/chat", json={"message": ""})
+    opening = client.post(
+        f"/users/{test_user.id}/profile/chat", json={"message": ""},
+        headers=auth_headers,
+    )
     assert opening.status_code == 200
 
     replies: list[str] = []
     payload = None
     for answer in ["入门基础", "图形化说明", "慢一点", "抽象概念总是卡住"]:
-        response = client.post(f"/users/{test_user.id}/profile/chat", json={"message": answer})
+        response = client.post(
+        f"/users/{test_user.id}/profile/chat", json={"message": answer},
+        headers=auth_headers,
+    )
         assert response.status_code == 200
         payload = response.json()
         replies.append(payload["reply"])
@@ -188,7 +215,10 @@ def test_profile_chat_analyzes_generic_short_answers_and_builds_agent_context(te
     assert "我已记录" in replies[0] or "我已分析" in replies[0]
     assert "哪类题目或知识点" not in replies[2]
 
-    profile_response = client.get(f"/users/{test_user.id}/profile")
+    profile_response = client.get(
+        f"/users/{test_user.id}/profile",
+        headers=auth_headers,
+    )
     assert profile_response.status_code == 200
     profile = profile_response.json()
     dimensions = profile["profile_dimensions"]

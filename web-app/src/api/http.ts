@@ -10,7 +10,17 @@ function readRequiredEnv(name: string) {
   return value
 }
 
-export const serviceEndpoints: Record<ServiceKey, string> = {
+// The SakuraFrp build uses one origin. The explicit mode flag takes precedence
+// over .env.local, which Vite otherwise loads for production builds as well.
+const sameOrigin = import.meta.env.VITE_SAKURAFRP_SAME_ORIGIN === 'true'
+export const serviceEndpoints: Record<ServiceKey, string> = sameOrigin ? {
+  user: '/api/user',
+  agent: '/api/agent',
+  resource: '/api/resource',
+  evaluation: '/api/evaluation',
+  teacher: '/api/teacher',
+  system: '/api/system',
+} : {
   user: readRequiredEnv('VITE_USER_API_BASE_URL'),
   agent: readRequiredEnv('VITE_AGENT_API_BASE_URL'),
   resource: readRequiredEnv('VITE_RESOURCE_API_BASE_URL'),
@@ -40,6 +50,22 @@ function createHttpClient(baseURL: string) {
     }
     return config
   })
+
+  client.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const status = error?.response?.status
+      const requestUrl = String(error?.config?.url ?? '')
+      const isAuthRequest = requestUrl.includes('/login') || requestUrl.includes('/register')
+      if (status === 401 && !isAuthRequest && typeof window !== 'undefined') {
+        localStorage.removeItem('learning-system-auth')
+        if (window.location.pathname !== '/login') {
+          window.location.assign('/login?reason=session-expired')
+        }
+      }
+      return Promise.reject(error)
+    },
+  )
 
   return client
 }

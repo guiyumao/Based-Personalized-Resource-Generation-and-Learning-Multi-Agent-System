@@ -1,0 +1,63 @@
+{
+  "groups": [
+    {
+      "file": "artifacts\\deepseek-phase-v3-20261019\\final-safety\\results.xml",
+      "passed": 16,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "artifacts\\deepseek-phase-v3-20261019\\provider-v2\\results.xml",
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "artifacts\\deepseek-phase-v3-20261019\\workers-v2\\results.xml",
+      "passed": 67,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "file": "artifacts\\deepseek-phase-v3-20261019\\content-knowledge\\results.xml",
+      "passed": 52,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "unique_test_nodes": 169,
+  "live": {
+    "authorization": {
+      "chat_attempts": 30,
+      "search_fetch_attempts": 6,
+      "output_tokens": 60000
+    },
+    "source": "LIVE_AUTHORIZED_VIA_LOCAL_GATEWAY",
+    "smoke": {
+      "http": 200,
+      "model": "deepseek-flash",
+      "id": "11292789-c944-49ce-aa4c-43e1ff00b3b2",
+      "usage": {
+        "prompt_tokens": 17,
+        "completion_tokens": 15,
+        "total_tokens": 32,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 17
+      },
+      "answer": "TCP通过接收方返回确认号告知发送方已成功收到数据。"
+    },
+    "business_exit_code": 0,
+    "chat_attempts": 5,
+    "search_fetch_attempts": 1,
+    "conservative_output_charged": 3506,
+    "amount": null,
+    "passed": true
+  },
+  "live_prompt_tokens": 3740,
+  "live_output_tokens": 3506,
+  "local_browser": "PASS_LOCAL_E2E",
+  "note": "Local/mock, live-authorized and historical unauthorized evidence are separate."
+}

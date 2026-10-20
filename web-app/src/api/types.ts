@@ -43,6 +43,43 @@ export type LearnerProfileDashboard = {
   habit_summary: string
   radar_metrics: LearnerRadarMetric[]
   heatmap: LearnerHeatmapCell[]
+  learning_content: {
+    source: string
+    total_answers: number
+    sampled_answers: number
+    accuracy: number | null
+    latest_answer_id: number | null
+    knowledge_point_count: number
+    resource_interaction_count: number
+    latest_resource_interaction_id: number | null
+    explored_points: Array<{ name: string; interactions: number }>
+    knowledge_points: Array<{
+      name: string
+      attempts: number
+      wrong: number
+      accuracy: number | null
+      mastery: number | null
+      weak: boolean
+      latest_answer_id: number
+    }>
+  }
+}
+
+export type LearnerSuggestion = {
+  user_id: number
+  suggestions: string[]
+  focus_areas: string[]
+  recommended_action: string
+}
+
+export type LearnerProfileSnapshot = {
+  user_id: number
+  learning_style: string
+  mastery_overview: number
+  weekly_focus_minutes: number
+  habit_summary: string
+  radar_metrics: LearnerRadarMetric[]
+  heatmap: LearnerHeatmapCell[]
 }
 
 export type UserProfileRead = {
@@ -52,6 +89,7 @@ export type UserProfileRead = {
   cognitive_abilities: Record<string, unknown>
   habits: Record<string, unknown>
   profile_dimensions: Record<string, string>
+  zhishu_profile?: Record<string, unknown>
 }
 
 export type UserProfileUpdatePayload = {
@@ -89,11 +127,24 @@ export type CoordinationPayload = {
   payload?: Record<string, unknown>
 }
 
+/**
+ * Resource kinds this system can genuinely produce (mirrors
+ * `common/schemas/agent.py::RESOURCE_TYPES`).
+ */
+export type ResourceType =
+  | 'courseware'
+  | 'exercise'
+  | 'notes'
+  | 'exam'
+  | 'mind_map'
+  | 'code_case'
+  | 'video_script'
+
 export type ResourcePayload = {
   user_id: number
   knowledge_point: string
   resource_style: 'concise' | 'case' | 'interactive'
-  resource_type: 'courseware' | 'exercise' | 'notes' | 'exam'
+  resource_type: ResourceType
   learner_profile: Record<string, unknown>
   request_text?: string
   preferred_word_count?: number
@@ -116,6 +167,11 @@ export type LearningTaskItem = {
   estimated_minutes: number
   difficulty: 'foundation' | 'intermediate' | 'advanced'
   completed: boolean
+  status?: 'pending' | 'completed' | 'skipped'
+  /** Task ids the backend requires before this task can be completed. */
+  depends_on?: string[]
+  /** Per-task pass mark; omitted means the server default applies. */
+  pass_threshold?: number | null
 }
 
 export type LearningStageItem = {
@@ -134,6 +190,7 @@ export type LearningPathResponse = {
   stages: LearningStageItem[]
   teacher_scope?: TeachingScopeItem | null
   generation_source?: 'llm' | null
+  source_transcript_analysis_id?: number | null
 }
 
 export type AgentExecutionOutput<T = unknown> = {
@@ -308,6 +365,7 @@ export type QAResponsePayload = {
 
 export type PracticeSubmissionPayload = {
   user_id: number
+  client_request_id?: string
   exercise_id: number
   subject?: string
   knowledge_point: string
@@ -372,6 +430,25 @@ export type MistakeNotebook = {
   items: MistakeItem[]
 }
 
+export type ExerciseFavoriteItem = {
+  id: number
+  exercise_id: number
+  knowledge_point: string
+  question_type: string
+  difficulty: string
+  prompt: string
+  options: string[]
+  answer: string
+  analysis: string
+  created_at: string
+}
+
+export type ExerciseFavoriteNotebook = {
+  user_id: number
+  favorite_count: number
+  items: ExerciseFavoriteItem[]
+}
+
 export type ReportDetail = {
   report_type: 'stage' | 'comprehensive'
   user_id: number
@@ -399,6 +476,14 @@ export type ReportDetail = {
       analysis: string
     } | null
   }
+}
+
+export type ReportDashboard = {
+  stage_report: ReportDetail
+  comprehensive_report: ReportDetail
+  profile_snapshot: LearnerProfileSnapshot
+  learning_suggestions: LearnerSuggestion
+  mistake_notebook: MistakeNotebook
 }
 
 export type RemedialExerciseItem = {
@@ -462,7 +547,12 @@ export type KnowledgeBaseArticle = {
 export type ManagedResourceItem = {
   id: number
   title: string
-  type: 'courseware' | 'exercise' | 'notes' | 'exam'
+  /**
+   * Known kinds are listed in `ResourceType`. Typed as `string` because rows
+   * written before a kind existed must still load; render unknown kinds with a
+   * fallback label rather than failing the whole list.
+   */
+  type: ResourceType | string
   format: string
   status: 'draft' | 'ready' | 'archived'
   knowledge_point: string
@@ -475,6 +565,100 @@ export type ManagedResourceItem = {
   notes?: string | null
   file_name?: string | null
   is_downloadable: boolean
+  generation_status?: 'queued' | 'generating' | 'generated' | 'failed'
+  audit_status?: 'pending' | 'passed' | 'rejected' | 'unavailable'
+  publish_status?: 'draft' | 'published' | 'archived'
+  audit_reason?: string
+  /**
+   * Only the single-resource detail endpoint returns these three fields; the
+   * list endpoint leaves them undefined so browsing stays light.
+   */
+  content?: string | null
+  structured?: StructuredResourcePayload | null
+  content_validation?: ContentValidationReport | null
+}
+
+/**
+ * Typed payload persisted for `mind_map` / `code_case` / `video_script`.
+ *
+ * Every field is optional because the shape is produced by a language model and
+ * is rendered defensively: a missing section shows its own empty state instead
+ * of an empty panel.
+ */
+export type StructuredResourcePayload = {
+  title?: string
+  knowledge_point?: string
+  // mind_map
+  root_id?: string
+  nodes?: Array<{
+    id?: string
+    label?: string
+    parent_id?: string | null
+    level?: number
+    detail?: string
+  }>
+  edges?: Array<{ source?: string; target?: string; label?: string }>
+  mermaid_source?: string
+  // code_case
+  language?: string
+  objective?: string
+  prerequisites?: string[]
+  example_code?: string
+  code_explanation?: string[]
+  expected_output?: string
+  run_steps?: string[]
+  common_errors?: string[]
+  extension_exercises?: string[]
+  // video_script
+  target_audience?: string
+  total_duration_seconds?: number
+  chapters?: Array<{
+    chapter_id?: string
+    title?: string
+    narration?: string
+    visual?: string
+    on_screen_text?: string
+    duration_seconds?: number
+  }>
+  production_notes?: string[]
+}
+
+export type ContentValidationCheck = {
+  check_id: string
+  stage: 'structure' | 'source' | string
+  status: 'passed' | 'failed' | 'skipped' | string
+  passed: boolean
+  detail: string
+}
+
+/** Mirrors `content_validation.ValidationReport.as_dict()`. */
+export type ContentValidationReport = {
+  resource_type?: string
+  verdict?: 'valid' | 'needs_revision' | 'insufficient_evidence' | 'unsupported'
+  structure_passed?: boolean
+  source_passed?: boolean
+  source_coverage?: number
+  citations?: Array<Record<string, unknown>>
+  checks?: ContentValidationCheck[]
+  notes?: string[]
+}
+
+export type ResourceRecommendationItem = ManagedResourceItem & {
+  recommendation_score: number
+  recommendation_reason: string
+  recommendation_strategy: 'hybrid_collaborative' | 'personalized_heuristic' | 'cold_start_popularity'
+  collaborative_score: number
+  user_cf_score: number
+  item_cf_score: number
+  view_count: number
+  download_count: number
+}
+
+export type ResourceInteractionSummary = {
+  resource_id: number
+  recorded: boolean
+  view_count: number
+  download_count: number
 }
 
 export type ExternalResourceImportPayload = {
@@ -493,6 +677,17 @@ export type KnowledgeBaseListResponse = {
   items: KnowledgeBaseArticle[]
 }
 
+export type KnowledgeSubjectOption = {
+  value: string
+  label: string
+  resource_count: number
+}
+
+export type KnowledgeSubjectCatalogResponse = {
+  total: number
+  subjects: KnowledgeSubjectOption[]
+}
+
 export type KnowledgeBaseSearchResponse = {
   query: string
   items: KnowledgeBaseArticle[]
@@ -504,11 +699,60 @@ export type ApiEnvelope<T> = {
   message: string
 }
 
+export type TranscriptRow = {
+  student_no: string
+  student_name: string
+  class_name: string
+  subject: string
+  score: number | null
+  max_score: number
+  exam_date?: string | null
+  chapter: string
+  question_scores: Record<string, number>
+  confidence: Record<string, number>
+  raw: Record<string, unknown>
+}
+
+export type TranscriptParseResponse = {
+  import_id?: number | null
+  file_name: string
+  file_type: string
+  headers: string[]
+  rows: TranscriptRow[]
+  field_mapping: Record<string, string | null>
+  warnings: string[]
+  quality_score: number
+  ocr_mode: boolean
+  low_confidence_cells: Array<{ row: number; column: string; confidence: number }>
+}
+
+export type TranscriptAnalysis = {
+  analysis_id: number
+  import_id: number
+  status: string
+  cache_hit: boolean
+  scope: 'student' | 'class'
+  data_quality: 'sufficient' | 'limited' | string
+  report_text: string
+  orchestration: { dispatcher: string; serial_agents: string[]; parallel_agents: string[]; fallback: string }
+  score_statistics: { record_count: number; overall_average: number; subject_statistics: Record<string, { average: number; highest: number; lowest: number; pass_rate: number; excellent_rate: number; standard_deviation: number; score_bands: Record<string, number> }>; students: Array<{ student_name: string; student_no: string; total_score: number; average_score: number; rank: number; rank_band: string }> }
+  student_profile: { learning_style: string; strong_subjects: string[]; weak_subjects: string[]; loss_reason_distribution: Record<string, number>; evidence: string }
+  weakness_diagnosis: { granularity: string; confidence_note: string; weak_points: Array<{ knowledge_point: string; chapter: string; mastery: number; loss_contribution: number; priority: number; importance_tag: string; confidence: number }> }
+  resource_recommendations: { resources: Array<{ name: string; knowledge_point: string; resource_type: string; difficulty: string; minutes: number; source: string }>; seven_day_plan: Array<{ day: number; focus: string; goal: string; minutes: number }> }
+  exercise_recommendations: { distribution: Record<string, number>; source: string; items: Array<{ tier: string; question: string; answer: string; analysis: string; knowledge_point: string; minutes: number }> }
+  report: { title: string; summary: string; strengths: string[]; weaknesses: string[]; next_actions: string[]; quality_note: string }
+  student_reports?: TranscriptAnalysis[]
+}
+
+export type TranscriptHistoryItem = { id: number; import_id: number; file_name: string; scope: string; status: string; data_quality: string; created_at: string; summary: string }
+
 export type TeacherClassItem = {
   id: number
   name: string
   subject: string
   teacher_name: string
+  course_id?: number | null
+  student_count: number
 }
 
 export type TeacherClassCreatePayload = {
@@ -521,6 +765,59 @@ export type HomeworkAssignPayload = {
   class_id: number
   title: string
   description: string
+  due_at?: string | null
+}
+
+export type AssignmentItem = HomeworkAssignPayload & {
+  id: number
+  status: string
+  created_at: string
+  submission_count: number
+}
+
+export type AssignmentSubmissionItem = {
+  id: number
+  assignment_id: number
+  student_user_id: number
+  student_name: string
+  content: string
+  attachment_url?: string | null
+  status: string
+  submitted_at: string
+  score?: number | null
+  teacher_comment: string
+  reviewed_at?: string | null
+}
+
+export type DiscussionReplyItem = {
+  id: number
+  author_user_id: number
+  author_name: string
+  content: string
+  created_at: string
+}
+
+export type DiscussionItem = {
+  id: number
+  class_id?: number | null
+  author_user_id: number
+  author_name: string
+  title: string
+  content: string
+  status: string
+  created_at: string
+  replies: DiscussionReplyItem[]
+}
+
+export type LearningNotificationItem = {
+  id: number
+  title: string
+  content: string
+  type: string
+  related_type: string
+  related_id?: number | null
+  is_read: boolean
+  created_at: string
 }
 
 export type HomeworkReviewPayload = {
@@ -615,6 +912,41 @@ export type SubjectCreatePayload = {
 export type SystemConfigItem = {
   key: string
   value: string
+}
+
+/** P1-07 prompt-template management. */
+export type PromptTemplateSummary = {
+  name: string
+  chars: number
+  placeholders: string[]
+}
+
+export type PromptTemplateDetail = PromptTemplateSummary & {
+  content: string
+}
+
+/** P1-07 image-provider capability status (explicit BLOCKED entry). */
+export type ImageProviderStatus = {
+  configured: boolean
+  provider: string
+  model: string
+  status: 'configured' | 'blocked'
+  reason: string
+}
+
+export type ResourceSection = {
+  title: string
+  chars: number
+}
+
+export type ResourceRewriteResult = {
+  resource_id: number
+  title: string | null
+  status: 'generated' | 'blocked' | 'failed'
+  reason?: string
+  provider: string | null
+  model: string | null
+  rewritten_content: string
 }
 
 export type SystemConfigUpdatePayload = {

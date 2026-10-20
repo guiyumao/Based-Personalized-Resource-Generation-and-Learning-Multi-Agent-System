@@ -1,0 +1,32 @@
+[
+  {
+    "subject": "计算机网络",
+    "knowledge_point": "TCP",
+    "type": "courseware",
+    "source": "LIVE_AUTHORIZED_VIA_LOCAL_GATEWAY",
+    "content_file": "artifacts\\deepseek-authorized-20261019-v1\\live-courseware.md",
+    "fact_accuracy_review": null,
+    "teaching_suitability_review": null,
+    "human_score": null
+  },
+  {
+    "subject": "计算机网络",
+    "knowledge_point": "TCP",
+    "type": "exercise",
+    "source": "LIVE_AUTHORIZED_VIA_LOCAL_GATEWAY",
+    "content_file": "artifacts\\deepseek-authorized-20261019-v1\\live-exercise-result.json",
+    "fact_accuracy_review": null,
+    "teaching_suitability_review": null,
+    "human_score": null
+  },
+  {
+    "subject": "计算机网络",
+    "knowledge_point": "TCP",
+    "type": "qa",
+    "source": "LIVE_AUTHORIZED_VIA_LOCAL_GATEWAY",
+    "content_file": "artifacts\\deepseek-authorized-20261019-v1\\live-qa-response.json",
+    "fact_accuracy_review": null,
+    "teaching_suitability_review": null,
+    "human_score": null
+  }
+]

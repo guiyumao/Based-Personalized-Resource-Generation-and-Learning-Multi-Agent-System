@@ -1,0 +1,952 @@
+{
+  "knowledge_base": {
+    "mode": "persistent",
+    "collection": "education_resources",
+    "collection_version": "v1",
+    "embedding_model_version": "chroma-default-v1",
+    "knowledge_base_version": "v1",
+    "corpus_version": "v1"
+  },
+  "runs": [
+    {
+      "mode": "vector_only",
+      "top_k": 5,
+      "samples": 50,
+      "recall_at_k": 0.82,
+      "mrr": 0.7747,
+      "avg_retrieval_ms": 280.068,
+      "p50_retrieval_ms": 22.358,
+      "p95_retrieval_ms": 1186.925,
+      "avg_context_chars": 3589.8,
+      "strategy_counts": {
+        "lexical_fast_path": 41,
+        "vector": 9
+      },
+      "cases": [
+        {
+          "id": "q001",
+          "elapsed_ms": 2349.3820000439882,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 1578,
+          "returned": 2,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q002",
+          "elapsed_ms": 33.4216000046581,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3813,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q003",
+          "elapsed_ms": 12.692800024524331,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3407,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q004",
+          "elapsed_ms": 27.14620006736368,
+          "hit": true,
+          "reciprocal_rank": 0.2,
+          "context_chars": 3480,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q005",
+          "elapsed_ms": 1511.5178999258205,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 1908,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q006",
+          "elapsed_ms": 17.72590004839003,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3834,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q007",
+          "elapsed_ms": 1173.9921999396756,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 2686,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q008",
+          "elapsed_ms": 27.192499954253435,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3684,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q009",
+          "elapsed_ms": 1130.0961000379175,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 2492,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q010",
+          "elapsed_ms": 1654.28349992726,
+          "hit": true,
+          "reciprocal_rank": 0.2,
+          "context_chars": 3079,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q011",
+          "elapsed_ms": 22.653299965895712,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3619,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q012",
+          "elapsed_ms": 23.36619992274791,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 11122,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q013",
+          "elapsed_ms": 9.770800010301173,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3681,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q014",
+          "elapsed_ms": 16.116000013425946,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3876,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q015",
+          "elapsed_ms": 12.440400081686676,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3850,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q016",
+          "elapsed_ms": 993.3455999707803,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 2746,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q017",
+          "elapsed_ms": 15.739600057713687,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3905,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q018",
+          "elapsed_ms": 18.333000014536083,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 11278,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q019",
+          "elapsed_ms": 27.726300060749054,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3706,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q020",
+          "elapsed_ms": 36.273500067181885,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3757,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q021",
+          "elapsed_ms": 20.49319993238896,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3454,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q022",
+          "elapsed_ms": 9.359200019389391,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3683,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q023",
+          "elapsed_ms": 28.75359996687621,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3591,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q024",
+          "elapsed_ms": 23.3677999349311,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3688,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q025",
+          "elapsed_ms": 15.252499957568944,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3179,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q026",
+          "elapsed_ms": 15.679899952374399,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3291,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q027",
+          "elapsed_ms": 16.74659992568195,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3743,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q028",
+          "elapsed_ms": 12.176600052043796,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3759,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q029",
+          "elapsed_ms": 19.28040001075715,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3594,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q030",
+          "elapsed_ms": 27.327199932187796,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3011,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q031",
+          "elapsed_ms": 15.032999916002154,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3595,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q032",
+          "elapsed_ms": 25.662099942564964,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3485,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q033",
+          "elapsed_ms": 23.489000042900443,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3518,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q034",
+          "elapsed_ms": 13.703699922189116,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3593,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q035",
+          "elapsed_ms": 12.96099997125566,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3347,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q036",
+          "elapsed_ms": 18.695999984629452,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3474,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q037",
+          "elapsed_ms": 22.358400048688054,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3862,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q038",
+          "elapsed_ms": 7.616299903020263,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3355,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q039",
+          "elapsed_ms": 9.698400041088462,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3456,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q040",
+          "elapsed_ms": 12.584200012497604,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3341,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q041",
+          "elapsed_ms": 16.33929996751249,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3494,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q042",
+          "elapsed_ms": 1033.0370999872684,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3251,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q043",
+          "elapsed_ms": 18.135700025595725,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3643,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q044",
+          "elapsed_ms": 1123.6596000380814,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3157,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q045",
+          "elapsed_ms": 10.096499929204583,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 1358,
+          "returned": 2,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q046",
+          "elapsed_ms": 26.011600042693317,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3105,
+          "returned": 4,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q047",
+          "elapsed_ms": 1186.9254999328405,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3221,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q048",
+          "elapsed_ms": 26.018799981102347,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3471,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q049",
+          "elapsed_ms": 1068.5142000438645,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 984,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q050",
+          "elapsed_ms": 31.226700055412948,
+          "hit": true,
+          "reciprocal_rank": 0.3333333333333333,
+          "context_chars": 2285,
+          "returned": 3,
+          "strategy": "lexical_fast_path"
+        }
+      ]
+    },
+    {
+      "mode": "metadata_vector",
+      "top_k": 5,
+      "samples": 50,
+      "recall_at_k": 0.82,
+      "mrr": 0.7767,
+      "avg_retrieval_ms": 400.624,
+      "p50_retrieval_ms": 8.259,
+      "p95_retrieval_ms": 1748.486,
+      "avg_context_chars": 3515.8,
+      "strategy_counts": {
+        "lexical_fast_path": 38,
+        "vector": 12
+      },
+      "cases": [
+        {
+          "id": "q001",
+          "elapsed_ms": 1048.8834999268875,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 1578,
+          "returned": 2,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q002",
+          "elapsed_ms": 4.921999992802739,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3697,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q003",
+          "elapsed_ms": 4.5625000493600965,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3423,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q004",
+          "elapsed_ms": 3.2357999589294195,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 1217,
+          "returned": 2,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q005",
+          "elapsed_ms": 1748.4858999960124,
+          "hit": true,
+          "reciprocal_rank": 0.5,
+          "context_chars": 3611,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q006",
+          "elapsed_ms": 1524.366999976337,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3369,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q007",
+          "elapsed_ms": 1616.676399949938,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3607,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q008",
+          "elapsed_ms": 4.39300003927201,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 2164,
+          "returned": 3,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q009",
+          "elapsed_ms": 1181.7769000772387,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3432,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q010",
+          "elapsed_ms": 2051.5297000529245,
+          "hit": true,
+          "reciprocal_rank": 0.5,
+          "context_chars": 3534,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q011",
+          "elapsed_ms": 10.069599957205355,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3619,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q012",
+          "elapsed_ms": 9.198500076308846,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 11381,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q013",
+          "elapsed_ms": 33.67429994978011,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3681,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q014",
+          "elapsed_ms": 7.562400074675679,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3264,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q015",
+          "elapsed_ms": 18.442600034177303,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3082,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q016",
+          "elapsed_ms": 2069.7974000358954,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3057,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q017",
+          "elapsed_ms": 8.25850002001971,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3905,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q018",
+          "elapsed_ms": 7.825000095181167,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 10487,
+          "returned": 4,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q019",
+          "elapsed_ms": 11.340100085362792,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3706,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q020",
+          "elapsed_ms": 1681.0616999864578,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 2951,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q021",
+          "elapsed_ms": 6.478099967353046,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3454,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q022",
+          "elapsed_ms": 4.686999949626625,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3329,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q023",
+          "elapsed_ms": 7.59910000488162,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 1353,
+          "returned": 2,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q024",
+          "elapsed_ms": 8.462999947369099,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3688,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q025",
+          "elapsed_ms": 5.551900016143918,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3179,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q026",
+          "elapsed_ms": 6.4434000523760915,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3291,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q027",
+          "elapsed_ms": 7.932799984700978,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3743,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q028",
+          "elapsed_ms": 5.066000041551888,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 2275,
+          "returned": 3,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q029",
+          "elapsed_ms": 8.719600038602948,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3594,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q030",
+          "elapsed_ms": 8.370500057935715,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3011,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q031",
+          "elapsed_ms": 7.165099959820509,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3595,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q032",
+          "elapsed_ms": 7.206500042229891,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3485,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q033",
+          "elapsed_ms": 6.662500090897083,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3518,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q034",
+          "elapsed_ms": 5.434200051240623,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3593,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q035",
+          "elapsed_ms": 4.347300040535629,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3347,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q036",
+          "elapsed_ms": 4.491899977438152,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 1979,
+          "returned": 3,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q037",
+          "elapsed_ms": 7.826199987903237,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3850,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q038",
+          "elapsed_ms": 4.425699939019978,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3355,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q039",
+          "elapsed_ms": 4.808199941180646,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3456,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q040",
+          "elapsed_ms": 6.1839999398216605,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3209,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q041",
+          "elapsed_ms": 9.580500074662268,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3494,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q042",
+          "elapsed_ms": 1144.9134000577033,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3251,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q043",
+          "elapsed_ms": 8.318900014273822,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3643,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q044",
+          "elapsed_ms": 1803.2312000868842,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3207,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q045",
+          "elapsed_ms": 1445.1344000408426,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3659,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q046",
+          "elapsed_ms": 9.82020003721118,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3105,
+          "returned": 4,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q047",
+          "elapsed_ms": 1229.985799989663,
+          "hit": true,
+          "reciprocal_rank": 0.5,
+          "context_chars": 3481,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q048",
+          "elapsed_ms": 5.652699968777597,
+          "hit": true,
+          "reciprocal_rank": 1.0,
+          "context_chars": 3216,
+          "returned": 5,
+          "strategy": "lexical_fast_path"
+        },
+        {
+          "id": "q049",
+          "elapsed_ms": 1173.5007000388578,
+          "hit": false,
+          "reciprocal_rank": 0.0,
+          "context_chars": 3381,
+          "returned": 5,
+          "strategy": "vector"
+        },
+        {
+          "id": "q050",
+          "elapsed_ms": 27.140800026245415,
+          "hit": true,
+          "reciprocal_rank": 0.3333333333333333,
+          "context_chars": 2285,
+          "returned": 3,
+          "strategy": "lexical_fast_path"
+        }
+      ]
+    }
+  ],
+  "cache_probe": {
+    "query_id": "q001",
+    "cold_ms": 1498.766,
+    "warm_ms": 0.422,
+    "speedup": 3552.42
+  }
+}

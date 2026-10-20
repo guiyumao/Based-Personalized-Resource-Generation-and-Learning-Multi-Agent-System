@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -13,7 +14,6 @@ from common.config import Settings, get_settings
 from common.models.learning import ProfileConversation, User, UserProfile
 from common.schemas.user import ProfileChatResponse, sanitize_profile_dimensions
 from services.agent_service.app.services.llm_factory import LLMFactory
-
 
 FIRST_QUESTION = (
     "为了更方便地了解您的需求，提供个性化服务，请您简单地描述一下您现在的情况"
@@ -180,6 +180,7 @@ class ProfileBuilderService:
         profile = self._get_or_create_profile(user_id)
         history = self._load_recent_history(user_id)
         if not history and not message.strip():
+            self.db.commit()
             return ProfileChatResponse(
                 reply=FIRST_QUESTION,
                 profile_updates={},
@@ -188,12 +189,15 @@ class ProfileBuilderService:
             )
 
         self._save_message(user_id, "user", message)
+        # The provider callback persists its own pre-call reservation. Release
+        # SQLite's writer lock before a potentially long model invocation.
+        self.db.commit()
 
         existing_dimensions = self._get_profile_dimensions(profile)
         reply, updates = self._generate_reply_and_updates(message, history, existing_dimensions)
 
         if updates:
-            self._apply_updates(profile, updates)
+            self._apply_updates(profile, updates, source="conversation_extracted")
 
         self._save_message(user_id, "assistant", reply)
         self.db.commit()
@@ -232,7 +236,7 @@ class ProfileBuilderService:
             deleted_keys = self._delete_blank_dimensions(profile, profile_dimensions)
             for key in deleted_keys:
                 self._clear_dimension_side_effect(profile, key)
-            self._apply_updates(profile, self._normalize_updates(profile_dimensions))
+            self._apply_updates(profile, self._normalize_updates(profile_dimensions), source="user_declared")
             if deleted_keys:
                 self._mark_analysis_stale(user_id)
 
@@ -255,7 +259,14 @@ class ProfileBuilderService:
         raw_dimensions = habits.get("profile_dimensions")
         profile_dimensions = dict(raw_dimensions) if isinstance(raw_dimensions, dict) else {}
         profile_dimensions.pop(dimension_key, None)
-        profile.habits = {**habits, "profile_dimensions": profile_dimensions}
+        raw_sources = habits.get("profile_fact_sources")
+        profile_fact_sources = dict(raw_sources) if isinstance(raw_sources, dict) else {}
+        profile_fact_sources.pop(dimension_key, None)
+        profile.habits = {
+            **habits,
+            "profile_dimensions": profile_dimensions,
+            "profile_fact_sources": profile_fact_sources,
+        }
 
         self._clear_dimension_side_effect(profile, dimension_key)
         self._mark_analysis_stale(user_id)
@@ -566,7 +577,7 @@ class ProfileBuilderService:
                     label_positions.append((idx, label))
             if len(label_positions) >= 2:
                 label_positions.sort(key=lambda x: x[0])
-                for i, (pos, label) in enumerate(label_positions):
+                for i, (pos, _label) in enumerate(label_positions):
                     start = pos
                     end = label_positions[i + 1][0] if i + 1 < len(label_positions) else len(line)
                     segments.append(line[start:end].strip().rstrip("，,;；"))
@@ -649,12 +660,32 @@ class ProfileBuilderService:
 
         return value
 
-    def _apply_updates(self, profile: UserProfile, updates: dict[str, str]) -> None:
+    def _apply_updates(
+        self,
+        profile: UserProfile,
+        updates: dict[str, str],
+        *,
+        source: str = "user_declared",
+    ) -> None:
         habits = profile.habits if isinstance(profile.habits, dict) else {}
         raw_dimensions = habits.get("profile_dimensions")
         profile_dimensions = raw_dimensions if isinstance(raw_dimensions, dict) else {}
         profile_dimensions = {**profile_dimensions, **updates}
-        profile.habits = {**habits, "profile_dimensions": profile_dimensions}
+        raw_sources = habits.get("profile_fact_sources")
+        profile_fact_sources = dict(raw_sources) if isinstance(raw_sources, dict) else {}
+        updated_at = datetime.now(UTC).isoformat()
+        profile_fact_sources.update(
+            {
+                key: {"source": source, "updated_at": updated_at}
+                for key in updates
+                if key in PROFILE_DIMENSION_KEYS
+            }
+        )
+        profile.habits = {
+            **habits,
+            "profile_dimensions": profile_dimensions,
+            "profile_fact_sources": profile_fact_sources,
+        }
 
         if "cognitiveStyle" in updates:
             profile.learning_style = self._map_learning_style(updates["cognitiveStyle"])
@@ -693,9 +724,16 @@ class ProfileBuilderService:
         habits = profile.habits if isinstance(profile.habits, dict) else {}
         raw_dimensions = habits.get("profile_dimensions")
         profile_dimensions = dict(raw_dimensions) if isinstance(raw_dimensions, dict) else {}
+        raw_sources = habits.get("profile_fact_sources")
+        profile_fact_sources = dict(raw_sources) if isinstance(raw_sources, dict) else {}
         for key in blank_keys:
             profile_dimensions.pop(key, None)
-        profile.habits = {**habits, "profile_dimensions": profile_dimensions}
+            profile_fact_sources.pop(key, None)
+        profile.habits = {
+            **habits,
+            "profile_dimensions": profile_dimensions,
+            "profile_fact_sources": profile_fact_sources,
+        }
         return blank_keys
 
     def _clear_dimension_side_effect(self, profile: UserProfile, dimension_key: str) -> None:

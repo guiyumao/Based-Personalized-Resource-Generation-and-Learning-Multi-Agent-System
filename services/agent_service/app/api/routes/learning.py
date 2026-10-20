@@ -1,9 +1,16 @@
 """Routes for learning-path, knowledge-base, and exercise capabilities."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from common.config import get_settings
 from common.db.session import get_db
+from common.dependencies import get_current_user, require_role, require_self_or_admin
+from common.models.learning import User
+from common.performance import set_trace_context
 from common.schemas.agent import (
     CoordinationRequest,
     ExerciseGenerationRequest,
@@ -13,15 +20,87 @@ from common.schemas.agent import (
     LearningPathResponse,
 )
 from services.agent_service.app.agents.coordinator import CoordinatorWorkflow
-from services.agent_service.app.services.learning_path import LearningPathService
+from services.agent_service.app.services.knowledge_base_admin import (
+    crawl_knowledge_sources,
+    knowledge_base_status,
+    list_knowledge_sources,
+    list_knowledge_subject_catalog,
+    reindex_knowledge_base,
+)
+from services.agent_service.app.services.learning_path import (
+    LearningPathPrerequisiteError,
+    LearningPathRevisionConflict,
+    LearningPathService,
+)
+from services.agent_service.app.services.path_adaptation import PathAdaptationService
 
 router = APIRouter()
 
 
-@router.post("/paths/generate", response_model=LearningPathResponse)
-def generate_learning_path(payload: LearningPathRequest, db: Session = Depends(get_db)) -> LearningPathResponse:
-    """Generate a personalized learning path through the multi-agent workflow."""
+class PlanPreflightRequest(BaseModel):
+    subject: str = Field(min_length=1, max_length=100)
+    knowledge_point: str = Field(min_length=1, max_length=100)
 
+
+@router.post("/paths/preflight")
+def check_plan_knowledge(payload: PlanPreflightRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    from services.agent_service.app.services.plan_knowledge import plan_preflight
+    return {key: value for key, value in plan_preflight(db, user.id, payload.subject, payload.knowledge_point).items() if key != "usable_chunks"}
+
+
+class PlanAdaptationPreview(BaseModel):
+    daily_minutes: int | None = Field(default=None, ge=5, le=480)
+
+
+@router.post("/paths/adaptation/preview")
+def preview_plan_adaptation(payload: PlanAdaptationPreview, db: Session = Depends(get_db),
+                            user: User = Depends(get_current_user)) -> dict:
+    try:
+        return PathAdaptationService(db).preview(user.id, payload.daily_minutes)
+    except LearningPathRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/paths/adaptation/{proposal_id}/confirm")
+def confirm_plan_adaptation(proposal_id: str, db: Session = Depends(get_db),
+                            user: User = Depends(get_current_user)) -> dict:
+    try:
+        return PathAdaptationService(db).confirm(user.id, proposal_id)
+    except LearningPathRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class KnowledgeBaseReindexRequest(BaseModel):
+    subject: str | None = None
+    force: bool = False
+
+
+class KnowledgeBaseCrawlRequest(BaseModel):
+    subjects: list[str] = Field(default_factory=list, max_length=10)
+    topics: list[str] = Field(default_factory=list, max_length=30)
+    skip_existing: bool = True
+    reindex: bool = True
+
+
+@router.post("/paths/generate", response_model=LearningPathResponse)
+def generate_learning_path(
+    payload: LearningPathRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LearningPathResponse:
+    """Generate a personalized learning path through the multi-agent workflow."""
+    require_self_or_admin(payload.user_id, current_user)
+
+    from services.agent_service.app.services.plan_knowledge import require_plan_knowledge
+    require_plan_knowledge(db, payload.user_id, payload.subject, payload.knowledge_point)
+
+    settings = get_settings()
+    set_trace_context(
+        user_id=payload.user_id,
+        task_type="learning_path_generation",
+        deadline_seconds=settings.learning_path_deadline_seconds,
+        retry_budget=settings.max_total_retries,
+    )
     result = CoordinatorWorkflow(db).run(
         CoordinationRequest(
             user_id=payload.user_id,
@@ -39,6 +118,21 @@ def generate_learning_path(payload: LearningPathRequest, db: Session = Depends(g
         )
     )
     output = result.get("outputs", {}).get("path_planning_agent", {})
+    if output.get("status") == "failed":
+        error_code = str(output.get("error_code") or "LEARNING_PATH_GENERATION_FAILED")
+        if error_code == "AI_MODEL_INITIALIZATION_TIMEOUT":
+            status_code = 503
+        elif error_code == "AI_INFERENCE_TIMEOUT":
+            status_code = 504
+        else:
+            status_code = 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "code": error_code,
+                "message": str(output.get("user_message") or output.get("error") or "学习路径暂时无法生成，请稍后重试"),
+            },
+        )
     learning_path = output.get("learning_path")
     if not isinstance(learning_path, dict):
         raise HTTPException(status_code=503, detail="Path planning agent did not return a learning path")
@@ -46,8 +140,13 @@ def generate_learning_path(payload: LearningPathRequest, db: Session = Depends(g
 
 
 @router.get("/paths/{user_id}", response_model=LearningPathResponse)
-def get_latest_learning_path(user_id: int, db: Session = Depends(get_db)) -> LearningPathResponse:
+def get_latest_learning_path(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LearningPathResponse:
     """Return the latest active learning path for one learner."""
+    require_self_or_admin(user_id, current_user)
 
     service = LearningPathService(db)
     payload = service.get_latest_path(user_id)
@@ -57,11 +156,33 @@ def get_latest_learning_path(user_id: int, db: Session = Depends(get_db)) -> Lea
 
 
 @router.post("/paths/adjust", response_model=LearningPathResponse)
-def adjust_learning_path(payload: LearningPathAdjustRequest, db: Session = Depends(get_db)) -> LearningPathResponse:
-    """Adjust one task state in the learner's active path."""
+def adjust_learning_path(
+    payload: LearningPathAdjustRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LearningPathResponse:
+    """Adjust one task state in the learner's active path.
 
+    Completing a task whose prerequisites are unfinished is refused with 409 and
+    the blocking task ids, so the client can explain why instead of silently
+    allowing the learner to jump ahead.
+    """
+
+    require_self_or_admin(payload.user_id, current_user)
     service = LearningPathService(db)
-    updated = service.adjust_path(payload)
+    try:
+        updated = service.adjust_path(payload)
+    except LearningPathRevisionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LearningPathPrerequisiteError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": exc.error_code,
+                "message": str(exc),
+                "blocked_task_ids": exc.blocked_task_ids,
+            },
+        ) from exc
     if updated is None:
         raise HTTPException(status_code=404, detail="Learning path task not found")
     return LearningPathResponse(**updated)
@@ -92,10 +213,28 @@ def list_knowledge_base(subject: str | None = None) -> dict[str, object]:
     }
 
 
+@router.get("/knowledge-base/subjects")
+def list_knowledge_base_subjects() -> dict[str, object]:
+    """List all corpus subjects for learning-resource generation."""
+
+    subjects = list_knowledge_subject_catalog()
+    return {"total": len(subjects), "subjects": subjects}
+
+
 @router.get("/knowledge-base/search")
 def search_knowledge_base(
     q: str = Query(default="", min_length=0),
     top_k: int = Query(default=6, ge=1, le=20),
+    subject: str | None = None,
+    course: str | None = None,
+    chapter: str | None = None,
+    difficulty: str | None = None,
+    university: str | None = None,
+    source: str | None = None,
+    source_site: str | None = None,
+    language: str | None = None,
+    license: str | None = None,
+    retrieval_mode: Literal["hybrid", "lexical", "vector"] = "hybrid",
 ) -> dict[str, object]:
     """Search knowledge articles through the knowledge-base agent."""
 
@@ -109,6 +248,16 @@ def search_knowledge_base(
                 "operation": "search",
                 "query": q,
                 "top_k": top_k,
+                "subject": subject,
+                "course": course,
+                "chapter": chapter,
+                "difficulty": difficulty,
+                "university": university,
+                "source": source,
+                "source_site": source_site,
+                "language": language,
+                "license": license,
+                "retrieval_mode": retrieval_mode,
             },
         )
     )
@@ -119,6 +268,60 @@ def search_knowledge_base(
         "query": output.get("query", q),
         "items": output.get("items", []),
     }
+
+
+@router.get("/knowledge-base/status")
+def get_knowledge_base_status(
+    _user: User = Depends(require_role("teacher", "admin")),
+) -> dict[str, object]:
+    """Return live corpus and Chroma statistics to authorized operators."""
+
+    return knowledge_base_status()
+
+
+@router.get("/knowledge-base/sources")
+def get_knowledge_base_sources(
+    _user: User = Depends(require_role("teacher", "admin")),
+) -> dict[str, object]:
+    """List allow-listed sources and their crawl state."""
+
+    items = list_knowledge_sources()
+    return {"total": len(items), "items": items}
+
+
+@router.post("/knowledge-base/reindex")
+def reindex_knowledge_base_route(
+    payload: KnowledgeBaseReindexRequest,
+    _user: User = Depends(require_role("admin")),
+) -> dict[str, object]:
+    """Incrementally rebuild the vector index; admin-only."""
+
+    try:
+        return reindex_knowledge_base(subject=payload.subject, force=payload.force)
+    except RuntimeError as exc:
+        status_code = 409 if "already running" in str(exc) else 500
+        raise HTTPException(status_code=status_code, detail=str(exc)[-1000:]) from exc
+
+
+@router.post("/knowledge-base/sources/crawl")
+def crawl_knowledge_base_sources_route(
+    payload: KnowledgeBaseCrawlRequest,
+    _user: User = Depends(require_role("admin")),
+) -> dict[str, object]:
+    """Crawl a bounded selection from the source allow-list; admin-only."""
+
+    try:
+        return crawl_knowledge_sources(
+            subjects=payload.subjects,
+            topics=payload.topics,
+            skip_existing=payload.skip_existing,
+            reindex=payload.reindex,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        status_code = 409 if "already running" in str(exc) else 500
+        raise HTTPException(status_code=status_code, detail=str(exc)[-1000:]) from exc
 
 
 @router.get("/knowledge-base/{article_id}")
@@ -144,9 +347,20 @@ def get_knowledge_article(article_id: str) -> dict[str, object]:
 
 
 @router.post("/exercises/generate", response_model=ExerciseGenerationResponse)
-def generate_exercises(payload: ExerciseGenerationRequest) -> ExerciseGenerationResponse:
+def generate_exercises(
+    payload: ExerciseGenerationRequest,
+    current_user: User = Depends(get_current_user),
+) -> ExerciseGenerationResponse:
     """Generate a structured exercise set through the multi-agent workflow."""
+    require_self_or_admin(payload.user_id, current_user)
 
+    settings = get_settings()
+    set_trace_context(
+        user_id=payload.user_id,
+        task_type="exercise_generation",
+        deadline_seconds=settings.exercise_deadline_seconds,
+        retry_budget=settings.max_total_retries,
+    )
     result = CoordinatorWorkflow().run(
         CoordinationRequest(
             user_id=payload.user_id,
