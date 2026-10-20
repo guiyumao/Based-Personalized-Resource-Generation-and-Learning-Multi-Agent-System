@@ -1,6 +1,15 @@
 # 当前开发状态
 
+## 最新 学习工作区通用可打开 + 管理端运营数据修复 + 知识自动融合决策层（2026-10-20 夜）
+
+- **学生工作区 409 修复（截图 2）**：`common/learning_context.create_context` 不再因「计划学科不在公共目录」直接 409；任何本人计划（旧计划 `knowledge_scope=None`、个人草稿、LLM 子知识点）都回退到 owner-scoped `personal KnowledgePoint`（`subject_id=None`，`PERSONAL_DRAFT`），工作区可直接打开，公共目录零污染。测试：`test_legacy_plan_with_unknown_subject_can_open_workspace_context`。
+- **管理端「任务运营数据暂不可用」修复（截图 1）**：根因 `operations.task_summary` 访问 `task.started_at`，而 `KnowledgeBuildTask` 无该字段 → 500。改为 `getattr(task, "started_at", None)`；测试 `test_operations_handles_knowledge_task_without_started_at`（`/admin/operations` 200）。另修该文件 pre-existing I001 行内 import 顺序。
+- **知识自动融合决策层（第一增量）**：新增 `services/agent_service/app/services/knowledge_fusion.py`——`classify_candidate`（学科→章节→知识点分层匹配，优先已有 code/别名，不靠关键词相似）、`assess_quality`（长度/来源可追溯/损坏等**非模型**规则）、`decide_fusion`（A 新建 / B 补充 / C 修订 / D 重复 / E 冲突）、`auto_publish_allowed`（默认人工审核；仅 `strict_auto` 且质量+归类通过且 create/supplement 才自动发布；revise/duplicate/冲突强制人工）、`fusion_summary`（管理员统计）。新增测试 `tests/unit/test_knowledge_fusion.py` 5 passed；Ruff 通过。
+- **提交**：`d3eb8fe`（工作区+运营修复）、`1c302b2`（融合决策层）。**注意**：工作树当前有另一并发会话的大量未提交改动（`learning_evidence`/`report_service`/迁移 0032/courseware 等），本轮只提交上述自有文件；`create_context`/`operations`/`knowledge_fusion` 需在并发改动稳定后重启 8002 才生效。
+- **剩余（融合全链）**：把 `knowledge_fusion` 接入候选处理/发布流程（`knowledge_tasks`/`knowledge_candidates`/`publish_candidate`）、管理员融合统计页面、自动发布策略配置、索引一致性重试、学生端检索联动、10 条验收场景。
+
 ## 最新 学生端自主学科建设 P0-1 / P0-2：建设式门禁 + 个人学科草稿（2026-10-20）
+
 
 按新任务（学生端自主学科建设/知识补全/计划全链路）落地 P0-1、P0-2：`SUBJECT_MISSING` 不再终止学生请求，缺失时自动构建**个人学科草稿**并据此生成计划。
 
