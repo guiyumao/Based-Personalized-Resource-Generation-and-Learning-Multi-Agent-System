@@ -182,3 +182,40 @@ def test_generate_path_uses_personal_outline_when_subject_missing(boot_db, monke
     saved = db.query(LearningPath).filter_by(user_id=1, status="active").one()
     assert saved.path_data_json["knowledge_scope"] == "personal_draft"
     assert saved.path_data_json["knowledge_draft"]["name"] == "数据结构"
+
+
+def test_generate_path_uses_real_curriculum_when_subject_exists(tmp_path, monkeypatch):
+    from common.models.learning import KnowledgePoint, SystemSubject
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'real.sqlite'}", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        db.add(User(id=1, username="learner", password_hash="unused"))
+        db.add(SystemSubject(id=10, name="数据结构", code="data_structures", description="fixture"))
+        db.flush()
+        db.add_all([
+            KnowledgePoint(id=101, name="链表", subject_id=10, chapter="线性表"),
+            KnowledgePoint(id=102, name="栈", subject_id=10, chapter="栈与队列"),
+        ])
+        db.commit()
+        monkeypatch.setattr(LearningPathService, "_generate_path_with_llm",
+                            lambda self, request, scope: {
+            "user_id": request.user_id, "subject": request.subject,
+            "knowledge_point": request.knowledge_point, "overview": "fixture",
+            "estimated_days": 7,
+            "stages": [{"stage_id": "s1", "title": "基础", "description": "", "tasks": [
+                {"task_id": "t1", "title": "学习链表", "task_type": "courseware",
+                 "knowledge_point": "链表基础", "objective": "理解", "estimated_minutes": 30,
+                 "difficulty": "foundation", "completed": False, "status": "pending",
+                 "depends_on": []},
+            ]}],
+        })
+        payload = LearningPathService(db).generate_path(
+            LearningPathRequest(user_id=1, subject="数据结构", knowledge_point="链表", daily_minutes=60))
+        assert payload["knowledge_scope"] == "personal_draft"
+        assert payload["subject_id"] == 10
+        task = payload["stages"][0]["tasks"][0]
+        assert task["knowledge_point"] == "链表"  # snapped from the LLM sub-topic
+        assert task["knowledge_point_id"] == 101
+    engine.dispose()

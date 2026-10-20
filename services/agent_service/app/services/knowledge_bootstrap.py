@@ -224,6 +224,38 @@ def _search_and_fetch_personal(db: Session, user_id: int, subject: str, knowledg
         return None
 
 
+def build_subject_outline(db: Session, subject_id: int) -> dict | None:
+    """Build a learning outline from the REAL database knowledge points of a subject.
+
+    Unlike the AI draft, this mirrors the reviewed curriculum structure already
+    stored in SystemSubject / KnowledgePoint, so generated plan tasks reference
+    real catalog points instead of owner-scoped placeholders.
+    """
+    from common.models.learning import KnowledgePoint, SystemSubject
+    subject = db.get(SystemSubject, subject_id)
+    if subject is None:
+        return None
+    points = db.query(KnowledgePoint).filter_by(subject_id=subject_id).all()
+    if not points:
+        return None
+    chapters: dict[str, list] = {}
+    for point in points:
+        chapters.setdefault(point.chapter or "默认章节", []).append({
+            "name": point.name,
+            "aliases": point.aliases_json or [],
+            "prerequisites": point.prerequisites_json or [],
+            "objectives": point.objectives_json or [f"掌握{point.name}"],
+        })
+    return {
+        "name": subject.name,
+        "code": subject.code or "",
+        "aliases": subject.aliases_json or [],
+        "description": subject.description or "",
+        "chapters": [{"name": chapter, "points": items} for chapter, items in chapters.items()],
+        "source": "curriculum",
+    }
+
+
 def build_personal_draft(db: Session, user_id: int, subject: str, knowledge_point: str) -> dict:
     """Return ``{outline, chunks, reused, task_id}`` for a personal subject draft."""
     subject = (subject or "").strip()[:100]

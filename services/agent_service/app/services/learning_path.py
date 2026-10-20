@@ -112,13 +112,27 @@ class LearningPathService:
                 knowledge = assess_plan_knowledge(
                     self.db, request.user_id, request.subject, request.knowledge_point)
             if knowledge.get("mode") == "personal_draft":
-                # P0-2: build (or reuse) a personal subject draft so the plan is
-                # grounded on a structured outline, never on the public catalog.
+                # Prefer the REAL catalog curriculum when the subject already exists;
+                # fall back to an AI/personal draft only when it does not.
                 from services.agent_service.app.services.knowledge_bootstrap import (
+                    _chunks_from_outline,
                     build_personal_draft,
+                    build_subject_outline,
                 )
-                personal_draft = build_personal_draft(
-                    self.db, request.user_id, request.subject, request.knowledge_point)
+                real_outline = (
+                    build_subject_outline(self.db, knowledge["subject_id"])
+                    if knowledge.get("subject_id") else None
+                )
+                if real_outline is not None:
+                    personal_draft = {
+                        "outline": real_outline,
+                        "chunks": _chunks_from_outline(real_outline, request.subject),
+                        "task_id": None,
+                        "sources": [],
+                    }
+                else:
+                    personal_draft = build_personal_draft(
+                        self.db, request.user_id, request.subject, request.knowledge_point)
                 request = request.model_copy(update={
                     "retrieval_context": {"retrieved_chunks": personal_draft["chunks"],
                                           "personal_outline": personal_draft["outline"]}})
@@ -155,6 +169,11 @@ class LearningPathService:
                     payload["knowledge_draft"] = personal_draft["outline"]
                     payload["knowledge_draft_task_id"] = personal_draft.get("task_id")
                     payload["knowledge_sources"] = personal_draft.get("sources") or []
+                if knowledge.get("subject_id"):
+                    # The subject exists in the real catalog: anchor generated tasks
+                    # on its real knowledge points so the workspace resolves them.
+                    payload["subject_id"] = knowledge["subject_id"]
+                    self._snap_tasks_to_real_points(payload, knowledge["subject_id"])
         payload["generation_source"] = "llm"
         if source_analysis_id is not None:
             payload["source_transcript_analysis_id"] = source_analysis_id
@@ -460,6 +479,25 @@ class LearningPathService:
                 continue
             ordered.extend(task for task in tasks if isinstance(task, dict))
         return ordered
+
+    def _snap_tasks_to_real_points(self, payload: dict[str, Any], subject_id: int) -> None:
+        """Map generated task knowledge points onto the subject's real catalog points."""
+        from common.models.learning import KnowledgePoint
+        from services.agent_service.app.services.knowledge_construction import normalize_name
+        points = self.db.query(KnowledgePoint).filter_by(subject_id=subject_id).all()
+        if not points:
+            return
+        by_name = {normalize_name(point.name): point for point in points}
+        for task in self._ordered_tasks(payload):
+            wanted = normalize_name(str(task.get("knowledge_point") or ""))
+            point = by_name.get(wanted)
+            if point is None and wanted:
+                matches = [candidate for name, candidate in by_name.items()
+                           if wanted in name or name in wanted]
+                point = matches[0] if matches else None
+            if point is not None:
+                task["knowledge_point"] = point.name
+                task["knowledge_point_id"] = point.id
 
     def _blocking_prerequisites(
         self, payload: dict[str, Any], task_id: str
