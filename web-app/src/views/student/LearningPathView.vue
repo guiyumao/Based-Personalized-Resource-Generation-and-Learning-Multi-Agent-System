@@ -54,7 +54,7 @@ async function checkKnowledge() {
   // Constructive gate: when public knowledge is missing the backend now builds a
   // personal AI draft instead of blocking, so proceed rather than abort.
   if (!data.ready && data.mode === 'personal_draft') {
-    ElMessage.info('知识库暂未收录该学科，将为你生成个人学习知识草稿（不会标记为公共正式知识）。')
+    ElMessage.info('知识库暂未收录该学科，将自动构建学习知识并直接补充到知识库，下次即可直接检索使用。')
     return true
   }
   return Boolean(data.ready)
@@ -87,6 +87,26 @@ const hasPathResult = computed(() => hasAgentPayload(pathOutput.value, 'learning
 const hasCoursewareResult = computed(() => hasAgentPayload(resourceOutput.value, 'resource'))
 const hasExerciseResult = computed(() => hasAgentPayload(exerciseOutput.value, 'exercise_set'))
 const coursewareFailureReason = computed(() => describeAgentFailure(resourceOutput.value))
+// Auto-backfill outcomes shown to the learner: never present a draft as public
+// knowledge, and never hide why an automatic publication did not complete.
+const BACKFAIL_REASON_TEXT: Record<string, string> = {
+  PUBLISH_FAILED: '自动发布或检索校验未通过，已回滚，未写入公共知识库',
+  LOCK_BUSY: '知识库正在被其他写入占用，已跳过本次入库',
+  WITHDRAWN_BY_ADMIN: '该知识已被管理员下架，不再自动补建',
+  REJECTED_BY_ADMIN: '该知识已被管理员驳回，不再自动补建',
+  MISSING_TARGET: '缺少学科或知识点，无法入库',
+  SUBJECT_CREATE_FAILED: '学科创建失败，已回滚',
+  BACKFILL_UNAVAILABLE: '本次未成功入库（已发布但预检未通过或入库不可用）',
+}
+const backfillReasonText = computed(
+  () => BACKFAIL_REASON_TEXT[learningPath.value?.knowledge_backfill_reason ?? ''] ?? '本次未成功入库，已保留个人草稿',
+)
+const publicKnowledgeTitle = computed(() => {
+  const versions = learningPath.value?.knowledge_versions?.length ?? 0
+  return versions
+    ? `本次基于公共知识库资料生成（已引用 ${versions} 个已发布知识版本）`
+    : '本次基于公共知识库资料生成'
+})
 const exerciseFailureReason = computed(() => describeAgentFailure(exerciseOutput.value))
 const coordinationWarnings = computed(() => {
   const warnings: string[] = []
@@ -536,11 +556,18 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
 
         <div v-if="learningPath" class="timeline">
           <el-alert
+            v-if="learningPath.knowledge_scope === 'public'"
+            type="success"
+            :closable="false"
+            :title="publicKnowledgeTitle"
+          />
+          <el-alert
             v-if="learningPath.knowledge_scope === 'personal_draft'"
             type="info"
             :closable="false"
-            title="本次已自动构建个人学习知识草稿（未经公共审核，不作为正式公共知识）"
+            title="本次使用自动构建的临时学习草稿（知识库自动补充未成功，本次未计入公共知识，下次将自动重试入库）"
           >
+            <p class="knowledge-draft-reason">未入库原因：{{ backfillReasonText }}</p>
             <div class="knowledge-draft">
               <p>{{ learningPath.knowledge_draft?.description || learningPath.subject }}</p>
               <ul>

@@ -14,6 +14,32 @@ from services.agent_service.app.services.knowledge_construction import find_subj
 from services.agent_service.app.services.rag import ChromaRetriever
 
 
+def prepare_generation_context(db: Session, request, *, knowledge_point: str = "") -> dict:
+    """Shared gate for courseware, notes, maps, code cases and exercise generation."""
+    topic = knowledge_point or request.knowledge_point
+    if request.teaching_scope_id:
+        return {}  # Keep the existing authenticated private retrieval path.
+    point = db.get(KnowledgePoint, int(request.knowledge_point_id)) if str(request.knowledge_point_id).isdigit() else None
+    if point is None and not request.subject:
+        matches = db.query(KnowledgePoint).filter(KnowledgePoint.name == topic,
+            KnowledgePoint.subject_id.is_not(None)).limit(2).all()
+        point = matches[0] if len(matches) == 1 else None
+    if point and point.subject_id and not request.subject:
+        from common.models.learning import SystemSubject
+        catalog = db.get(SystemSubject, point.subject_id)
+        if catalog:
+            request.subject = catalog.name
+            request.knowledge_point_id = str(point.id)
+    if not request.subject:
+        return {}
+    acquired = acquire_context(db, actor_user_id=request.user_id, subject=request.subject,
+                               knowledge_point=topic, allow_web=getattr(request, 'allow_web_knowledge', True))
+    context = acquired['retrieval_context']
+    context['knowledge_evidence'] = {key: value for key, value in acquired.items() if key != 'retrieval_context'}
+    request.retrieval_context = context
+    return context
+
+
 def assess_coverage(db: Session, *, subject: str, knowledge_point: str, max_source_age_days: int = 365) -> dict[str, Any]:
     catalog = find_subject(db, subject)
     code = catalog.code if catalog and catalog.code else subject
@@ -23,6 +49,7 @@ def assess_coverage(db: Session, *, subject: str, knowledge_point: str, max_sour
     aliases = [knowledge_point, point.name, *(point.aliases_json or [])] if point else [knowledge_point]
     terms = [normalize_name(term) for term in aliases if len(term.strip()) >= 2]
     corpus_evidence = []
+    corpus_chunks = []
     corpus_text = ""
     from common.models.learning import KnowledgeVersion
     active_paths = {version.corpus_path.removeprefix("knowledge_base/corpus/")
@@ -37,6 +64,9 @@ def assess_coverage(db: Session, *, subject: str, knowledge_point: str, max_sour
         text = path.read_text(encoding="utf-8")
         if any(term in normalize_name(text) for term in terms):
             corpus_evidence.append(path.relative_to(CORPUS_DIR).as_posix())
+            corpus_chunks.append({"id": "corpus:" + path.relative_to(CORPUS_DIR).as_posix(), "content": text[:8000],
+                                  "metadata": {"source": path.relative_to(CORPUS_DIR).as_posix(),
+                                               "subject": code, "title": path.stem}})
             corpus_text += text[:10000]
             if datetime.utcfromtimestamp(path.stat().st_mtime) < datetime.utcnow() - timedelta(days=max_source_age_days):
                 stale_sources.append(path.relative_to(CORPUS_DIR).as_posix())
@@ -68,7 +98,7 @@ def assess_coverage(db: Session, *, subject: str, knowledge_point: str, max_sour
         state = "UNCERTAIN"
     return {"state": state, "subject": code, "point_id": point.id if point else None,
             "knowledge_point": point.name if point else knowledge_point, "aliases": aliases,
-            "corpus_sources": corpus_evidence[:20], "chunks": indexed,
+            "corpus_sources": corpus_evidence[:20], "chunks": (exact_indexed + corpus_chunks)[:8],
             "missing_facets": missing, "retrieval_error": failure,
             "stale_sources": stale_sources,
             "assessment": "metadata_alias_keyword_and_semantic_evidence"}
@@ -78,7 +108,25 @@ def acquire_context(db: Session, *, actor_user_id: int, subject: str, knowledge_
     coverage = assess_coverage(db, subject=subject, knowledge_point=knowledge_point)
     chunks = list(coverage["chunks"])
     sources = []
-    if allow_web and coverage["point_id"] and coverage["state"] in {"MISSING", "PARTIAL", "STALE"}:
+    supplementation = {"status": "NOT_NEEDED" if coverage["state"] == "COMPLETE" else "DISABLED",
+                       "candidate_ids": [], "reused": False}
+    recent = None
+    if allow_web and coverage["state"] != "COMPLETE":
+        recent = db.query(KnowledgeCandidate).filter(
+            KnowledgeCandidate.creator_user_id == actor_user_id,
+            KnowledgeCandidate.subject == str(coverage["subject"]),
+            KnowledgeCandidate.knowledge_point == str(coverage["knowledge_point"]),
+            KnowledgeCandidate.status.in_(["DRAFT", "PENDING_REVIEW", "APPROVED", "AUTO_APPROVED"]),
+            KnowledgeCandidate.updated_at >= datetime.utcnow() - timedelta(days=30),
+        ).order_by(KnowledgeCandidate.id.desc()).first()
+    if recent:
+        chunks.append({"id": f"candidate-{recent.id}", "content": recent.content[:8000],
+                       "metadata": {"source_url": recent.source_url, "title": recent.title,
+                                    "review_status": "PENDING", "subject": coverage["subject"]}})
+        sources.append({"url": recent.source_url, "title": recent.title, "review_status": "PENDING"})
+        supplementation = {"status": "SAVED_PENDING_REVIEW", "candidate_ids": [recent.id], "reused": True}
+    if allow_web and not recent and coverage["point_id"] and coverage["state"] in {"MISSING", "PARTIAL", "STALE", "RETRIEVAL_FAILURE"}:
+        supplementation["status"] = "SEARCH_FAILED"
         from services.agent_service.app.services.knowledge_tasks import create_task, execute_task
         from services.agent_service.app.services.knowledge_candidates import create_from_fetch
         query = f"{coverage['subject']} {coverage['knowledge_point']} {' '.join(coverage['missing_facets'])}"[:128]
@@ -89,6 +137,7 @@ def acquire_context(db: Session, *, actor_user_id: int, subject: str, knowledge_
         execute_task(searched.id)
         db.expire_all(); searched = db.get(KnowledgeBuildTask, searched.id)
         if searched.status == "COMPLETED" and searched.result_json.get("sources"):
+            supplementation["status"] = "FETCH_FAILED"
             fetched = create_task(db, actor_user_id=actor_user_id, client_request_id=f"dynamic-{day}-{key}-fetch", operation_type="FETCH_SOURCE",
                                   subject=str(coverage["subject"]), requirements={"source_task_id": searched.id, "source_index": 0})
             execute_task(fetched.id)
@@ -97,9 +146,14 @@ def acquire_context(db: Session, *, actor_user_id: int, subject: str, knowledge_
                 source = fetched.result_json["source"]
                 candidate = create_from_fetch(db, actor_user_id=actor_user_id, source_task_id=fetched.id,
                                               subject=str(coverage["subject"]), knowledge_point=str(coverage["knowledge_point"]))
+                supplementation = {"status": "SAVED_PENDING_REVIEW", "candidate_ids": [candidate.id], "reused": False}
                 chunks.append({"id": f"candidate-{candidate.id}", "content": source["content"][:8000],
                                "metadata": {"source_url": source["url"], "title": source["title"], "review_status": "PENDING", "subject": coverage["subject"]}})
                 sources.append({"url": source["url"], "title": source["title"], "review_status": "PENDING"})
+        elif searched.status == "COMPLETED":
+            supplementation["status"] = "NO_SOURCES"
+    if allow_web and not coverage["point_id"] and not recent:
+        supplementation["status"] = "UNRESOLVED_POINT"
     from common.config import get_settings
     seen_urls = {item["url"] for item in sources}
     for chunk in chunks:
@@ -116,4 +170,4 @@ def acquire_context(db: Session, *, actor_user_id: int, subject: str, knowledge_
                "source_ids": [str(row.get("id") or "") for row in chunks], "created_at": f"{now.isoformat()}Z",
                "expire_at": f"{(now + timedelta(minutes=5)).isoformat()}Z", "filters": {"subject": coverage["subject"]}}
     return {"coverage": {key: value for key, value in coverage.items() if key != "chunks"},
-            "retrieval_context": context, "sources": sources}
+            "retrieval_context": context, "sources": sources, "supplementation": supplementation}

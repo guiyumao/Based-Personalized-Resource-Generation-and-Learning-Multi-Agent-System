@@ -38,7 +38,7 @@ export type LearnerHeatmapCell = {
 export type LearnerProfileDashboard = {
   user_id: number
   learning_style: string
-  mastery_overview: number
+  mastery_overview: number | null
   weekly_focus_minutes: number
   habit_summary: string
   radar_metrics: LearnerRadarMetric[]
@@ -75,7 +75,7 @@ export type LearnerSuggestion = {
 export type LearnerProfileSnapshot = {
   user_id: number
   learning_style: string
-  mastery_overview: number
+  mastery_overview: number | null
   weekly_focus_minutes: number
   habit_summary: string
   radar_metrics: LearnerRadarMetric[]
@@ -195,6 +195,8 @@ export type LearningPathResponse = {
   knowledge_scope?: 'public' | 'personal_draft'
   knowledge_gap_reason?: string
   knowledge_gap_id?: string
+  // Why the automatic knowledge-base backfill did not complete (honest state).
+  knowledge_backfill_reason?: string
   knowledge_draft_task_id?: number
   knowledge_sources?: Array<{ url?: string; title?: string }>
   knowledge_draft?: {
@@ -249,8 +251,9 @@ export type PersonalizationRecentMistake = {
 }
 
 export type PersonalizationContext = {
-  mastery_score: number
-  correct_rate: number
+  mastery_score: number | null
+  evidence?: { version?: string; status?: string; sample_size?: number; uncertainty_interval?: number[] }
+  correct_rate: number | null
   answered_count: number
   weak_question_types: string[]
   basis: string[]
@@ -584,6 +587,8 @@ export type ManagedResourceItem = {
    * Only the single-resource detail endpoint returns these three fields; the
    * list endpoint leaves them undefined so browsing stays light.
    */
+  version?: string | null
+  teaching_json?: string | null
   content?: string | null
   structured?: StructuredResourcePayload | null
   content_validation?: ContentValidationReport | null

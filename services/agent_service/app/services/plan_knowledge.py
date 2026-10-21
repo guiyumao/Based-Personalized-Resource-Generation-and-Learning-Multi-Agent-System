@@ -190,10 +190,11 @@ def assess_plan_knowledge(db: Session, user_id: int, subject: str, knowledge_poi
     """Assess public knowledge for plan generation WITHOUT hard-blocking.
 
     This is the constructive gate (P0-1): a missing subject / knowledge point /
-    published content / index no longer terminates the student's request.  It
-    records a gap for the admin/candidate workflow and downgrades to a personal
-    AI-draft mode, so the plan can still be generated from the model's own
-    knowledge while never being labelled as reviewed public knowledge.
+    published content / index no longer terminates the student's request.  The
+    caller backfills the knowledge base with an auto-built draft (see
+    ``knowledge_bootstrap.promote_draft_to_knowledge_base``) so the next request
+    is served from the knowledge base directly; if that backfill cannot
+    complete, the request downgrades to a personal AI-draft mode.
 
     Returns ``mode`` in {"public", "personal_draft"} plus the preflight facts.
     """
@@ -203,7 +204,7 @@ def assess_plan_knowledge(db: Session, user_id: int, subject: str, knowledge_poi
         # The gap is still recorded above, but the learner is no longer told to
         # "wait for an admin" — a personal AI draft is generated instead.
         result["message"] = (
-            "公共知识库暂未收录完整资料，将为你生成个人学习知识草稿"
-            "（不标记为公共正式知识）；缺口已记录，管理员补建后可转为公共正式知识。"
+            "公共知识库暂未收录完整资料，将自动构建学习知识并直接补充进知识库，"
+            "本次生成后再次检索即可命中，无需等待管理员处理。"
         )
     return result

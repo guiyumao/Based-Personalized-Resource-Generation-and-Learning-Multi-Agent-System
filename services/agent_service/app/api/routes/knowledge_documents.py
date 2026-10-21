@@ -71,6 +71,25 @@ def documents(
     }
 
 
+@router.get("/auto-backfill/stats")
+def auto_backfill_stats(
+    days: int = Query(7, ge=1, le=90),
+    db: Session = Depends(get_db),
+):
+    """How much knowledge the system published on its own, and how often it failed."""
+    from services.agent_service.app.services.knowledge_audit import auto_backfill_stats as collect
+
+    return collect(db, days=days)
+
+
+@router.get("/inspection/orphans")
+def orphan_inspection(db: Session = Depends(get_db)):
+    """Read-only sweep: do SQL rows, corpus files and the vector index still agree?"""
+    from services.agent_service.app.services.knowledge_audit import orphan_inspection as inspect
+
+    return inspect(db)
+
+
 @router.post("/documents/upload", status_code=201)
 async def upload_document(
     file: UploadFile = File(...),

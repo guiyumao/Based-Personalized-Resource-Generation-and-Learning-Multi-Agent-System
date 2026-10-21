@@ -19,6 +19,13 @@ from services.agent_service.app.services.knowledge_base_admin import publish_doc
 
 ROOT_DIR = KNOWLEDGE_ROOT
 
+# AI-generated knowledge that is published automatically is NEVER stored as
+# administrator-approved: it keeps its own status so the data model, the corpus
+# header and the admin UI can distinguish it from reviewed content.
+AUTO_APPROVED_STATUS = "AUTO_APPROVED"
+AI_LICENSE_NAME = "AI_GENERATED"
+PUBLISHABLE_STATUSES = {"APPROVED", AUTO_APPROVED_STATUS}
+
 
 class KnowledgeCandidateConflict(ValueError):
     pass
@@ -88,7 +95,9 @@ def create_from_fetch(
 
 
 def edit_candidate(db: Session, item: KnowledgeCandidate, **changes: str) -> KnowledgeCandidate:
-    if item.status not in {"DRAFT", "REJECTED", "APPROVED"}:
+    # AUTO_APPROVED marks AI-generated content published without human review;
+    # administrators must still be able to revise or correct it.
+    if item.status not in {"DRAFT", "REJECTED", "APPROVED", AUTO_APPROVED_STATUS}:
         raise KnowledgeCandidateConflict("Candidate cannot be edited from its current state")
     for field in ("title", "knowledge_point", "content"):
         if field in changes:
@@ -140,11 +149,22 @@ def review_candidate(
 
 
 def _document(item: KnowledgeCandidate) -> str:
+    # Never describe AI-generated content as administrator-reviewed: the source
+    # type and the review state are recorded explicitly so the corpus, the admin
+    # UI and every downstream citation can tell the two apart.
+    auto_generated = item.status == AUTO_APPROVED_STATUS or item.license_name == AI_LICENSE_NAME
+    source_type = "ai_generated_auto_published" if auto_generated else "administrator_reviewed_candidate"
+    review_state = (
+        "AI 自动生成并自动发布，未经人工审核"
+        if auto_generated
+        else "管理员已审核"
+    )
     return (
         f"# {item.title}\n\n"
         f"> 文档ID: candidate-{item.id}-{item.content_hash[:12]}\n"
         f"> 来源: {item.source_url}\n"
-        f"> 来源类型: administrator_reviewed_candidate\n"
+        f"> 来源类型: {source_type}\n"
+        f"> 审核状态: {review_state}\n"
         f"> 授权: {item.license_name}\n"
         f"> 学科: {item.subject} | 难度: 未标注\n"
         f"> 内容哈希: {item.content_hash}\n"
@@ -153,8 +173,17 @@ def _document(item: KnowledgeCandidate) -> str:
     )
 
 
-def publish_candidate(db: Session, item: KnowledgeCandidate, *, publisher_user_id: int, guard=None) -> tuple[KnowledgeVersion, list[dict[str, object]]]:
-    with knowledge_write_lock(ROOT_DIR) as token:
+def publish_candidate(
+    db: Session,
+    item: KnowledgeCandidate,
+    *,
+    publisher_user_id: int,
+    guard=None,
+    lock_token: str = "",
+) -> tuple[KnowledgeVersion, list[dict[str, object]]]:
+    # ``lock_token`` lets a caller that already owns the corpus lock (e.g. the
+    # auto-backfill compensating transaction) publish without a nested acquire.
+    with knowledge_write_lock(ROOT_DIR, inherited_token=lock_token) as token:
         db.refresh(item)
         if guard:
             guard()
@@ -170,7 +199,7 @@ def _publish_candidate(db: Session, item: KnowledgeCandidate, *, publisher_user_
             if not matches:
                 raise RuntimeError("Published version is not currently retrievable; run publication reconciliation")
             return version, matches
-    if item.status != "APPROVED":
+    if item.status not in PUBLISHABLE_STATUSES:
         raise KnowledgeCandidateConflict("Candidate must be approved before publication")
     from common.knowledge_paths import PROJECT_ROOT
     from services.agent_service.app.services.deepseek_search import _public_url

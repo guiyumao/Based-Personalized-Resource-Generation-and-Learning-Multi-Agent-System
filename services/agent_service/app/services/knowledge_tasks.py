@@ -98,7 +98,7 @@ def create_task(
     if operation_type == "PUBLISH_CANDIDATE":
         from common.models.learning import KnowledgeCandidate
         candidate = db.get(KnowledgeCandidate, requirements.get("candidate_id"))
-        if candidate is None or candidate.status not in {"APPROVED", "PUBLISHED"}:
+        if candidate is None or candidate.status not in {"APPROVED", "AUTO_APPROVED", "PUBLISHED"}:
             raise ValueError("An approved candidate is required")
         requirements = {"candidate_id": candidate.id, "content_hash": candidate.content_hash}
     elif operation_type == "SEARCH_SOURCES":

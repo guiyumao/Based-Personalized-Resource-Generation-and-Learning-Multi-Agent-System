@@ -81,8 +81,22 @@ def _get(db: Session, candidate_id: int) -> KnowledgeCandidate:
 
 
 @router.get("")
-def list_candidates(limit: int = Query(30, ge=1, le=100), db: Session = Depends(get_db), _user: User = Depends(require_role("admin"))) -> dict:
-    items = db.query(KnowledgeCandidate).order_by(KnowledgeCandidate.id.desc()).limit(limit).all()
+def list_candidates(
+    limit: int = Query(30, ge=1, le=100),
+    status: str = Query("", max_length=40),
+    license_name: str = Query("", max_length=100),
+    db: Session = Depends(get_db),
+    _user: User = Depends(require_role("admin")),
+) -> dict:
+    """Admin listing. ``status=AUTO_APPROVED`` isolates AI auto-published knowledge
+    that a human has not reviewed yet; ``license_name=AI_GENERATED`` does the same
+    by licence. Both filters keep auto and human knowledge separable."""
+    query = db.query(KnowledgeCandidate)
+    if status:
+        query = query.filter(KnowledgeCandidate.status == status)
+    if license_name:
+        query = query.filter(KnowledgeCandidate.license_name == license_name)
+    items = query.order_by(KnowledgeCandidate.id.desc()).limit(limit).all()
     return {"items": [serialize_candidate(item) for item in items]}
 
 

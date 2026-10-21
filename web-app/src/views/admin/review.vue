@@ -1,10 +1,32 @@
 <script setup lang="ts">
 import { useAdminWorkspace } from '../../composables/useAdminWorkspace'
-const { knowledgeCandidates, knowledgeVersions, oldVersionId, newVersionId, versionComparison, taskUsage, versionImpact, knowledgeError, loading, viewVersionImpact, fetchKnowledgeCandidates, saveCandidate, submitCandidate, reviewCandidate, loadKnowledgeVersions, compareKnowledgeVersions, compareCandidateDraft, rollbackKnowledgeVersion, startCandidateRevision, publishCandidate } = useAdminWorkspace('review')
+const { knowledgeCandidates, candidateOriginFilter, knowledgeVersions, oldVersionId, newVersionId, versionComparison, taskUsage, versionImpact, knowledgeError, loading, viewVersionImpact, fetchKnowledgeCandidates, saveCandidate, submitCandidate, reviewCandidate, loadKnowledgeVersions, compareKnowledgeVersions, compareCandidateDraft, rollbackKnowledgeVersion, startCandidateRevision, publishCandidate } = useAdminWorkspace('review')
+
+// Switching the filter reloads the list with the matching server-side query.
+async function applyCandidateOriginFilter() {
+  await fetchKnowledgeCandidates()
+}
+
+// AI auto-published knowledge must never be shown as administrator-approved.
+const CANDIDATE_STATUS_LABELS: Record<string, string> = {
+  DRAFT: '草稿',
+  PENDING_REVIEW: '待审核',
+  APPROVED: '管理员已审核',
+  AUTO_APPROVED: 'AI 自动生成（未人工审核）',
+  REJECTED: '已驳回',
+  PUBLISHED: '已发布',
+  WITHDRAWN: '已下架',
+}
+function candidateStatusLabel(item: any): string {
+  const label = CANDIDATE_STATUS_LABELS[item?.status as string] ?? String(item?.status ?? '')
+  return item?.license_name === 'AI_GENERATED' && item?.status !== 'AUTO_APPROVED'
+    ? `${label} · AI 生成`
+    : label
+}
 </script>
 <template>
-<div class="admin-module"><section class="workspace-panel">          <div class="panel-heading"><div><div class="panel-kicker">审核发布</div><h2>候选知识</h2></div><el-button size="small" @click="fetchKnowledgeCandidates">刷新</el-button></div>
-          <div v-if="knowledgeCandidates.length" class="list-stack"><div v-for="item in knowledgeCandidates" :key="item.id" :data-candidate-id="item.id" class="list-card static"><strong>#{{ item.id }} · {{ item.title }}</strong><span>{{ item.subject }} · {{ item.knowledge_point }} · {{ item.status }}</span><a :href="item.source_url" target="_blank" rel="noreferrer">核验原始来源</a><template v-if="item.status === 'DRAFT' || item.status === 'REJECTED'"><el-input v-model="item.title" maxlength="240" /><el-input v-model="item.content" type="textarea" :rows="5" /><el-input v-model="item.license_name" placeholder="许可证标识" maxlength="100" /><el-input v-model="item.license_evidence_url" placeholder="许可依据 URL" /><el-checkbox v-model="item.publication_allowed">已核验全文发布许可</el-checkbox><div><el-button size="small" @click="saveCandidate(item)">保存</el-button><el-button size="small" type="primary" @click="submitCandidate(item)">提交审核</el-button></div></template><div v-if="item.status === 'PENDING_REVIEW'"><el-button size="small" type="success" @click="reviewCandidate(item, 'APPROVE')">批准</el-button><el-button size="small" type="danger" @click="reviewCandidate(item, 'REJECT')">驳回</el-button></div><el-button v-if="item.status === 'APPROVED'" size="small" type="primary" :loading="loading.candidates" @click="publishCandidate(item)">发布并验证检索</el-button><span v-if="item.published_version_id">版本 #{{ item.published_version_id }}</span><el-button v-if="item.status === 'PUBLISHED'" size="small" @click="startCandidateRevision(item)">创建修订草稿</el-button><el-button v-if="item.published_version_id" size="small" @click="compareCandidateDraft(item)">查看草稿差异</el-button><span v-if="item.review_notes">审核意见：{{ item.review_notes }}</span></div></div>
+<div class="admin-module"><section class="workspace-panel">          <div class="panel-heading"><div><div class="panel-kicker">审核发布</div><h2>候选知识</h2></div><div class="action-row"><el-select v-model="candidateOriginFilter" size="small" style="width: 220px" @change="applyCandidateOriginFilter"><el-option value="ALL" label="全部候选知识" /><el-option value="AUTO_APPROVED" label="仅 AI 自动生成（未人工审核）" /></el-select><el-button size="small" @click="fetchKnowledgeCandidates">刷新</el-button></div></div>
+          <div v-if="knowledgeCandidates.length" class="list-stack"><div v-for="item in knowledgeCandidates" :key="item.id" :data-candidate-id="item.id" class="list-card static"><strong>#{{ item.id }} · {{ item.title }}</strong><span>{{ item.subject }} · {{ item.knowledge_point }} · {{ candidateStatusLabel(item) }}</span><a :href="item.source_url" target="_blank" rel="noreferrer">核验原始来源</a><template v-if="item.status === 'DRAFT' || item.status === 'REJECTED'"><el-input v-model="item.title" maxlength="240" /><el-input v-model="item.content" type="textarea" :rows="5" /><el-input v-model="item.license_name" placeholder="许可证标识" maxlength="100" /><el-input v-model="item.license_evidence_url" placeholder="许可依据 URL" /><el-checkbox v-model="item.publication_allowed">已核验全文发布许可</el-checkbox><div><el-button size="small" @click="saveCandidate(item)">保存</el-button><el-button size="small" type="primary" @click="submitCandidate(item)">提交审核</el-button></div></template><div v-if="item.status === 'PENDING_REVIEW'"><el-button size="small" type="success" @click="reviewCandidate(item, 'APPROVE')">批准</el-button><el-button size="small" type="danger" @click="reviewCandidate(item, 'REJECT')">驳回</el-button></div><el-button v-if="item.status === 'APPROVED'" size="small" type="primary" :loading="loading.candidates" @click="publishCandidate(item)">发布并验证检索</el-button><span v-if="item.published_version_id">版本 #{{ item.published_version_id }}</span><el-button v-if="item.status === 'PUBLISHED'" size="small" @click="startCandidateRevision(item)">创建修订草稿</el-button><el-button v-if="item.published_version_id" size="small" @click="compareCandidateDraft(item)">查看草稿差异</el-button><span v-if="item.review_notes">审核意见：{{ item.review_notes }}</span></div></div>
           <div class="panel-heading"><div><div class="panel-kicker">版本管理</div><h2>比较与恢复</h2></div><el-button size="small" @click="loadKnowledgeVersions">刷新</el-button></div>
           <div class="action-row"><el-select v-model="oldVersionId" placeholder="原版本"><el-option v-for="v in knowledgeVersions" :key="v.id" :value="v.id" :label="`${v.title} / ${v.number}`" /></el-select><el-select v-model="newVersionId" placeholder="新版本"><el-option v-for="v in knowledgeVersions" :key="v.id" :value="v.id" :label="`${v.title} / ${v.number}`" /></el-select><el-button @click="compareKnowledgeVersions">比较</el-button></div>
           <details v-if="taskUsage"><summary>调用与预算预留（预留金额不等于实际账单）</summary><pre>{{ taskUsage }}</pre></details><details v-if="versionImpact"><summary>关联资源与练习</summary><pre>{{ versionImpact }}</pre></details><pre v-if="versionComparison">{{ versionComparison }}</pre>

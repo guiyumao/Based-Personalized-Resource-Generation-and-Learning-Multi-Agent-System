@@ -158,7 +158,7 @@ def build_point(task: KnowledgeBuildTask, guard: Callable[[], None]) -> dict[str
         coverage = assess_coverage(db, subject=subject_code, knowledge_point=point_name)
         mode = task.requirements_json["mode"]
         reusable = db.query(KnowledgeCandidate).filter_by(subject=subject_code, knowledge_point=point_name).filter(
-            KnowledgeCandidate.status.in_(("DRAFT", "PENDING_REVIEW", "APPROVED")),
+            KnowledgeCandidate.status.in_(("DRAFT", "PENDING_REVIEW", "APPROVED", "AUTO_APPROVED")),
         ).first()
         if reusable and mode != "REVISE_POINT" and not task.requirements_json.get("focus"):
             return {"status": "PENDING_REVIEW", "point_id": point.id, "candidate_ids": [reusable.id], "reused_candidate": True}

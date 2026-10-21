@@ -130,7 +130,7 @@ def retriever(ctx, chunks, available=True):
     ctx.monkeypatch.setattr(service, "ChromaRetriever", Retriever)
 
 
-def test_unknown_subject_gap_deduplicates_and_generates_personal_draft(coverage, monkeypatch):
+def test_unknown_subject_gap_deduplicates_and_backfills_knowledge_base(coverage, monkeypatch):
     ctx = coverage
     monkeypatch.setattr(
         LearningPathService,
@@ -157,6 +157,13 @@ def test_unknown_subject_gap_deduplicates_and_generates_personal_draft(coverage,
     assert first.json()["mode"] == "personal_draft"
     assert client.post("/paths/preflight", json=body).json()["gap_id"] == first.json()["gap_id"]
     assert ctx.db.query(LearningKnowledgeGap).filter_by(user_id=ctx.user.id, subject=body["subject"], knowledge_point=body["knowledge_point"]).count() == 1
+    # The coverage fixture isolates preflight's corpus root to tmp_path, but
+    # the backfill publishes through the normal pipeline rooted at the
+    # runtime knowledge root; point preflight back at it so the end-to-end
+    # "published then retrievable" check is consistent.
+    from common.knowledge_paths import KNOWLEDGE_ROOT as RUNTIME_ROOT
+
+    monkeypatch.setattr(service, "KNOWLEDGE_ROOT", RUNTIME_ROOT)
     workflow = CoordinatorWorkflow(db=ctx.db)
     workflow.run(
         CoordinationRequest(
@@ -170,16 +177,27 @@ def test_unknown_subject_gap_deduplicates_and_generates_personal_draft(coverage,
             },
         )
     )
-    # The unknown discipline must NOT be created as public knowledge.
-    assert ctx.db.query(SystemSubject).filter_by(name="未知物理学科").count() == 0
-    # A personal-draft path is persisted and is never labelled public.
+    # The unknown discipline is auto-built and published into the knowledge base,
+    # so the next request for it is served directly from public knowledge.
+    subject = ctx.db.query(SystemSubject).filter_by(name="未知物理学科").one()
     path = (ctx.db.query(LearningPath)
             .filter_by(user_id=ctx.user.id, status="active")
             .order_by(LearningPath.id.desc()).first())
     assert path is not None
-    assert path.path_data_json["knowledge_scope"] == "personal_draft"
-    assert path.path_data_json["knowledge_gap_reason"] == "SUBJECT_MISSING"
-    assert path.path_data_json.get("subject_id") is None
+    assert path.path_data_json["knowledge_scope"] == "public"
+    assert path.path_data_json["subject_id"] == subject.id
+    assert "knowledge_gap_reason" not in path.path_data_json
+    # The recorded gap is resolved by the successful backfill.
+    gap = ctx.db.query(LearningKnowledgeGap).filter_by(
+        user_id=ctx.user.id, subject=body["subject"], knowledge_point=body["knowledge_point"]).one()
+    assert gap.status == "RESOLVED"
+    # Clean up the auto-backfilled catalog/publication rows: they use the
+    # generated auto_* subject code, outside the fixture's teardown scope.
+    ctx.db.query(KnowledgeVersion).filter_by(subject=subject.code).delete()
+    ctx.db.query(KnowledgeCandidate).filter_by(subject=subject.code).delete()
+    ctx.db.query(KnowledgePoint).filter_by(subject_id=subject.id).delete()
+    ctx.db.delete(subject)
+    ctx.db.commit()
 
 
 @pytest.mark.parametrize(

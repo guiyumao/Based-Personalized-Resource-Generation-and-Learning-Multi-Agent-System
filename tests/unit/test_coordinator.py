@@ -18,6 +18,12 @@ def verified_knowledge_boundary(monkeypatch):
     monkeypatch.setattr(plan_knowledge, "require_plan_knowledge", lambda *_: {})
     monkeypatch.setattr(plan_knowledge, "assess_plan_knowledge",
                         lambda *_: {"mode": "public", "reason": "READY", "gap_id": None})
+    from services.agent_service.app.services import knowledge_acquisition
+    from common.config import get_settings
+    monkeypatch.setattr(knowledge_acquisition, 'acquire_context', lambda *a, **kw: {
+        'retrieval_context': {'knowledge_base_version': get_settings().knowledge_base_version,
+                              'knowledge_point_id': kw['knowledge_point'], 'retrieved_chunks': []},
+        'coverage': {'state': 'MISSING'}, 'sources': [], 'supplementation': {'status': 'NOT_TESTED'}})
 
 
 def test_coordinator_preserves_learning_path_initialization_error(monkeypatch):
@@ -77,6 +83,16 @@ def test_coordinator_selects_resource_generation_agents(monkeypatch):
     assert len(published_messages) == 2
 
 
+def test_generation_knowledge_agent_reuses_shared_retrieval_without_second_search(monkeypatch):
+    from common.config import get_settings
+    monkeypatch.setattr(coordinator_module, 'KnowledgeBaseService', lambda: pytest.fail('Duplicate retrieval'))
+    result = CoordinatorWorkflow()._run_knowledge_base_agent({'operation': 'search', 'query': 'TCP',
+        'retrieval_context': {'knowledge_base_version': get_settings().knowledge_base_version,
+                              'retrieved_chunks': [{'id': 'tcp-source', 'content': 'TCP definition', 'metadata': {'title': 'TCP source'}}]}})
+    assert result['shared_context_reused'] is True
+    assert result['items'][0]['content'] == 'TCP definition'
+
+
 def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
     """Coordinator should compose profiling, graph, path, resource and exercise outputs."""
 
@@ -86,7 +102,7 @@ def test_coordinator_executes_agents_as_one_workflow(monkeypatch):
         def __init__(self, db):
             self.db = db
 
-        def build_snapshot(self, user_id: int, knowledge_point: str, fallback_profile: dict):
+        def build_snapshot(self, user_id: int, knowledge_point: str, fallback_profile: dict, *, point_id=None, subject="", chapter=""):
             return SimpleNamespace(
                 learner_profile={
                     **fallback_profile,

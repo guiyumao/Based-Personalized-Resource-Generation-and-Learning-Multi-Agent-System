@@ -148,7 +148,13 @@ def test_build_personal_draft_includes_enriched_source(boot_db, monkeypatch):
     assert task.result_json["candidate_id"] == 9
 
 
-def test_generate_path_uses_personal_outline_when_subject_missing(boot_db, monkeypatch):
+def test_generate_path_backfills_knowledge_base_when_subject_missing(boot_db, monkeypatch):
+    """The generated draft is published into the knowledge base immediately.
+
+    After generation the subject/point exist in the catalog with a published,
+    retrievable version, so the NEXT request is served from the knowledge base
+    instead of regenerating a draft.
+    """
     db = boot_db
     captured = {}
 
@@ -169,22 +175,36 @@ def test_generate_path_uses_personal_outline_when_subject_missing(boot_db, monke
     payload = LearningPathService(db).generate_path(
         LearningPathRequest(user_id=1, subject="数据结构", knowledge_point="链表", daily_minutes=60))
 
-    assert payload["knowledge_scope"] == "personal_draft"
-    assert payload["knowledge_draft"]["name"] == "数据结构"
-    assert payload["knowledge_draft_task_id"] is not None
-    assert payload.get("subject_id") is None
-    assert "knowledge_versions" not in payload
-    # The LLM prompt must be grounded on the personal outline chunks.
+    # The draft was promoted: this very plan already runs in public mode.
+    assert payload["knowledge_scope"] == "public"
+    assert payload["subject_id"] is not None
+    assert payload["knowledge_versions"]
+    assert "knowledge_draft" not in payload
+    # The LLM prompt is grounded on the freshly published public chunks.
     chunks = captured["retrieval_context"]["retrieved_chunks"]
-    assert chunks and all(c["metadata"]["scope"] == "personal_draft" for c in chunks)
-    assert captured["retrieval_context"]["personal_outline"]["name"] == "数据结构"
-    # Persisted path keeps the draft trace and is not public.
+    assert chunks and all(c["metadata"].get("scope") != "personal_draft" for c in chunks)
+    # Catalog + publication records exist.
+    from common.models.learning import KnowledgeCandidate, KnowledgePoint, KnowledgeVersion
+
+    subject = db.query(SystemSubject).filter_by(name="数据结构").one()
+    point = db.query(KnowledgePoint).filter_by(subject_id=subject.id, name="链表").one()
+    candidate = db.query(KnowledgeCandidate).filter_by(subject=subject.code, knowledge_point="链表").one()
+    assert candidate.status == "PUBLISHED"
+    assert candidate.license_name == "AI_GENERATED"
+    version = db.get(KnowledgeVersion, candidate.published_version_id)
+    assert version is not None and version.is_active
+    assert point.construction_status == "PUBLISHED"
+    # Persisted path references the public catalog.
     saved = db.query(LearningPath).filter_by(user_id=1, status="active").one()
-    assert saved.path_data_json["knowledge_scope"] == "personal_draft"
-    assert saved.path_data_json["knowledge_draft"]["name"] == "数据结构"
+    assert saved.path_data_json["knowledge_scope"] == "public"
+    assert saved.path_data_json["subject_id"] == subject.id
+    # The NEXT request hits the knowledge base directly without regeneration.
+    from services.agent_service.app.services.plan_knowledge import plan_preflight
+
+    assert plan_preflight(db, 1, "数据结构", "链表")["ready"] is True
 
 
-def test_generate_path_uses_real_curriculum_when_subject_exists(tmp_path, monkeypatch):
+def test_generate_path_backfills_publication_when_subject_exists(tmp_path, monkeypatch):
     from common.models.learning import KnowledgePoint, SystemSubject
     engine = create_engine(
         f"sqlite:///{tmp_path / 'real.sqlite'}", connect_args={"check_same_thread": False}
@@ -213,9 +233,56 @@ def test_generate_path_uses_real_curriculum_when_subject_exists(tmp_path, monkey
         })
         payload = LearningPathService(db).generate_path(
             LearningPathRequest(user_id=1, subject="数据结构", knowledge_point="链表", daily_minutes=60))
-        assert payload["knowledge_scope"] == "personal_draft"
+        # The real curriculum was missing published content; the generated draft
+        # is published into the knowledge base, so the plan runs in public mode.
+        assert payload["knowledge_scope"] == "public"
         assert payload["subject_id"] == 10
         task = payload["stages"][0]["tasks"][0]
         assert task["knowledge_point"] == "链表"  # snapped from the LLM sub-topic
         assert task["knowledge_point_id"] == 101
+        from services.agent_service.app.services.plan_knowledge import plan_preflight
+
+        assert plan_preflight(db, 1, "数据结构", "链表")["ready"] is True
     engine.dispose()
+
+
+def test_promote_draft_rolls_back_when_publication_fails(boot_db, monkeypatch):
+    """A failed backfill must not pollute the public catalog.
+
+    When the retrieval index cannot verify the publication the learner keeps the
+    personal draft and the shared catalog is left exactly as it was.
+    """
+    from services.agent_service.app.services import (
+        knowledge_bootstrap as kb,
+        knowledge_candidates,
+    )
+
+    db = boot_db
+    monkeypatch.setattr(
+        knowledge_candidates,
+        "publish_candidate",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("index unavailable")),
+    )
+    outline = {"name": "数据结构", "chapters": [{"name": "线性表", "points": [
+        {"name": "链表", "objectives": ["掌握链表"]}]}]}
+    result = kb.promote_draft_to_knowledge_base(db, 1, "数据结构", "链表", outline, [])
+    # Honest failure: never a fake success, and the reason is recorded.
+    assert result["ok"] is False
+    assert result["reason"] == "PUBLISH_FAILED"
+    assert "index unavailable" in result["detail"]
+    assert db.query(SystemSubject).filter_by(name="数据结构").count() == 0
+    from common.models.learning import KnowledgeCandidate, KnowledgePoint, KnowledgeVersion
+
+    assert db.query(KnowledgePoint).filter_by(name="链表").count() == 0
+    assert db.query(KnowledgeVersion).count() == 0
+    assert db.query(KnowledgeCandidate).filter_by(knowledge_point="链表").count() == 0
+    # No corpus file may survive for the failed publication.
+    from common.knowledge_paths import KNOWLEDGE_ROOT
+
+    leftovers = [
+        path for path in (KNOWLEDGE_ROOT / "knowledge_base" / "corpus").rglob("candidate_*.md")
+        if "链表" in path.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert not leftovers
+    # The draft itself is still available for personal-mode generation.
+    assert kb.build_personal_draft(db, 1, "数据结构", "链表")["outline"]["name"] == "数据结构"

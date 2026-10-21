@@ -104,6 +104,7 @@ class LearningPathService:
             # subject/point/content/index downgrades to a personal AI draft instead
             # of terminating the learner's request.
             personal_draft = None
+            backfill_reason = None
             try:
                 knowledge = dict(require_plan_knowledge(
                     self.db, request.user_id, request.subject, request.knowledge_point))
@@ -118,6 +119,7 @@ class LearningPathService:
                     _chunks_from_outline,
                     build_personal_draft,
                     build_subject_outline,
+                    promote_draft_to_knowledge_base,
                 )
                 real_outline = (
                     build_subject_outline(self.db, knowledge["subject_id"])
@@ -133,9 +135,37 @@ class LearningPathService:
                 else:
                     personal_draft = build_personal_draft(
                         self.db, request.user_id, request.subject, request.knowledge_point)
-                request = request.model_copy(update={
-                    "retrieval_context": {"retrieved_chunks": personal_draft["chunks"],
-                                          "personal_outline": personal_draft["outline"]}})
+                # Directly backfill the knowledge base with the generated draft:
+                # create the catalog subject/point when missing and publish an
+                # indexed version, so the NEXT request is served from the
+                # knowledge base instead of regenerating.  When promotion
+                # succeeds, upgrade this request to public mode immediately.
+                promoted = promote_draft_to_knowledge_base(
+                    self.db, request.user_id, request.subject, request.knowledge_point,
+                    personal_draft["outline"], personal_draft["chunks"],
+                    task_id=personal_draft.get("task_id"),
+                ) or {}
+                if promoted.get("ok"):
+                    try:
+                        knowledge = dict(require_plan_knowledge(
+                            self.db, request.user_id, request.subject, request.knowledge_point))
+                        knowledge["mode"] = "public"
+                        personal_draft = None
+                    except HTTPException:
+                        # Published but not yet retrievable through preflight:
+                        # still honest, fall back to the draft for THIS request.
+                        pass
+                if knowledge.get("mode") != "public":
+                    # Never pretend public knowledge exists when the backfill
+                    # failed; record why so the learner sees the real state.
+                    backfill_reason = promoted.get("reason") or "BACKFILL_UNAVAILABLE"
+                if knowledge.get("mode") == "public":
+                    request = request.model_copy(update={"knowledge_point": knowledge["knowledge_point"],
+                        "retrieval_context": {"retrieved_chunks": knowledge["usable_chunks"]}})
+                else:
+                    request = request.model_copy(update={
+                        "retrieval_context": {"retrieved_chunks": personal_draft["chunks"],
+                                              "personal_outline": personal_draft["outline"]}})
             else:
                 request = request.model_copy(update={"knowledge_point": knowledge["knowledge_point"],
                     "retrieval_context": {"retrieved_chunks": knowledge["usable_chunks"]}})
@@ -165,6 +195,8 @@ class LearningPathService:
                 # gap reason/id so the plan traces back to the auto-construction gap.
                 payload["knowledge_gap_reason"] = knowledge.get("reason")
                 payload["knowledge_gap_id"] = knowledge.get("gap_id")
+                if backfill_reason:
+                    payload["knowledge_backfill_reason"] = backfill_reason
                 if personal_draft:
                     payload["knowledge_draft"] = personal_draft["outline"]
                     payload["knowledge_draft_task_id"] = personal_draft.get("task_id")

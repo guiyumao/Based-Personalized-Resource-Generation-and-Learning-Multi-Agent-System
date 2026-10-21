@@ -41,7 +41,20 @@ def isolated_environment(run_root: Path, ports: list[int] | None = None) -> dict
         "HOMEDRIVE",
         "HOMEPATH",
     }
-    env = {key: value for key, value in os.environ.items() if key.upper() in essentials}
+    # Host sandboxes and CI runners sometimes need a few of their own variables
+    # to stay visible (for example the shared-memory handle their process
+    # supervisor uses).  Nothing is passed by default; opt in explicitly so the
+    # allowlist stays the rule and no host secret leaks in by accident.
+    passthrough = {
+        name.strip().upper()
+        for name in os.environ.get("NO_COST_PASSTHROUGH_ENV", "").split(",")
+        if name.strip()
+    }
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in essentials or key.upper() in passthrough
+    }
     env.update(
         NO_COST_TEST="1",
         APP_LOAD_DOTENV="false",

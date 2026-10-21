@@ -27,6 +27,8 @@ import {
   type ResourceRecommendationItem,
   type StructuredResourcePayload,
 } from '../../api'
+import CoursewareReader from '../../components/CoursewareReader.vue'
+import MindmapEditor from '../../components/MindmapEditor.vue'
 import LearningAtmosphere from '../../components/LearningAtmosphere.vue'
 import { useAuthStore } from '../../stores/auth'
 import { renderLearningMarkdown } from '../../utils/renderLearningMarkdown'
@@ -1019,7 +1021,7 @@ async function deleteAllImportedResources() {
       </div>
 
       <p class="core-subject-note">
-        以上为数据库中真实收录的学科；未收录的学科在你创建学习计划时会自动构建个人学习知识草稿，不会标记为公共正式知识。
+        以上为数据库中真实收录的学科；未收录的学科在你创建学习计划时会自动构建学习知识并直接补充到知识库，下次即可直接检索使用。
       </p>
 
       <div class="filter-bar">
@@ -1333,6 +1335,7 @@ async function deleteAllImportedResources() {
 
             <!-- mind_map -->
             <div v-else-if="selectedResource.type === 'mind_map'" class="structured-body" data-testid="structured-mind-map">
+              <MindmapEditor v-if="selectedResource.owner_user_id === authStore.user?.userId" :key="selectedResource.id" :resource-id="selectedResource.id" @saved="loadResourceDetail(selectedResource!.id)" />
               <ol v-if="mindMapOutline.length" class="mind-map-outline">
                 <li
                   v-for="node in mindMapOutline"
@@ -1407,7 +1410,7 @@ async function deleteAllImportedResources() {
         <section v-else-if="selectedResource.source_type === 'generated' && ['courseware', 'notes', 'exam'].includes(selectedResource.type)" class="generated-resource-content" data-testid="generated-resource-content">
           <p v-if="detailLoading">正在加载资源正文…</p>
           <p v-else-if="detailError" role="alert">{{ detailError }}</p>
-          <div v-else-if="selectedResource.content" v-html="renderLearningMarkdown(selectedResource.content)"></div>
+          <CoursewareReader v-else-if="selectedResource.type === 'courseware' && selectedResource.content" :content="selectedResource.content" :resource-id="selectedResource.id" :version="selectedResource.version || undefined" :structured="selectedResource.teaching_json || undefined" /><div v-else-if="selectedResource.content" v-html="renderLearningMarkdown(selectedResource.content)"></div>
           <p v-else>该资源暂无可显示的正文。</p>
         </section>
 
