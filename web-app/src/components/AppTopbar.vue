@@ -68,6 +68,7 @@ async function handleLogout() {
     </div>
 
     <div class="topbar-actions">
+      <slot name="assistant" />
       <div class="global-search" :class="{ open: searchOpen }">
         <el-icon><Search /></el-icon>
         <input
@@ -107,7 +108,7 @@ async function handleLogout() {
           <el-icon class="user-arrow"><ArrowDown /></el-icon>
         </button>
         <div v-if="showUserMenu" class="user-popover" @mouseleave="showUserMenu = false">
-          <button v-if="authStore.user?.role === 'student'" type="button" @click="router.push('/profile-setup'); showUserMenu = false">
+          <button v-if="authStore.user?.role === 'student'" type="button" @click="router.push('/student/profile'); showUserMenu = false">
             <el-icon><MagicStick /></el-icon><span>学习画像</span>
           </button>
           <button type="button" @click="router.push('/'); showUserMenu = false">
@@ -123,7 +124,7 @@ async function handleLogout() {
 </template>
 
 <style scoped>
-.app-topbar { min-height:76px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:12px 26px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--panel-strong) 90%,transparent); backdrop-filter:blur(16px); position:relative; z-index:20; }
+.app-topbar { min-height:76px; display:flex; align-items:center; justify-content:space-between; gap:20px; padding:12px 26px; border-bottom:1px solid var(--line); background:var(--panel-strong); position:relative; z-index:20; }
 .topbar-heading,.topbar-actions,.breadcrumb-line,.user-button { display:flex; align-items:center; }
 .topbar-heading { min-width:0; gap:12px; }
 .breadcrumb-line { gap:7px; font-size:15px; }

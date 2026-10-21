@@ -7,7 +7,8 @@ from common.cors import get_cors_allow_origins
 from common.db.bootstrap import ensure_database_schema, ensure_default_admin
 from common.db.session import SessionLocal
 from common.logging.setup import configure_logging
-from services.user_service.app.api.routes import study_tools, users
+from common.performance import PerformanceTraceMiddleware
+from services.user_service.app.api.routes import learning_portrait, study_tools, users
 
 configure_logging("user-service")
 
@@ -16,6 +17,7 @@ app = FastAPI(
     version="0.1.0",
     description="User management service for the personalized learning platform.",
 )
+app.add_middleware(PerformanceTraceMiddleware, service_name="user-service")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_cors_allow_origins(),
@@ -25,6 +27,7 @@ app.add_middleware(
 )
 app.include_router(users.router, prefix="/users", tags=["users"])
 app.include_router(study_tools.router, prefix="/study", tags=["study-tools"])
+app.include_router(learning_portrait.router, tags=["learning-portrait"])
 
 
 @app.on_event("startup")

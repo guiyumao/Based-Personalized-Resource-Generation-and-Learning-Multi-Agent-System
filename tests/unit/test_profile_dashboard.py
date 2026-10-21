@@ -4,6 +4,8 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
+from teaching_fixtures import registered_catalog  # noqa: F401
+
 from common.models.learning import (
     AnswerRecord,
     Exercise,
@@ -36,8 +38,8 @@ def test_transcript_summary_does_not_count_as_zero_mastery() -> None:
         habits={},
     )
     snapshot = ReportService(publisher=FakePublisher())._build_profile_snapshot(1, [], profile)
-    assert snapshot["mastery_overview"] == 80
-    assert snapshot["heatmap"] == [{"knowledge_point": "Python loops", "mastery": 80.0}]
+    assert snapshot["mastery_overview"] is None
+    assert snapshot["heatmap"] == []
 
 
 def test_profile_snapshot_contains_radar_and_heatmap(db_session, test_user) -> None:
@@ -60,9 +62,9 @@ def test_profile_snapshot_contains_radar_and_heatmap(db_session, test_user) -> N
 
         snapshot = await service.generate_profile_snapshot(test_user.id)
 
-        assert snapshot["mastery_overview"] >= 0
+        assert snapshot["mastery_overview"] is None
         assert snapshot["radar_metrics"]
-        assert snapshot["heatmap"]
+        assert snapshot["heatmap"] == []
 
     asyncio.run(run())
 

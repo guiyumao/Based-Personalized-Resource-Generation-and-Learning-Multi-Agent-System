@@ -15,11 +15,33 @@ from fastapi import HTTPException
 from common.knowledge_paths import KNOWLEDGE_ROOT, PROJECT_ROOT
 from common.learning_context import validate_context
 from common.models.media import ResourceArtifact
-from services.agent_service.app.services.assistant_execution import ensure_write_allowed
+from services.agent_service.app.services.assistant_execution import ensure_execution_active, ensure_write_allowed
 
 FORMATS = {"pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
-           "animation": ("image/svg+xml", "svg"), "audio": ("audio/wav", "wav")}
+           "animation": ("image/svg+xml", "svg"), "audio": ("audio/wav", "wav"),
+           "video": ("video/webm", "webm")}
 ARTIFACT_ROOT = KNOWLEDGE_ROOT / "resource_artifacts"
+
+
+def resource_video_path(resource):
+    from common.resource_version import resource_version
+    return ARTIFACT_ROOT / str(resource.generated_for_user_id or 'public') / f"resource-{resource.id}-{resource_version(resource)}.webm"
+
+
+def ensure_resource_video(resource):
+    """Shared immutable media for every generation entry, independent of a plan."""
+    if not resource or resource.type != 'courseware' or resource.generation_status != 'generated':
+        raise ValueError('Only completed courseware can produce video')
+    target = resource_video_path(resource)
+    if not target.is_file():
+        payload = render_video(resource.title, resource.content)
+        ensure_execution_active()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(target.name + '.' + uuid4().hex + '.tmp')
+        temporary.write_bytes(payload)
+        os.replace(temporary, target)
+    return {'status': 'ready', 'url': f'/resources/{resource.id}/video',
+            'kind': 'caption_video', 'silent': True, 'size': target.stat().st_size}
 
 
 def render_pptx(title, content):
@@ -78,8 +100,87 @@ def render_audio(content):
         return output.read_bytes()
 
 
-def produce_artifact(db, task):
-    context_id, kind = task.request_json.get("learning_context_id"), task.request_json.get("artifact_kind")
+def render_video(title, content):
+    """A real local caption video from source paragraphs; no model or remote media."""
+    import cv2
+    import numpy as np
+    from PIL import Image, ImageDraw, ImageFont
+
+    # CJK fonts must exist: fail explicitly instead of exporting unreadable boxes.
+    fonts = [Path(os.environ.get("WINDIR", "C:/Windows"))/"Fonts/msyh.ttc",
+             Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")]
+    font_path = next((path for path in fonts if path.is_file()), None)
+    if not font_path:
+        raise ValueError("视频生成需要可用的中文字体")
+    font = ImageFont.truetype(str(font_path), 27)
+    heading_font = ImageFont.truetype(str(font_path), 32)
+    clean = re.sub(r"```.*?```", "", content, flags=re.S)
+    lines = [re.sub(r"^[#>*\-\s]+", "", line).strip() for line in clean.splitlines() if line.strip()]
+    pages, page = [], []
+    for line in lines:
+        for offset in range(0, len(line), 30):
+            page.append(line[offset:offset+30])
+            if len(page) == 9:
+                pages.append(page); page = []
+    if page:
+        pages.append(page)
+    if not pages:
+        raise ValueError("视频课件正文为空")
+    with tempfile.TemporaryDirectory(prefix="learning-video-") as directory:
+        target = str(Path(directory)/"lesson.webm")
+        writer = cv2.VideoWriter(target, cv2.VideoWriter_fourcc(*"VP80"), 1, (960, 600))
+        if not writer.isOpened():
+            raise ValueError("本机 VP8 视频编码器不可用")
+        extra_frames = 0
+        try:
+            if "冒泡排序" in str(title) + content[:300]:
+                values = [4, 2, 7, 1]
+                for end in range(len(values)-1, 0, -1):
+                    for left in range(end):
+                        ensure_execution_active()
+                        swap = values[left] > values[left+1]
+                        for after in (False, True):
+                            if after and swap:
+                                values[left], values[left+1] = values[left+1], values[left]
+                            frame = Image.new("RGB", (960, 600), "#f5f8ff")
+                            draw = ImageDraw.Draw(frame)
+                            draw.text((42, 26), "冒泡排序 · 升序示例 [4, 2, 7, 1]", font=heading_font, fill="#152342")
+                            label = ("交换完成" if swap else "保持顺序") if after else f"比较下标 {left} 和 {left+1} 的相邻元素"
+                            draw.text((42, 100), label, font=font, fill="#26344d")
+                            for index, value in enumerate(values):
+                                x = 130+index*180
+                                draw.rectangle((x, 470-value*36, x+110, 470), fill="#f0ac40" if index in (left,left+1) else "#5c80d8")
+                                draw.text((x+35, 480), str(value), font=heading_font, fill="#152342")
+                            draw.text((42, 550), "大于右邻时交换，每轮将最大值移至未排序区末尾 · 无声", font=font, fill="#52688a")
+                            encoded = cv2.cvtColor(np.asarray(frame), cv2.COLOR_RGB2BGR)
+                            for _ in range(2):
+                                writer.write(encoded); extra_frames += 1
+            for number, paragraphs in enumerate(pages):
+                ensure_execution_active()
+                frame = Image.new("RGB", (960, 600), "#f5f8ff")
+                draw = ImageDraw.Draw(frame)
+                draw.text((42, 26), str(title or "学习课件")[:26], font=heading_font, fill="#152342")
+                for index, line in enumerate(paragraphs):
+                    draw.text((42, 100+index*43), line, font=font, fill="#26344d")
+                draw.text((42, 550), f"字幕课件 · 无声 · {number+1}/{len(pages)}", font=font, fill="#52688a")
+                encoded = cv2.cvtColor(np.asarray(frame), cv2.COLOR_RGB2BGR)
+                for _ in range(12):
+                    writer.write(encoded)
+        finally:
+            writer.release()
+        capture = cv2.VideoCapture(target)
+        try:
+            ok, _ = capture.read()
+            if not ok or int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) < len(pages)*12+extra_frames:
+                raise ValueError("视频文件无法解码或帧数不完整")
+        finally:
+            capture.release()
+        return Path(target).read_bytes()
+
+
+def produce_artifact(db, task, *, context_id=None, kind=None):
+    context_id = context_id or task.request_json.get("learning_context_id")
+    kind = kind or task.request_json.get("artifact_kind")
     if kind not in FORMATS:
         raise ValueError("Unsupported artifact type")
     context, _, _, _, _, resource = validate_context(db, task.user_id, context_id)
@@ -91,7 +192,8 @@ def produce_artifact(db, task):
         return result_card(existing)
     title, content = resource.title, resource.content
     db.rollback()  # No long SQL transaction during local rendering.
-    payload = render_pptx(title, content) if kind == "pptx" else render_animation(title, content) if kind == "animation" else render_audio(content)
+    renderer = {"pptx": render_pptx, "animation": render_animation, "audio": lambda title, content: render_audio(content), "video": render_video}[kind]
+    payload = renderer(title, content)
     ensure_write_allowed(db)
     context, _, _, _, _, resource = validate_context(db, task.user_id, context_id)
     existing = db.query(ResourceArtifact).filter_by(context_id=context_id, kind=kind).first()

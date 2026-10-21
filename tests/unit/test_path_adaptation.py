@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from common.db.base import Base
 from common.db.session import get_db
 from common.dependencies import get_current_user
-from common.models.learning import AnswerRecord, Exercise, KnowledgePoint, LearningPath, User
+from common.models.learning import AnswerRecord, Exercise, KnowledgePoint, LearningPath, User, SystemSubject
 from common.schemas.agent import LearningPathAdjustRequest
 from services.agent_service.app.main import app
 from services.agent_service.app.services.learning_path import (
@@ -28,7 +28,8 @@ def adaptation_db():
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine)() as db:
         db.add_all([User(id=1, username="learner", password_hash="unused"), User(id=2, username="other", password_hash="unused")])
-        point = KnowledgePoint(name="TCP 三次握手")
+        db.add(SystemSubject(id=1, name="计算机网络", code="networks", description="confirmed catalog"))
+        point = KnowledgePoint(name="TCP 三次握手", subject_id=1)
         db.add(point)
         db.flush()
         exercise = Exercise(knowledge_point_id=point.id, type="choice", content="SYN?", answer="A")
@@ -45,9 +46,18 @@ def adaptation_db():
     engine.dispose()
 
 
-def add_answers(db, exercise_id, count, *, user_id=1, correct=False, when=None):
-    for _ in range(count):
-        db.add(AnswerRecord(user_id=user_id, exercise_id=exercise_id, user_answer="B", is_correct=correct,
+def add_answers(db, exercise_id, count, *, user_id=1, correct=False, when=None, repeat=False):
+    for index in range(count):
+        if not repeat:
+            source = db.get(Exercise, exercise_id)
+            question = Exercise(knowledge_point_id=source.knowledge_point_id, type=source.type,
+                content=f"TCP握手判定问题 {db.query(Exercise).count()+1}", answer=source.answer)
+            db.add(question)
+            db.flush()
+            question_id = question.id
+        else:
+            question_id = exercise_id
+        db.add(AnswerRecord(user_id=user_id, exercise_id=question_id, user_answer="B", is_correct=correct,
                             created_at=when or datetime.now(UTC).replace(tzinfo=None)))
     db.commit()
 
@@ -135,3 +145,9 @@ def test_adaptation_routes_auth_isolation_and_validation(adaptation_db):
         assert result.json()["path"]["stages"][-1]["tasks"][0]["task_type"] == "exercise"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_repeated_single_question_cannot_trigger_remedial_plan(adaptation_db):
+    db, exercise_id, _ = adaptation_db
+    add_answers(db, exercise_id, 12, repeat=True)
+    assert PathAdaptationService(db).preview(1)["status"] == "no_change"

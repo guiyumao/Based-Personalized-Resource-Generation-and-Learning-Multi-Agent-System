@@ -41,6 +41,7 @@ const MOTION_STORAGE_KEY = 'learning-assistant-motion'
 
 const authStore = useAuthStore()
 const router = useRouter()
+const dashboardDocked = computed(() => router.currentRoute.value.name === 'admin')
 const isOpen = ref(false)
 const mode = ref<'chat' | 'workspace'>('chat')
 const historyOpen = ref(false)
@@ -50,7 +51,7 @@ const sessions = ref<ChatSessionSummary[]>([])
 const selectedAction = ref<AssistantAction | null>(null)
 const teachingMode = ref('standard')
 const useLearningContext = ref(false)
-const allowWebKnowledge = ref(false)
+const allowWebKnowledge = ref(true)
 const courseKey = ref('')
 const memories = ref<AssistantMemory[]>([])
 const storedAttachments = ref<AssistantAttachment[]>([])
@@ -806,7 +807,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="assistant-layer">
+  <div class="assistant-layer" :class="{'dashboard-docked-layer':dashboardDocked}">
+    <Teleport to="body">
     <transition name="pet-panel">
       <section
         v-if="positionReady && isOpen"
@@ -904,16 +906,18 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </transition>
+    </Teleport>
 
+    <Teleport to="body" :disabled="dashboardDocked">
     <button
       v-if="positionReady && !isOpen"
       class="assistant-pet-button"
-      :class="{ dragging }"
-      :style="petStyle"
+      :class="{ dragging, 'dashboard-docked': dashboardDocked }"
+      :style="dashboardDocked ? {} : petStyle"
       type="button"
       aria-label="打开可拖动的 AI 学习助手"
       title="点击打开，按住可拖动"
-      @pointerdown="startDrag($event, 'pet')"
+      @pointerdown="!dashboardDocked && startDrag($event, 'pet')"
       @click="handlePetClick"
     >
       <XiaoZhiAvatar class="pet-character" :state="assistantState" :motion="motionEnabled" />
@@ -921,14 +925,20 @@ onBeforeUnmount(() => {
       <span class="pet-name">小智</span>
       <span class="pet-drag-copy">拖动我</span>
     </button>
+    </Teleport>
   </div>
 </template>
 
 <style scoped>
 .assistant-layer { position:fixed; inset:0; z-index:80; pointer-events:none; font-family:inherit; }
+.assistant-layer.dashboard-docked-layer{position:static;inset:auto;z-index:auto;pointer-events:auto}
 .assistant-pet-button,.assistant-pet-panel { position:fixed; pointer-events:auto; }
+.assistant-pet-button:not(.dashboard-docked),.assistant-pet-panel{z-index:80}
 .assistant-pet-button { width:92px; height:104px; padding:0; border:0; color:var(--text); background:transparent; cursor:grab; touch-action:none; user-select:none; filter:drop-shadow(0 12px 14px rgba(30,41,99,.2)); }
 .assistant-pet-button.dragging { cursor:grabbing; }
+.assistant-pet-button.dashboard-docked{position:relative;display:flex;align-items:center;width:112px;height:34px;border:1px solid var(--line);border-radius:10px;background:var(--panel);filter:none;cursor:pointer;color:var(--accent-deep)}
+.dashboard-docked .pet-character{position:static;width:30px;height:32px;margin-left:7px}.dashboard-docked .pet-name{position:static;transform:none;border:0;background:none;margin-left:5px;font-size:11px}.dashboard-docked .pet-drag-copy{display:none}
+@media(max-width:750px){.assistant-pet-button.dashboard-docked{width:36px}.dashboard-docked .pet-name{display:none}.dashboard-docked .pet-character{margin-left:2px}}
 .pet-character { position:absolute; top:-2px; left:3px; width:86px; height:94px; }
 .pet-unread { position:absolute; top:0; right:1px; display:grid; place-items:center; min-width:19px; height:19px; padding:0 4px; border:2px solid var(--panel); border-radius:99px; color:#fff; background:var(--red); font-size:10px; font-weight:800; }
 .assistant-pet-button.dragging .pet-character { animation:none; }

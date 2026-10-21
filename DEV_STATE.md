@@ -1,5 +1,64 @@
 # 当前开发状态
 
+## 管理员数据看板完整重构（2026-10-21）
+
+`/admin` 接入 OperationsDashboard（dashboard/独立组件）：四项KPI、请求模型/真实工具趋势及环图切换、Worker状态/全部注册、预算与Token、任务状态及最近6条。UTC自然日7/30/90/自定义、日/周聚合、图例、点选筛选、任务/调用抽屉、PNG/同筛选CSV、独立失败/取消请求/重试齐备；原统计/快捷入口/完整运营面板按需折叠保留。工具依provider=deepseek-tools，不能按模型名猜测；预算未配不算百分比、缓存不重复、Token已知小计、成功分母仅成功+失败。助手看板入口预留在顶栏，展开层和其他页悬浮按钮Teleport到body，保留拖动/会话功能。
+
+后端新增 /admin/dashboard、/admin/operations/tasks、/admin/usage/export，增量扩展usage日期/搜索/类别、预算及Worker，复用admin鉴权。18项隔离回归通过，Ruff通过；现有5175→8002真实管理员浏览器通过（5种尺寸、原生图例/点/任务柱、日期、周聚合、工具明细、PNG/CSV、503部分降级/重试、助手及原任务页），pageErrors为空。最终证据 `artifacts/admin-dashboard-20261021/activation/delivery-live-browser-v3/`，本轮台账104→104、Provider请求0。已备份实际runtime.sqlite且无排队/运行任务，仅重载8002 PID10616（lifespan off），Worker20348及其他服务保留；无迁移/自动提交。
+
+详见 `docs/admin-dashboard-20261021.md`（完整文件、接口、口径和验证清单）。历史预算配置/账单金额/未接入历史/Worker历史在线率仍未知，未伪造；未进行全站回归、大规模压测或长时间内存分析。P2个性化布局/自定义报表未实施，其他项目融合事项仍按原状态。保留同期全部改动。
+
+## 公共生成链路与多入口验收（2026-10-21）
+
+用户澄清修复全局生成机制。公共资源/练习服务统一学科上下文和补充资料获取；Coordinator共享检索避免重复；最近30天本人候选复用，保留审核发布边界和入库编号；索引失败仍可读真实本地语料。课件按用户/目标/学情/资料/模板及性能篇幅指纹跨请求复用，明确重生成仍新建；篇幅预算实际生效，notes/exam不再强套旧课件栏目。所有课件生成共享本地无声WebM与Reader播放器，历史课件可单独制作；工作区资源挂到精确任务下，自动打开结果、保留同任务练习、公式渲染和分章预览。
+
+140项组合回归、24项定向（重叠）及前端build通过；运行库副本三入口真实视频播放/移动布局通过，任务完成提示采用受控回调。实际5175/原API/Worker本地视频及资源读取验证见artifacts/generation-global-20261021/current-browser-v3，模型台账71→71。8002/8007/Worker按无活动任务检查、SQLite备份后重载，PID49204/57892/20348，未迁移。新模型内容质量、首次生成耗时、真实Search/Fetch补充效果尚未验收；不能宣称全局质量已通过。详见docs/generation-global-repair-20261021.md。保留全部既有及同期未提交改动。
+
+
+## 调用台账可视化（2026-10-21）
+
+按用户参考图将 UsageWorkerPanel 改为四项指标卡、每日调用/Token 柱状图、功能/请求模型环形图和预算进度；UsageChart 为本地轻量图表，无新增依赖。保留预算设置、环境/时间/状态筛选、分页、所有分组明细及 Worker 表；未知 Token 标记已知小计。复用原接口，未修改共享库/后端/模型调用。近 N 天沿用接口滚动时段，按 UTC 显示覆盖的 N+1 个自然日。
+
+前端 build 通过（4.08秒），最终 TypeScript 检查通过；5175 页面使用拦截 API 测试数据完成四图表、未知用量、分页、环境切换复位、390px无页面溢出、空态和503清空旧指标浏览器验收，pageErrors空。截图与结果 artifacts/usage-dashboard-20261021/；本轮未进行真实登录接口端到端复验，原5175 Vite可热加载。保留其他会话未提交改动。
+
+
+## 课件统一取消流程图（2026-10-21）
+
+用户要求不只处理单份课件，后端生成规则同时修改：resource_gen.md和exercise_gen.md禁止Mermaid flowchart/graph，以文字步骤、状态/过程表替代；courseware_quality章节规划改为“步骤与状态对照”，质量门禁拒绝流程图。阅读器对历史正文仅隐藏流程图及其专属标题，保留数据库原文和其他讲解。8项Prompt/分章回归、前端构建通过；实际5175资源222→225浏览器验证无流程图、旧学情隐藏、目录定位保留，付费调用0。8002/8007及Worker重载，无迁移。证据artifacts/teaching-no-flowchart-20261021/。新规则未新增真实模型生成验收（此前授权已用尽）。
+
+
+## 独立课件页实际入口追修（2026-10-21）
+
+用户截图证实旧正文/目录失效：CoursewareView旧锚点不再存在，sessionStorage一直展示资源222。现目录直接控制Reader实际章节；刷新回读服务端、停用旧学情段落，并按本人/正式知识点ID/学科提示打开已存在九章新版225（12699字符），不会改写历史。重生成使用当前主题且不复用完成任务pending键。
+
+resource_gen/exercise_gen内部模板完整重写，实际调用链重读模板；取消无证据强制风格个性化，加入逐步推演/边界/验算/题型解析合同，课件指纹存Prompt hash。核心章输出上限3600、其他2400，服从显式更低限额。44项回归、最后8项Prompt/分章测试（重叠）、构建通过；运行库副本及实际5175资源222→225桌面/移动点击目录滚动验收通过，pageErrors空。相关8002/3/7及Worker重载，无迁移。本轮0模型调用，当前共享台账29前后不变、作答67。
+
+详见docs/teaching-followup-20261021.md与artifacts/teaching-followup-20261021/current-browser/。225早于本轮Prompt追修生成；新模板仅验证实际消息与业务回归，未新增真实模型质量验收（上轮授权次数已耗尽）。保留其他会话改动，未自动提交。
+
+
+## 笔记历史/分类与闪卡证据已在当前平台激活（2026-10-21）
+
+新增0033（三张独立表，无旧列改写）、common/study_evidence.py和StudyToolsView：真实来源学科/资源/知识点筛选、摘录/版本、追加历史及旧标签页CAS保护；笔记→闪卡来源绑定、到期复习回执去重、卡片/事件/画像自评/有效任务证据同事务。自评独立于习题掌握度，不自动完成任务；来源已变更只继续私人复习，不写新计划。用户服务增加请求追踪以支持实名调用预算。
+
+实际运行库study_notes缺0028的三个可空来源列，已先备份/副本演练再补齐及建3表，仅重载8001（最终PID45480）；保留同期学情修复，未全库upgrade/stamp或自动提交。当前5175 `/student/study-tools` 两组浏览器业务通过/pageErrors空，使用独立私有验收账号，不给真实用户灌入自评分数；本轮model_calls前后仍18、付费0。global-unit-final：681 passed/2526 warnings；随后追踪追加7项定向通过；0032↔0033与上下文至当前head演练均保留旧数据，前端build退出0。证据 artifacts/aura-study-20261021；完整范围/文件/失败/恢复见 docs/aura-full-integration/14-note-card-current-runtime.md。P1-07完整AI图文编排、视频URL及全18项/A–E仍待继续，勿宣称全功能融合完成。以下保留其他会话及历史状态。
+
+## 学情归属修复与分章课件交付（2026-10-21）
+
+同备份复现：用户6冒泡排序旧实现5次/60→当前0条有效证据/null，TCP作答保留。point-evidence-v4统一归属/权重/去重/低样本状态；93画像重算、120历史报告失效、67原始作答保留，37个悬空归属题目待可靠归类。runtime.sqlite已备份定向修复，未执行共享库Alembic升级/stamp。
+
+teaching-v2九章生成/检查/断点、章节修订新版本、真实Exercise和统一阅读器已落地。137项回归及最后30项通过（有重叠不累加）；最终构建及四类真实正文浏览器验收通过，含乱序切换、跨用户拒绝、任务刷新恢复。重载8001/2/3/4/7及Worker，最终七服务健康、路由可见、Worker68224心跳新鲜，共享model_calls仍18。保留其他会话修改。
+
+本轮真实模型预算已耗尽：40次Chat、实际输出27124 Token、Search/Fetch=0，不再付费调用。四类正文超1万字符；结构通过不等于学科审核，空来源标记模型未核验。两处错误定向修订，其他内容仍需复核。详见 docs/teaching-evidence-courseware-repair-20261021.md，证据 artifacts/teaching-evidence-20261020/。下一步仅在新任务下处理历史归类或专家审核。
+
+
+## 当前平台直接可用修复（2026-10-21）
+
+用户要求以实际页面可用为准。本轮核查发现8002已加载新路由，但 `/admin/operations` 仍500；Worker82280为旧进程，无注册心跳；Token面板被任务概览的v-if隐藏；旧计划新建同名知识点导致本人旧课件409。实际运行库是 `artifacts/local-start-20261019/runtime.sqlite`，不是根目录learning_system.db，不能用后者缺表清单诊断当前服务。
+
+已备份实际运行库、重载8002和Worker（最终API PID83068、Worker79584；保留原端口/数据库/凭证环境，不重启其他服务），运营200、18条LIVE台账可读、Worker ONLINE。Token/心跳面板独立显示，菜单改为“AI用量与任务监控”。新增管理员 `/admin/model-budget` GET/PUT，以SystemConfig持久保存平台/每用户日调用限额；API/Worker下次调用自动读取，环境更严上限不可放松，当前原有未设限策略保留。新增资源中心本人导图编辑/历史API，不再要求先有学习计划。修正旧资源私有知识点复用，不弱化资源归属。
+
+当前5175真实浏览器已通过：预算页面保存、LIVE台账/ONLINE心跳、真实旧课件→独立Worker→PPTX下载/SVG帧变化/WAV播放、执行尝试、资源中心导图示例编辑/保存/历史/读回；pageErrors空，模型调用前后均18，本轮付费0。导图仅新增标明“导图编辑验收示例”的私有本地模板，不改用户原导图。证据 `artifacts/aura-availability-20261021/current-browser-final/result.json`；定向回归32项，随后新增资源中心导图权限/旧版本用例5项通过（有重叠不累加）；最终build退出0、3.72秒，修复同期Mermaid未使用变量导致构建失败。Ruff定向通过。当前入口/备份及限制见 `docs/aura-full-integration/13-current-runtime-availability.md`。历史“共享服务未激活”的结论已过时，以下为历史。
+
 ## 最新 学习工作区通用可打开 + 管理端运营数据修复 + 知识自动融合决策层（2026-10-20 夜）
 
 - **学生工作区 409 修复（截图 2）**：`common/learning_context.create_context` 不再因「计划学科不在公共目录」直接 409；任何本人计划（旧计划 `knowledge_scope=None`、个人草稿、LLM 子知识点）都回退到 owner-scoped `personal KnowledgePoint`（`subject_id=None`，`PERSONAL_DRAFT`），工作区可直接打开，公共目录零污染。测试：`test_legacy_plan_with_unknown_subject_can_open_workspace_context`。
@@ -137,3 +196,10 @@ INC-01 后需核对 DeepSeek 账单并决定是否轮换测试密钥；后续真
 文档核心链已TESTED_ISOLATED：上传PDF/解析/分类/知识点关联/审核/独立Worker发布/真实Chroma学生检索；修订替换、并发同键、回滚、原件字节与角色权限、记录/上传归档通过。新增knowledge_publication读取门禁与对账，PUBLISH_CANDIDATE/RECONCILE_PUBLICATIONS复用原Worker；硬退出后孤立片段不可读、attempt2恢复仅1版本；撤回立即拦截缓存，后台清理。课件真实知识上下文及版本引用持久化通过，生成仅LOCAL_STUB_ONLY。关联RAG单篇详情、重用上下文和知识覆盖扫描也过滤未生效candidate。SQL flush/提交及执行权丢失补偿有回归。
 最终相关106 passed/396 warnings（resume-final-unit-v2），完整Vue build退出0；documents-browser-v9两个result均true；migration-resume-v2空库至当前head0029，0009→0008保留0002列、0027→0026往返/账号保留通过。定向新文件Ruff及关联模块F级检查通过。全部证据artifacts/aura-full-integration-20261020；汇总docs/aura-full-integration/10-knowledge-publication-acceptance.md，04/07/08/09与根矩阵已追加更新。
 保留同期0028/0029及图谱/学习上下文改动；图谱当前安全/性能测试纳入本次回归，真实Neo4j与历史来源清理未验收。共享8001–8007/5175未重启/迁移；隔离18207/18208/15188已关闭，无付费调用。总体PARTIAL：下一步继续AI补充资源编辑/优化/多模态、统一真实Token账本/后端预算/全Worker监控及学生余项；preflight实时Chroma匹配、大文件异步解析/OCR/原生DOCX预览/已发布资料批量归档/永久安全删除仍未完成。先读10和现有07，不重新全仓扫描；激活共享库前需基线/备份及同期迁移审计。
+
+
+## 学习分析与学习画像可用性验收（2026-10-21）
+
+已新增并激活 /student/analytics 与 /student/profile，侧栏及顶栏入口已接通。分析读取实际活动、作答、笔记、闪卡与对话，含7/30/90天热图/趋势/复习助手；画像支持四轴偏好、六项描述编辑保存、雷达和原行为指标证据。原报告/深度分析保留，未知不填虚假分数。复用UserProfile JSON，无迁移；笔记统计按id计数兼容当前运行库。
+
+相关24 passed/90 warnings，最终前端build通过；独立Chromium保存刷新/取消/统计/越权/移动端通过。当前5175真实页面、8001/8004接口、菜单、编辑取消及刷新读回通过，pageErrors为空；共享数据仅只读验收。证据 artifacts/learner-insights-20261021/SUMMARY.md 及 activation/live-browser-result.json。当前库备份 activation/before-activation.sqlite，无付费调用。用户/评价服务已加载新路由，同期其他任务刷新进程后以实际端口及 verification-processes.json 为准；勿重用历史PID。全局融合仍PARTIAL，下一步沿既有P1范围继续，勿把两页验收扩称全站完成。

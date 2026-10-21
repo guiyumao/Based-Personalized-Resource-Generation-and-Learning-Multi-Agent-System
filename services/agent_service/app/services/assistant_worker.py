@@ -42,6 +42,7 @@ def run_pending_tasks(batch_size: int = 1) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run persisted XiaoZhi learning tasks")
+    parser.add_argument("--skip-schema-bootstrap", action="store_true", help="Use an already audited runtime without creating unrelated schema")
     parser.add_argument("--once", action="store_true", help="Drain one batch, then exit")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--poll-interval", type=float, default=2.0)
@@ -51,7 +52,8 @@ def main() -> None:
     if assistant_tasks.task_execution_mode() != "worker":
         parser.error("Set ASSISTANT_TASK_EXECUTION_MODE=worker in the API and Worker environments")
     configure_logging("assistant-worker")
-    ensure_database_schema()
+    if not args.skip_schema_bootstrap:
+        ensure_database_schema()
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_args: stop.set())

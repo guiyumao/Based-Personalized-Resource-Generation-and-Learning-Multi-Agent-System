@@ -1,0 +1,30 @@
+<script setup lang="ts">
+import { onBeforeUnmount, ref, watch } from 'vue'
+import { agentApi } from '../../../api/http'
+import { operationName, statusNames, timestamp } from './charts'
+const props=defineProps<{open:boolean;range:string[];selection?:{kind?:string;operation?:string;state?:string}}>()
+const emit=defineEmits<{'update:open':[value:boolean]}>()
+const page=ref(1),payload=ref<any>(),selected=ref<any>(),error=ref(''),loading=ref(false)
+let controller:AbortController|undefined
+let detailController:AbortController|undefined
+const kind=ref(''),operation=ref(''),state=ref('')
+async function load(reset=false){
+ if(reset)page.value=1
+ controller?.abort();const req=new AbortController();controller=req;loading.value=true;error.value='';payload.value=undefined
+ try{const r=await agentApi.get('/admin/operations/tasks',{params:{start:props.range[0],end:props.range[1],kind:kind.value||undefined,operation:operation.value||undefined,state:state.value||undefined,page:page.value},signal:req.signal,timeout:20000});if(!req.signal.aborted)payload.value=r.data}
+ catch{if(!req.signal.aborted)error.value='任务列表读取失败，请重试。'}finally{if(!req.signal.aborted)loading.value=false}
+}
+async function detail(task:any){
+ detailController?.abort();const req=new AbortController();detailController=req;error.value='';selected.value=undefined
+ try{const r=await agentApi.get(`/admin/operations/tasks/${task.kind}/${task.id}`,{signal:req.signal,timeout:20000});if(!req.signal.aborted)selected.value=r.data}catch{if(!req.signal.aborted)error.value='任务详情读取失败，请重试。'}
+}
+watch(()=>props.open,value=>{if(value){kind.value=props.selection?.kind||'';operation.value=props.selection?.operation||'';state.value=props.selection?.state||'';selected.value=undefined;void load(true)}else{controller?.abort();detailController?.abort()}})
+onBeforeUnmount(()=>{controller?.abort();detailController?.abort()})
+defineExpose({detail})
+</script>
+<template>
+ <el-drawer :model-value="open" @update:model-value="emit('update:open',$event)" append-to-body title="全部任务记录" size="min(960px, 97vw)"><p class="dashboard-note">UTC · 按创建时间筛选，每个任务 ID 计一次；执行尝试及智能体阶段不重复计入。任务无 LIVE/TEST 字段，统计全部持久任务。</p><div class="detail-filters"><el-select v-model="kind" aria-label="任务来源"><el-option value="" label="全部来源"/><el-option value="assistant" label="学习助手"/><el-option value="knowledge" label="知识建设"/></el-select><el-input v-model="operation" placeholder="精确任务类型" aria-label="任务类型筛选"/><el-select v-model="state" aria-label="任务状态"><el-option value="" label="全部状态"/><el-option v-for="(name,key) in {success:'成功',failed:'失败',running:'执行中',waiting:'等待中',cancelled:'已取消',other:'其他'}" :key="key" :value="key" :label="name"/></el-select><el-button :loading="loading" @click="load(true)">查询任务</el-button></div><el-alert v-if="error" :title="error" type="error" :closable="false"/><el-skeleton v-if="loading" :rows="5" animated/>
+ <el-table v-if="payload" :data="payload.items" empty-text="当前筛选无任务"><el-table-column label="任务" min-width="140"><template #default="{row}">{{row.kind}} #{{row.id}}</template></el-table-column><el-table-column label="类型" min-width="140"><template #default="{row}">{{operationName(row.operation)}}</template></el-table-column><el-table-column label="状态"><template #default="{row}"><span :title="row.status">{{statusNames[row.status]||row.status}}</span></template></el-table-column><el-table-column label="创建时间 UTC" min-width="175"><template #default="{row}">{{timestamp(row.created_at)}}</template></el-table-column><el-table-column label="详情" width="80"><template #default="{row}"><el-button link type="primary" @click="detail(row)">查看</el-button></template></el-table-column></el-table><el-pagination v-if="payload" v-model:current-page="page" :page-size="20" :total="payload.total" layout="total, prev, pager, next" @current-change="load()"/>
+ </el-drawer>
+ <el-drawer :model-value="!!selected" @close="selected=undefined" append-to-body title="任务执行详情" size="min(740px, 96vw)"><template v-if="selected"><h3>{{operationName(selected.operation)}} · {{selected.kind}} #{{selected.id}}</h3><el-descriptions :column="1" border><el-descriptions-item label="状态">{{statusNames[selected.status]||selected.status}} ({{selected.status}})</el-descriptions-item><el-descriptions-item label="用户 / 执行代次">{{selected.user_id}} / {{selected.attempt}}</el-descriptions-item><el-descriptions-item label="创建 / 开始">{{timestamp(selected.created_at)}} / {{timestamp(selected.started_at)}}</el-descriptions-item><el-descriptions-item label="完成 / 下次重试">{{timestamp(selected.completed_at)}} / {{timestamp(selected.retry_scheduled_at)}}</el-descriptions-item><el-descriptions-item label="心跳 / 观察">{{timestamp(selected.heartbeat_at)}} / {{selected.lease_observation}}</el-descriptions-item><el-descriptions-item label="错误代码">{{selected.error_code||'无'}}</el-descriptions-item></el-descriptions><h4>智能体阶段记录</h4><el-table :data="selected.stages" empty-text="暂无已接入的阶段记录"><el-table-column prop="agent" label="智能体"/><el-table-column prop="status" label="原始状态"/><el-table-column prop="elapsed_ms" label="耗时 ms"/><el-table-column prop="error_code" label="错误代码"/></el-table><h4>执行尝试</h4><el-table :data="selected.attempts" empty-text="暂无已接入的执行尝试"><el-table-column prop="attempt" label="代次" width="70"/><el-table-column prop="status" label="原始状态"/><el-table-column label="开始 UTC" min-width="175"><template #default="{row}">{{timestamp(row.started_at)}}</template></el-table-column><el-table-column label="结束 UTC" min-width="175"><template #default="{row}">{{timestamp(row.finished_at)}}</template></el-table-column><el-table-column prop="error_code" label="错误代码"/></el-table><p class="dashboard-note">历史日志未回填；仅展示持久化元数据及安全错误代码，不展示 Prompt、凭证及未脱敏原始错误。</p><h4>相关生成成果</h4><p v-for="resource in selected.related_resources||[]" :key="resource.id">资源 #{{resource.id}} · {{resource.title||'未命名'}} · {{resource.type}} · {{resource.publish_status}}</p><p v-if="!selected.related_resources?.length" class="dashboard-note">此任务无已持久化关联资源引用。</p><router-link to="/admin/resources">查看现有学习资源管理 →</router-link></template></el-drawer>
+</template>

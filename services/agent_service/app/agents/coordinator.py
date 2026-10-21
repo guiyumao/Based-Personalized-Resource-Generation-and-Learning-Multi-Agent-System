@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from common.ai_errors import AIServiceError
 from common.db.session import SessionLocal
+from common.config import get_settings
 from common.models.learning import Exercise, KnowledgePoint, Resource, SystemSubject
 from common.messaging.rabbitmq import RabbitMQPublisher
 from common.performance import get_current_trace
@@ -368,12 +369,23 @@ class CoordinatorWorkflow:
             return not cancelled
 
         try:
-            if context.get("dynamic_knowledge") is True and knowledge_point and context.get("subject") and can_run():
+            if isinstance(session, Session) and knowledge_point and not context.get("subject") and selected.intersection({"resource_generation_agent", "exercise_generation_agent"}):
+                # Only a real ORM session can resolve the catalog; lightweight
+                # callers that pass a stub skip this enrichment instead of failing.
+                matches = session.query(KnowledgePoint).filter(KnowledgePoint.name == knowledge_point,
+                    KnowledgePoint.subject_id.is_not(None)).limit(2).all()
+                if len(matches) == 1:
+                    catalog = session.get(SystemSubject, matches[0].subject_id)
+                    if catalog:
+                        context["subject"] = catalog.name
+                        context["knowledge_point_id"] = str(matches[0].id)
+            if (context.get("dynamic_knowledge") is True or selected.intersection({"resource_generation_agent", "exercise_generation_agent"})) and knowledge_point and context.get("subject") and not context.get("teaching_scope_id") and can_run():
                 from services.agent_service.app.services.knowledge_acquisition import acquire_context
                 knowledge_context = acquire_context(session, actor_user_id=payload.user_id,
                                                      subject=str(context["subject"]), knowledge_point=knowledge_point,
-                                                     allow_web=context.get("allow_web_knowledge") is True)
+                                                     allow_web=context.get("allow_web_knowledge", True) is True)
                 context["retrieval_context"] = knowledge_context["retrieval_context"]
+                context["retrieval_context"]["knowledge_evidence"] = {key: value for key, value in knowledge_context.items() if key != "retrieval_context"}
                 outputs["knowledge_acquisition"] = knowledge_context
             if "learner_profiling_agent" in selected and history_disabled and can_run():
                 outputs["learner_profiling_agent"] = {"status": "skipped", "reason": "history_disabled"}
@@ -386,6 +398,7 @@ class CoordinatorWorkflow:
                         user_id=payload.user_id,
                         knowledge_point=knowledge_point,
                         fallback_profile=learner_profile,
+                        subject=str(context.get("subject") or ""), point_id=context.get("knowledge_point_id"),
                     ),
                     context,
                     agent_calls,
@@ -640,6 +653,7 @@ class CoordinatorWorkflow:
         user_id: int,
         knowledge_point: str,
         fallback_profile: dict[str, Any],
+        subject: str = "", point_id=None,
     ) -> Any:
         trace = get_current_trace()
         stage = trace.stage("learner_profile") if trace is not None else nullcontext()
@@ -647,7 +661,7 @@ class CoordinatorWorkflow:
             return PersonalizationService(session).build_snapshot(
                 user_id=user_id,
                 knowledge_point=knowledge_point,
-                fallback_profile=fallback_profile,
+                fallback_profile=fallback_profile, subject=subject, point_id=point_id,
             )
 
     def _run_graph_agent_with_trace(
@@ -694,11 +708,19 @@ class CoordinatorWorkflow:
         return output
 
     def _run_knowledge_base_agent(self, context: dict[str, Any]) -> dict[str, Any]:
-        service = KnowledgeBaseService()
         operation = str(context.get("operation") or "list")
         subject = context.get("subject")
         query = str(context.get("query") or "")
         top_k = int(context.get("top_k") or 6)
+        shared = context.get("retrieval_context") or {}
+        if operation == "search" and isinstance(shared.get("retrieved_chunks"), list) and shared.get("knowledge_base_version") == get_settings().knowledge_base_version:
+            from services.agent_service.app.services.knowledge_publication import visible_chunks
+            chunks = visible_chunks(shared["retrieved_chunks"])
+            return {"status": "completed", "operation": operation, "query": query, "shared_context_reused": True,
+                    "items": [{"id": row.get("id"), "title": (row.get("metadata") or {}).get("title") or query,
+                               "content": row.get("content", ""), "source": row.get("metadata") or {}}
+                              for row in chunks[:top_k]]}
+        service = KnowledgeBaseService()
 
         if operation == "search":
             if not query.strip():
@@ -792,6 +814,8 @@ class CoordinatorWorkflow:
             teaching_scope_id=str(context.get("teaching_scope_id") or ""),
             assistant_operation_key=(f"assistant:{context['assistant_operation_root']}:resource"
                                      if context.get("assistant_operation_root") else ""),
+            allow_web_knowledge=context.get("allow_web_knowledge", True) is True,
+            force_regenerate=context.get("force_regenerate") is True or "重新生成" in str(context.get("request_text") or ""),
         )
         if request.assistant_operation_key:
             with SessionLocal() as receipt_db:
@@ -799,7 +823,7 @@ class CoordinatorWorkflow:
                     Resource.assistant_operation_key == request.assistant_operation_key,
                     Resource.generated_for_user_id == payload.user_id,
                 ).first()
-                if saved is not None:
+                if saved is not None and saved.generation_status == "generated":
                     logger.info("assistant_idempotency_hit key=%s agent=resource_generation_agent task_root=%s", request.assistant_operation_key, context.get("assistant_operation_root"))
                     if saved.audit_status == "rejected":
                         return {"status": "failed", "error": "已保存资源未通过审核，不能作为可用课件重放"}, None
@@ -883,6 +907,7 @@ class CoordinatorWorkflow:
             reference_materials=str(context.get("reference_materials") or ""),
             assistant_operation_key=(f"assistant:{context['assistant_operation_root']}:exercise:{context.get('assistant_exercise_batch', 0)}"
                                      if context.get("assistant_operation_root") else ""),
+            allow_web_knowledge=context.get("allow_web_knowledge", True) is True,
         )
         if request.assistant_operation_key:
             with SessionLocal() as receipt_db:

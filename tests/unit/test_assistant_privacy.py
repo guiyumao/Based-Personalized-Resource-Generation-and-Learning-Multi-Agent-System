@@ -209,8 +209,8 @@ def test_recent_question_context_contains_only_the_current_users_generated_quest
         assert len(signatures) == 1 and "private-owner-example" in next(iter(signatures))
 
 
-def test_history_opt_out_skips_profile_loading_and_does_not_report_zero_mastery(monkeypatch):
-    workflow = CoordinatorWorkflow(db=object())
+def test_history_opt_out_skips_profile_loading_and_does_not_report_zero_mastery(monkeypatch, db_session):
+    workflow = CoordinatorWorkflow(db=db_session)
     monkeypatch.setattr(workflow, "_build_profile_snapshot", lambda **_kwargs: pytest.fail("History must not be loaded"))
     seen = []
 

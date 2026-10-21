@@ -356,7 +356,7 @@ def get_profile_dashboard(
     base_dashboard = LearnerProfileDashboard(
         user_id=user_id,
         learning_style=learning_style,
-        mastery_overview=round(sum(mastery_values) / len(mastery_values)) if mastery_values else 0,
+        mastery_overview=round(sum(mastery_values) / len(mastery_values)) if mastery_values else None,
         weekly_focus_minutes=0,
         habit_summary="；".join(habit_summary_parts) if habit_summary_parts else "",
         radar_metrics=[{"dimension": "答题准确", "score": learning_content["accuracy"]}]

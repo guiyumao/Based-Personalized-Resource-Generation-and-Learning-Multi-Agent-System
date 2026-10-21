@@ -1,4 +1,5 @@
 """Durable per-provider-call accounting via the model's own callbacks."""
+import json
 import os
 import re
 from datetime import datetime
@@ -8,7 +9,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from common.db.session import SessionLocal
-from common.models.learning import KnowledgeBudgetCounter
+from common.models.learning import KnowledgeBudgetCounter, SystemConfig
 from common.models.operations import ModelCall
 from common.performance import get_current_trace
 
@@ -68,6 +69,17 @@ class ModelCallBudgetExceeded(RuntimeError):
     pass
 
 
+def effective_call_limits(db):
+    row = db.get(SystemConfig, "model_call_budget")
+    configured = json.loads(row.value) if row else {}
+    limits = {}
+    for key, variable in (("day_call_limit", "AI_PROVIDER_DAY_CALL_LIMIT"),
+                          ("user_day_call_limit", "AI_PROVIDER_USER_DAY_CALL_LIMIT")):
+        values = [int(value) for value in (configured.get(key), os.getenv(variable)) if value is not None]
+        limits[key] = min(values) if values else None
+    return limits
+
+
 def begin_call(call_id, provider, model):
     context = call_context()
     mode = os.getenv("MODEL_USAGE_MODE") or ("TEST" if os.getenv("NO_COST_TEST") == "1" else "LIVE")
@@ -79,8 +91,9 @@ def begin_call(call_id, provider, model):
             try:
                 if db.get(ModelCall, call_id):
                     return
-                scopes = [(f"model-day:{mode}:{now:%Y%m%d}", os.getenv("AI_PROVIDER_DAY_CALL_LIMIT"))]
-                user_limit = os.getenv("AI_PROVIDER_USER_DAY_CALL_LIMIT")
+                limits = effective_call_limits(db)
+                scopes = [(f"model-day:{mode}:{now:%Y%m%d}", limits["day_call_limit"])]
+                user_limit = limits["user_day_call_limit"]
                 if user_limit is not None:
                     if context["user_id"] is None:
                         raise ModelCallBudgetExceeded("User attribution required by per-user budget")

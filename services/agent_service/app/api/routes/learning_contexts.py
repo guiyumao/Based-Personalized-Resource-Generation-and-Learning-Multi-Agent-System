@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from common.db.session import get_db
 from common.dependencies import get_current_user
 from common.learning_context import context_snapshot, create_context
-from common.models.learning import LearningPath, User
+from common.models.learning import LearningContext, LearningPath, Resource, User
+from common.resource_version import resource_version
 
 router = APIRouter(prefix="/learning/contexts", tags=["learning-workspace"])
 
@@ -38,7 +39,25 @@ def workspace_catalog(db: Session = Depends(get_db), user: User = Depends(get_cu
         .order_by(LearningPath.id.desc())
         .all()
     )
-    return {"plans": [{"id": plan.id, "data": plan.path_data_json} for plan in plans]}
+    bindings = []
+    if plans:
+        seen = set()
+        for context, resource in db.query(LearningContext, Resource).join(
+            Resource, LearningContext.resource_id == Resource.id
+        ).filter(LearningContext.user_id == user.id,
+                 LearningContext.plan_id.in_([plan.id for plan in plans]),
+                 Resource.generated_for_user_id == user.id,
+                 Resource.publish_status != "archived", Resource.audit_status != "rejected",
+                 Resource.generation_status == "generated").order_by(Resource.id.desc()).all():
+            key = (context.plan_id, context.module_id, context.task_key, resource.id)
+            if key in seen or context.resource_version != resource_version(resource):
+                continue
+            seen.add(key)
+            bindings.append({"plan_id": context.plan_id, "module_id": context.module_id,
+                             "context_id": context.id,
+                             "task_id": context.task_key, "id": resource.id, "title": resource.title,
+                             "type": resource.type, "version": context.resource_version})
+    return {"plans": [{"id": plan.id, "data": plan.path_data_json} for plan in plans], "task_resources": bindings}
 
 
 @router.get("/{context_id}")

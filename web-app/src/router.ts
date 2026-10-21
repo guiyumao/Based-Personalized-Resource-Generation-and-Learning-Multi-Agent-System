@@ -107,6 +107,8 @@ const router = createRouter({
           name: 'student-report',
           component: () => import('./views/student/ReportView.vue'),
         },
+        { path: 'analytics', name: 'student-analytics', component: () => import('./views/student/LearningAnalyticsView.vue') },
+        { path: 'profile', name: 'student-profile', component: () => import('./views/student/LearningPortraitView.vue') },
         {
           path: 'transcripts',
           name: 'student-transcripts',

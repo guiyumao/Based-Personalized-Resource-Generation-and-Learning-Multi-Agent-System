@@ -23,7 +23,7 @@ class KnowledgePointUpdate:
     """One updated knowledge-point snapshot."""
 
     knowledge_point_id: str
-    mastery_score: float
+    mastery_score: float | None
     recent_accuracy: float
     consecutive_incorrect: int
     weak: bool
@@ -49,8 +49,26 @@ class LearnerProfileUpdater:
         error_pattern: str,
         chapter_id: str | None,
         answered_at: datetime,
+        db=None,
     ) -> list[KnowledgePointUpdate]:
         """Update mastery history and weak-point tags from one real answer."""
+
+        if db is not None:
+            from common.learning_evidence import recompute_profile, load_evidence
+            derived = recompute_profile(db, profile.user_id, profile)
+            rows = load_evidence(db, profile.user_id)
+            updates = []
+            for name in knowledge_point_ids:
+                stats = derived.get(name, {})
+                distinct = list({r["exercise_id"]: r for r in rows if r["knowledge_point"] == name}.values())
+                consecutive = 0
+                for row in reversed(distinct):
+                    if row["is_correct"]:
+                        break
+                    consecutive += 1
+                updates.append(KnowledgePointUpdate(name, stats.get("score"), stats.get("correct_rate") or 0,
+                    consecutive, bool(stats.get("weak")), "answer_mismatch" if not is_correct else "none"))
+            return updates
 
         mastery_json = deepcopy(profile.mastery_json or {})
         updates: list[KnowledgePointUpdate] = []

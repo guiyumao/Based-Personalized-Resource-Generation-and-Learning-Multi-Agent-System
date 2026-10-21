@@ -264,6 +264,16 @@ class Exercise(Base):
     assistant_operation_key: Mapped[str | None] = mapped_column(String(120), unique=True, nullable=True)
 
 
+class ExerciseKnowledgePoint(Base):
+    """Explicit reviewed multi-point membership; model labels are not evidence."""
+
+    __tablename__ = "exercise_knowledge_points"
+    exercise_id: Mapped[int] = mapped_column(ForeignKey("exercises.id"), primary_key=True)
+    knowledge_point_id: Mapped[int] = mapped_column(ForeignKey("knowledge_points.id"), primary_key=True)
+    weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
 class ExerciseFavorite(TimestampMixin, Base):
     """A learner's saved exercise with a display snapshot."""
 

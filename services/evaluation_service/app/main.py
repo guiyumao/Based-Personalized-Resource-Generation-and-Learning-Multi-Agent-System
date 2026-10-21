@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from common.cors import get_cors_allow_origins
 from common.logging.setup import configure_logging
 from common.performance import PerformanceTraceMiddleware
-from services.evaluation_service.app.api.routes import reports, transcripts
+from services.evaluation_service.app.api.routes import learning_insights, reports, transcripts
 
 configure_logging("evaluation-service")
 
@@ -25,6 +25,7 @@ app.add_middleware(
 )
 app.include_router(reports.router, prefix="/evaluation", tags=["evaluation"])
 app.include_router(transcripts.router, prefix="/evaluation", tags=["transcripts"])
+app.include_router(learning_insights.router, tags=["learning-insights"])
 
 
 @app.get("/health")

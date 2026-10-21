@@ -69,6 +69,8 @@ class ResourceGenerationRequest(BaseModel):
     retrieval_context: dict[str, Any] = Field(default_factory=dict, exclude=True)
     reference_materials: str = Field(default="", max_length=12000, exclude=True)
     assistant_operation_key: str = Field(default="", exclude=True)
+    allow_web_knowledge: bool = True
+    force_regenerate: bool = False
 
 
 class ResourceGenerationPlan(BaseModel):
@@ -193,6 +195,9 @@ class ResourceGenerationResponse(BaseModel):
     #: it just created through the read API, because the generator's response dict
     #: is narrowed to the fields declared here.
     id: int | None = None
+    reused: bool = False
+    knowledge_evidence: dict[str, Any] = Field(default_factory=dict)
+    media: dict[str, Any] = Field(default_factory=dict)
     user_id: int
     knowledge_point: str
     resource_type: str
@@ -332,6 +337,7 @@ class ExerciseGenerationRequest(BaseModel):
     retrieval_context: dict[str, Any] = Field(default_factory=dict, exclude=True)
     reference_materials: str = Field(default="", max_length=12000, exclude=True)
     assistant_operation_key: str = Field(default="", exclude=True)
+    allow_web_knowledge: bool = True
 
 
 class ExerciseItem(BaseModel):
@@ -377,7 +383,7 @@ class QARequest(BaseModel):
     learning_history: dict[str, Any] = Field(default_factory=dict)
     retrieval_context: dict[str, Any] = Field(default_factory=dict, exclude=True)
     use_knowledge_base: bool = False
-    allow_web_knowledge: bool = False
+    allow_web_knowledge: bool = True
 
 
 class MistakeBookUpdate(BaseModel):

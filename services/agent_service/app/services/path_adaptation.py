@@ -5,10 +5,9 @@ from math import ceil
 from uuid import uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import Integer, func
 from sqlalchemy.orm import Session
 
-from common.models.learning import AnswerRecord, Exercise, KnowledgePoint
+from common.learning_evidence import EVIDENCE_VERSION, load_evidence, resolve_point, summarize
 from services.agent_service.app.services.learning_path import LearningPathService
 
 
@@ -31,18 +30,22 @@ class PathAdaptationService:
         topics.discard("")
         now = datetime.now(UTC).replace(tzinfo=None)
         cutoff = now - timedelta(days=30)
-        rows = self.db.query(KnowledgePoint.name, func.count(AnswerRecord.id),
-                             func.sum(AnswerRecord.is_correct.cast(Integer))
-                             ).join(Exercise, Exercise.knowledge_point_id == KnowledgePoint.id).join(
-                                 AnswerRecord, AnswerRecord.exercise_id == Exercise.id).filter(
-            AnswerRecord.user_id == user_id, AnswerRecord.is_correct.is_not(None),
-            AnswerRecord.created_at >= cutoff, AnswerRecord.created_at <= now, KnowledgePoint.name.in_(topics),
-        ).group_by(KnowledgePoint.id, KnowledgePoint.name).all() if topics else []
-        # Avoid repeated open remedial tasks for the same topic.
+        # Use the same confirmed memberships and unique-question policy as the
+        # visible profile, including the selected plan's subject boundary.
         pending_remedial = {task.get("knowledge_point") for task in tasks
                             if task.get("adaptation_source") and not task.get("completed")}
-        weak = [{"name": name, "graded_answers": count, "accuracy_percent": round(100 * int(correct or 0) / count, 1)}
-                for name, count, correct in rows if count >= 3 and int(correct or 0) / count < .6 and name not in pending_remedial]
+        weak = []
+        for topic in topics:
+            point = resolve_point(self.db, topic, subject=str(payload.get("subject") or ""))
+            if point is None or topic in pending_remedial:
+                continue
+            evidence = [row for row in load_evidence(self.db, user_id, point=point)
+                        if cutoff <= datetime.fromisoformat(row["submitted_at"]).replace(tzinfo=None) <= now]
+            stats = summarize(evidence)
+            if stats["mastery_score"] is not None and stats["mastery_score"] < 60:
+                weak.append({"name": topic, "knowledge_point_id": point.id, "subject_id": point.subject_id,
+                    "graded_answers": stats["sample_size"], "accuracy_percent": stats["correct_rate"],
+                    "evidence_ids": stats["evidence_ids"], "evidence_version": EVIDENCE_VERSION})
         weak.sort(key=lambda row: (row["accuracy_percent"], -row["graded_answers"], row["name"]))
         weak = weak[:3]
         old_minutes = payload.get("daily_minutes")
@@ -57,7 +60,7 @@ class PathAdaptationService:
                       "status": "pending", "depends_on": [], "adaptation_source": proposal_id} for index, item in enumerate(weak)]
         remaining = sum(max(0, int(task.get("estimated_minutes") or 0)) for task in tasks if not task.get("completed"))
         remaining += sum(task["estimated_minutes"] for task in new_tasks)
-        proposal = {"proposal_id": proposal_id, "path_id": record.id,
+        proposal = {"evidence_version": EVIDENCE_VERSION, "proposal_id": proposal_id, "path_id": record.id,
                     "base_revision": int(payload.get("path_revision", 0)) + 1,
                     "created_at": datetime.now(UTC).isoformat(), "evidence": weak, "added_tasks": new_tasks,
                     "before": {"daily_minutes": old_minutes, "estimated_days": payload.get("estimated_days"), "task_count": len(tasks)},
@@ -78,6 +81,8 @@ class PathAdaptationService:
         proposal = payload.get("adjustment_proposal")
         if not isinstance(proposal, dict) or proposal.get("proposal_id") != proposal_id:
             raise HTTPException(status_code=404, detail="调整提案不存在或已被替换。")
+        if proposal.get("evidence_version") != EVIDENCE_VERSION:
+            raise HTTPException(status_code=409, detail="学情证据规则已更新，请重新预览调整。")
         if int(payload.get("path_revision", 0)) != proposal["base_revision"]:
             raise HTTPException(status_code=409, detail="计划已变化，请重新预览调整。")
         if proposal["added_tasks"]:

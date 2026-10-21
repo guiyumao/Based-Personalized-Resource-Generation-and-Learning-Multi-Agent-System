@@ -76,6 +76,10 @@ class ResourceManager:
         resource, knowledge_point = row
         item = self._to_item(resource, knowledge_point)
         item.content = resource.content
+        from common.resource_version import resource_version
+        item.version = resource_version(resource)
+        if resource.type == "courseware":
+            item.teaching_json = resource.structured_json
         structured_payload = self._parse_structured_payload(resource)
         if structured_payload is not None:
             item.structured = structured_payload.get("structured") or None
@@ -567,6 +571,7 @@ class ResourceManager:
                 format=resource.format,
                 status=status,  # type: ignore[arg-type]
                 knowledge_point=point_name,
+                knowledge_point_id=resource.knowledge_point_id,
                 owner_user_id=resource.generated_for_user_id,
                 source_type="generated",
                 generation_status=resource.generation_status,  # type: ignore[arg-type]
@@ -582,6 +587,7 @@ class ResourceManager:
             format=str(metadata.get("format") or resource.format or "file"),
             status=self._legacy_status(resource),  # type: ignore[arg-type]
             knowledge_point=str(metadata.get("knowledge_point") or point_name),
+            knowledge_point_id=resource.knowledge_point_id,
             owner_user_id=resource.generated_for_user_id,
             source_type="external_import",
             provider=str(metadata.get("provider") or "") or None,

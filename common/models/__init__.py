@@ -2,6 +2,7 @@
 
 from common.models.operations import ModelCall, TaskAttempt, WorkerInstance
 from common.models.media import ResourceArtifact, ResourceRevision
+from common.models.study import CardKnowledgeBinding, CardReviewReceipt, NoteRevision
 
 from common.models.learning import (
     AnswerRecord,
@@ -36,6 +37,9 @@ from common.models.learning import (
 )
 
 __all__ = [
+    "CardKnowledgeBinding",
+    "CardReviewReceipt",
+    "NoteRevision",
     "ModelCall",
     "TaskAttempt",
     "ResourceArtifact",

@@ -15,6 +15,7 @@ from common.models.media import ResourceRevision
 from common.resource_version import resource_version
 
 router = APIRouter(prefix="/learning/contexts", tags=["resource-revisions"])
+resource_router = APIRouter(prefix="/learning/resources", tags=["resource-revisions"])
 
 
 class MapNode(BaseModel):
@@ -38,8 +39,14 @@ def snapshot(db, user_id, resource):
 @router.put("/{context_id}/mindmap")
 def save_mindmap(context_id: str, payload: MindmapEdit, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     _, _, _, _, _, resource = validate_context(db, user.id, context_id)
+    return save_owned_mindmap(resource, payload, db, user)
+
+
+def save_owned_mindmap(resource, payload, db, user):
     if not resource or resource.generated_for_user_id != user.id or resource.type != "mind_map":
         raise HTTPException(404, "Owned mindmap required")
+    if resource.publish_status == "archived":
+        raise HTTPException(409, "Archived resource cannot be edited")
     if resource_version(resource) != payload.expected_resource_version:
         raise HTTPException(409, "Resource changed")
     nodes = {node.id: node for node in payload.nodes}
@@ -77,6 +84,29 @@ def save_mindmap(context_id: str, payload: MindmapEdit, db: Session = Depends(ge
     snapshot(db, user.id, resource)
     db.commit()
     return {"resource_id": resource.id, "resource_version": resource_version(resource), "reopen_required": True}
+
+
+@resource_router.get("/{resource_id}/mindmap")
+def read_owned_mindmap(resource_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    resource = db.get(Resource, resource_id)
+    if not resource or resource.generated_for_user_id != user.id or resource.type != "mind_map":
+        raise HTTPException(404, "Owned mindmap required")
+    return {"resource_version": resource_version(resource), "structured_json": resource.structured_json}
+
+
+@resource_router.put("/{resource_id}/mindmap")
+def edit_owned_mindmap(resource_id: int, payload: MindmapEdit, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return save_owned_mindmap(db.get(Resource, resource_id), payload, db, user)
+
+
+@resource_router.get("/{resource_id}/resource-history")
+def owned_resource_history(resource_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    resource = db.get(Resource, resource_id)
+    if not resource or resource.generated_for_user_id != user.id:
+        raise HTTPException(404, "Resource not found")
+    return {"items": [{"version": row.version, "title": row.title, "created_at": row.created_at}
+                      for row in db.query(ResourceRevision).filter_by(user_id=user.id, resource_id=resource_id)
+                      .order_by(ResourceRevision.created_at.desc()).limit(100).all()]}
 
 
 @router.get("/{context_id}/resource-history")

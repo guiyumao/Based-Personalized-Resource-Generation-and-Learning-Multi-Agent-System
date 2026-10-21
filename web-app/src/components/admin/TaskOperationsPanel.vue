@@ -20,13 +20,12 @@ onMounted(load)
 </script>
 <template>
   <section class="workspace-panel task-operations" aria-label="持久任务运营概览">
-    <h2>持久任务运营概览</h2>
+    <div id="model-usage"><UsageWorkerPanel /></div>
     <div class="action-row"><el-select v-model="days" aria-label="任务统计天数" style="max-width:180px"><el-option :value="1" label="近1天"/><el-option :value="7" label="近7天"/><el-option :value="30" label="近30天"/></el-select><el-button :loading="loading" @click="load">刷新运营数据</el-button></div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <template v-if="data">
       <p>统计时区 UTC · {{ data.as_of }}</p>
       <div v-for="(counts, kind) in data.counts" :key="kind"><strong>{{ kind === 'assistant' ? '学习助手任务' : '知识建设任务' }}</strong><span v-for="(count, status) in counts" :key="status" class="task-count">{{ status }} {{ count }}</span><span v-if="!Object.keys(counts).length">当前时段无任务</span></div>
-      <UsageWorkerPanel />
       <details><summary>知识建设预算预留</summary><p v-if="!data.knowledge_budget_reservations.length">当前日/月无预算预留记录。</p><p v-for="row in data.knowledge_budget_reservations" :key="row.scope">{{ row.scope }} · 模型调用预留 {{ row.model_calls }} · 输入预留 {{ row.reserved_input_tokens }} · 输出预留 {{ row.reserved_output_tokens }}</p></details>
       <el-table :data="data.recent_tasks" style="width:100%"><el-table-column label="任务" min-width="140"><template #default="{ row }">{{ row.kind }} #{{ row.id }}</template></el-table-column><el-table-column prop="operation" label="功能" min-width="130"/><el-table-column prop="status" label="状态" min-width="120"/><el-table-column prop="attempt" label="执行代次" width="95"/><el-table-column prop="lease_observation" label="任务心跳" min-width="100"/><el-table-column label="执行记录" width="100"><template #default="{ row }"><el-button size="small" @click="detail(row)">查看</el-button></template></el-table-column></el-table>
       <details><summary>每日任务分布（UTC）</summary><p v-for="row in data.daily_tasks" :key="`${row.kind}-${row.date}`">{{ row.date }} · {{ row.kind }} · {{ row.count }}</p></details>

@@ -4,6 +4,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy.engine import make_url
 
 import common.models  # noqa: F401
@@ -34,7 +36,7 @@ def main():
                 missing_columns[name] = missing
         versions = [row[0] for row in db.execute("SELECT version_num FROM alembic_version")] if "alembic_version" in tables else []
         result = {"source": str(source), "read_only": True, "alembic_versions": versions,
-                  "target_head": "20261020_0031", "missing_tables": missing_tables,
+                  "target_head": ScriptDirectory.from_config(Config('alembic.ini')).get_current_head(), "missing_tables": missing_tables,
                   "missing_columns": missing_columns, "compatible": not missing_tables and not missing_columns,
                   "source_migrated": False, "business_rows_read": False}
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -44,6 +44,8 @@ export const navigationItems: NavigationItem[] = [
   { key: 'study-tools', label: '笔记与闪卡', description: '记录学习要点并复习到期闪卡', icon: Notebook, route: '/student/study-tools', routeName: 'student-study-tools', group: '练习与诊断', roles: ['student'] },
   { key: 'knowledge-graph', label: '知识图谱', description: '知识依赖、缺口与关联资源', icon: Share, route: '/student/knowledge-graph', routeName: 'student-knowledge-graph', group: '练习与诊断', roles: ['student'] },
   { key: 'report', label: '学习报告', description: '阶段成果、证据与下一步建议', icon: TrendCharts, route: '/student/report', routeName: 'student-report', group: '智能支持', roles: ['student'] },
+  { key: 'analytics', label: '学习分析', description: '学习趋势、活动热力图、作答与复习统计', icon: Histogram, route: '/student/analytics', routeName: 'student-analytics', group: '智能支持', roles: ['student'] },
+  { key: 'profile', label: '学习画像', description: '编辑学习偏好并查看真实行为证据', icon: User, route: '/student/profile', routeName: 'student-profile', group: '智能支持', roles: ['student'] },
   { key: 'transcripts', label: '成绩单分析', description: '导入成绩、定位薄弱点并生成学习方案', icon: DocumentChecked, route: '/student/transcripts', routeName: 'student-transcripts', group: '智能支持', roles: ['student'] },
   { key: 'qa', label: '智能问答', description: '结合画像与知识库的上下文问答', icon: ChatDotRound, route: '/student/qa', routeName: 'student-qa', group: '智能支持', roles: ['student'] },
   { key: 'resources', label: '学习资源', description: '知识库、官方课件与已保存资源', icon: Collection, route: '/student/resources', routeName: 'student-resources', group: '智能支持', roles: ['student'] },

@@ -31,6 +31,7 @@ class ResourceItem(BaseModel):
     format: str
     status: Literal["draft", "ready", "archived"]
     knowledge_point: str
+    knowledge_point_id: int | None = None
     owner_user_id: int | None = None
     source_type: Literal["generated", "external_import"] = "generated"
     provider: str | None = None
@@ -46,6 +47,8 @@ class ResourceItem(BaseModel):
     audit_reason: str = ""
     # Payload fields are only populated by the single-resource detail endpoint;
     # the list endpoint leaves them null so browsing stays light.
+    version: str | None = None
+    teaching_json: str | None = None
     content: str | None = None
     structured: dict[str, Any] | None = None
     content_validation: dict[str, Any] | None = None

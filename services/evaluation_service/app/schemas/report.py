@@ -55,7 +55,7 @@ class KnowledgePointFeedback(BaseModel):
     """One knowledge point update after evaluation."""
 
     knowledge_point_id: str
-    mastery_score: float = Field(ge=0, le=100)
+    mastery_score: float | None = Field(default=None, ge=0, le=100)
     recent_accuracy: float = Field(ge=0, le=100)
     consecutive_incorrect: int = Field(ge=0)
     weak: bool = False
@@ -95,7 +95,7 @@ class KnowledgePointStageStatus(BaseModel):
     """Aggregated chapter status for one knowledge point."""
 
     knowledge_point_id: str
-    mastery_score: float = Field(ge=0, le=100)
+    mastery_score: float | None = Field(default=None, ge=0, le=100)
     accuracy: float = Field(ge=0, le=100)
     attempts: int = Field(ge=0)
     weak: bool = False

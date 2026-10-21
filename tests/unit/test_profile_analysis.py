@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from teaching_fixtures import registered_catalog  # noqa: F401
+
 from common.models.learning import AnswerRecord, UserProfile
 from services.evaluation_service.app.schemas.report import PracticeSubmission
 from services.evaluation_service.app.services.report_service import ReportService

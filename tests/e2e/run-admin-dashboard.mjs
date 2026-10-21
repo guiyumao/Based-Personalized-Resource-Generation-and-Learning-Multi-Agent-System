@@ -1,0 +1,188 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import assert from 'node:assert/strict'
+import {loadPlaywright} from './lib/env.mjs'
+const input=JSON.parse(fs.readFileSync(0,'utf8')), dir=input.output
+const {module:pw}=loadPlaywright(), browser=await pw.chromium.launch({headless:true})
+const context=await browser.newContext({viewport:{width:1920,height:1080}})
+const page=await context.newPage();page.setDefaultTimeout(20000)
+const result={passed:false,live:input.live,source:'real SQLite records, no seeded browser statistics',checks:[],pageErrors:[],sizes:[]}
+page.on('pageerror',error=>result.pageErrors.push(String(error.stack||error)))
+let failWorkers=false,failStatistics=false
+await context.route('**/*',async route=>{
+ const request=route.request(),url=new URL(request.url())
+ if(!['127.0.0.1','localhost'].includes(url.hostname))return route.abort()
+ if(!['GET','OPTIONS'].includes(request.method()))return route.abort()
+ if(url.pathname==='/admin/workers'&&failWorkers || url.pathname==='/admin/dashboard'&&failStatistics)return route.fulfill({status:503,contentType:'application/json',body:'{"detail":"acceptance fault injection"}',headers:{'Access-Control-Allow-Origin':'*'}})
+ if(url.port==='8002'&&input.port!==8002){url.port=String(input.port);return route.fulfill({response:await route.fetch({url:url.href})})}
+ return route.continue()
+})
+const api=async(url)=>{
+ const r=await context.request.get(`http://127.0.0.1:${input.port}${url}`,{headers:{Authorization:'Bearer '+input.auth.token}})
+ assert.equal(r.status(),200,url);return r.json()
+}
+try{
+ await page.goto('http://127.0.0.1:5175/login')
+ await page.evaluate(auth=>localStorage.setItem('learning-system-auth',JSON.stringify(auth)),input.auth)
+ const first=page.waitForResponse(r=>new URL(r.url()).pathname==='/admin/dashboard'&&r.status()===200)
+ await page.goto('http://127.0.0.1:5175/admin')
+ const summary=await(await first).json()
+ await page.locator('.dashboard-kpis strong').first().waitFor()
+ const dashboard=page.getByRole('region',{name:'管理员运营数据看板'})
+ assert.equal(await dashboard.locator('.kpi').count(),4)
+ assert.equal(await dashboard.locator('.dashboard-main-grid>article').count(),6)
+ assert.equal(summary.daily.length,7)
+ assert.equal(summary.daily.reduce((a,r)=>a+r.calls,0),summary.summary.calls)
+ assert.equal(summary.model_summary.calls+summary.tool_summary.calls,summary.summary.calls)
+ const records=await api(`/admin/usage?start=${summary.start}&end=${summary.end}`)
+ assert.equal(records.total,summary.summary.calls)
+ result.counts={calls:summary.summary.calls,tokenUnknown:summary.summary.unknown_or_partial_calls,tasks:summary.tasks.reduce((a,r)=>a+r.count,0)}
+ result.checks.push('real aggregate matches filtered ledger, four KPI and six analysis panels')
+ await page.waitForTimeout(500)
+ for(const [width,height] of [[1920,1080],[1440,900],[1366,768],[820,1180],[390,844]]){
+  await page.setViewportSize({width,height});await page.waitForTimeout(300)
+  const sizing=await page.evaluate(()=>({document:document.documentElement.scrollWidth,window:innerWidth,content:document.querySelector('.app-content').scrollWidth,client:document.querySelector('.app-content').clientWidth}))
+  assert.ok(sizing.document<=width+1,JSON.stringify(sizing));assert.ok(sizing.content<=sizing.client+1,JSON.stringify(sizing))
+  const pet=page.getByRole('button',{name:'打开可拖动的 AI 学习助手'})
+  assert.ok(await pet.evaluate(el=>!getComputedStyle(el).position.includes('fixed')))
+  await page.screenshot({path:path.join(dir,`dashboard-${width}.png`),fullPage:false})
+  result.sizes.push({width,height,...sizing})
+ }
+ await page.setViewportSize({width:1440,height:900})
+ const customRange=page.waitForResponse(r=>r.url().includes('/admin/dashboard?')&&r.status()===200)
+ const dateInputs=dashboard.locator('.dashboard-controls .el-range-input')
+ const customStart=summary.end
+ await dateInputs.nth(0).fill(customStart);await dateInputs.nth(0).press('Enter')
+ await dateInputs.nth(1).fill(summary.end);await dateInputs.nth(1).press('Enter')
+ const custom=await(await customRange).json()
+ assert.equal(custom.start,summary.end);assert.equal(custom.daily.length,1)
+ await page.keyboard.press('Escape')
+ const day30=page.waitForResponse(r=>r.url().includes('/admin/dashboard?')&&r.status()===200)
+ await dashboard.getByRole('button',{name:'近 30 天',exact:true}).click()
+ assert.equal((await(await day30).json()).daily.length,30)
+ const day90=page.waitForResponse(r=>r.url().includes('/admin/dashboard?')&&r.status()===200)
+ await dashboard.getByRole('button',{name:'近 90 天',exact:true}).click()
+ assert.equal((await(await day90).json()).daily.length,90)
+ await dashboard.getByRole('button',{name:'近 7 天',exact:true}).click()
+ await page.locator('.dashboard-kpis strong').first().waitFor()
+ result.checks.push('7/30/90 day linked ranges, five screen sizes, docked assistant')
+ if(summary.summary.calls){
+  const chartHost=dashboard.locator('.model-trend [role="img"]')
+  const point=await chartHost.evaluate(async el=>{
+   const url=performance.getEntriesByType('resource').map(r=>r.name).find(url=>url.includes('/echarts_core.js'))
+   if(!url)throw new Error('ECharts core resource not found')
+   const echarts=await import(url),chart=echarts.getInstanceByDom(el),option=chart.getOption()
+   const values=option.series[0].data,index=values.map(Number).findLastIndex(v=>v>0)
+   return {pixel:chart.convertToPixel({seriesIndex:0},[index,values[index]]),index}
+  })
+  const box=await chartHost.boundingBox()
+  await page.mouse.click(box.x+7,box.y+12)
+  assert.equal(await chartHost.evaluate(async el=>{
+   const url=performance.getEntriesByType('resource').map(r=>r.name).find(url=>url.includes('/echarts_core.js'))
+   const chart=(await import(url)).getInstanceByDom(el),option=chart.getOption()
+   return option.legend[0].selected[option.series[0].name]
+  }),false)
+  await page.mouse.click(box.x+7,box.y+12)
+  await page.waitForTimeout(500)
+  await page.mouse.move(box.x+point.pixel[0],box.y+point.pixel[1]);await page.waitForTimeout(150)
+  await page.mouse.click(box.x+point.pixel[0],box.y+point.pixel[1])
+  const chartDetail=page.getByRole('dialog',{name:'模型调用明细'})
+  await chartDetail.getByText(/共 .* 条 · 已知输入/).waitFor()
+  await chartDetail.getByRole('button',{name:'Close this dialog',exact:true}).click()
+  result.checks.push('native chart tooltip and real point click open dated records')
+  await dashboard.getByRole('button',{name:'导出模型调用趋势 PNG',exact:true}).waitFor()
+  const image=page.waitForEvent('download');await dashboard.getByRole('button',{name:'导出模型调用趋势 PNG',exact:true}).click();const download=await image;await download.saveAs(path.join(dir,'model-trend.png'));assert.equal(fs.readFileSync(path.join(dir,'model-trend.png')).subarray(1,4).toString(),'PNG')
+  await dashboard.locator('.distribution-legend button').first().click()
+  const details=page.getByRole('dialog',{name:'模型调用明细'})
+  await details.getByText(/共 .* 条 · 已知输入/).waitFor()
+  assert.equal(await details.getByRole('textbox',{name:'模型筛选',exact:true}).inputValue(),summary.distribution[0].name)
+  const csv=page.waitForEvent('download');await details.getByRole('button',{name:'导出 CSV',exact:true}).click();await(await csv).saveAs(path.join(dir,'calls.csv'))
+  assert.ok(fs.readFileSync(path.join(dir,'calls.csv'),'utf8').includes('time_basis=UTC'))
+  await details.getByRole('textbox',{name:'搜索调用记录',exact:true}).fill('no-such-call-acceptance')
+  await details.getByRole('button',{name:'查询明细',exact:true}).click();await details.getByText('当前筛选无调用记录', {exact:true}).waitFor()
+  await details.getByRole('button',{name:'Close this dialog',exact:true}).click()
+  result.checks.push('model legend filters real records, PNG and CSV download, literal search empty state')
+ }
+ await dashboard.locator('.model-distribution .el-select').click()
+ await page.getByRole('option',{name:'工具',exact:true}).click()
+ await dashboard.getByRole('heading',{name:'工具调用占比',exact:true}).waitFor()
+ assert.equal(await dashboard.locator('.distribution-legend button').count(),summary.tool_distribution.length)
+ if(summary.tool_summary.calls){
+  await dashboard.locator('.distribution-legend button').first().click()
+  const toolDetails=page.getByRole('dialog',{name:'模型调用明细'})
+  await toolDetails.getByText(/共 .* 条 · 已知输入/).waitFor()
+  assert.ok(await toolDetails.getByRole('combobox',{name:'调用类别筛选'}).evaluate(el=>el.closest('.el-select').textContent.includes('工具调用')))
+  await toolDetails.getByRole('button',{name:'Close this dialog',exact:true}).click()
+ }
+ await dashboard.locator('.model-distribution .el-select').click();await page.getByRole('option',{name:'模型',exact:true}).click()
+ await dashboard.locator('.dashboard-meta .el-select').nth(1).click();await page.getByRole('option',{name:'每7天聚合',exact:true}).click()
+ await page.waitForTimeout(150)
+ await dashboard.locator('.dashboard-meta .el-select').nth(1).click();await page.getByRole('option',{name:'按日聚合',exact:true}).click()
+ result.checks.push('custom UTC calendar range, tool-only ledger drilldown, weekly aggregation')
+ if(summary.tasks.length){
+  const taskHost=dashboard.locator('.task-chart [role="img"]')
+  await taskHost.scrollIntoViewIfNeeded()
+  const position=await taskHost.evaluate(async el=>{
+   const url=performance.getEntriesByType('resource').map(r=>r.name).find(url=>url.includes('/echarts_core.js'))
+   const chart=(await import(url)).getInstanceByDom(el),option=chart.getOption(),values=option.series[0].data
+   const i=values.map(Number).findIndex(v=>v>0)
+   return chart.convertToPixel({seriesIndex:0},[i,values[i]/2])
+  })
+  const rect=await taskHost.boundingBox();await page.mouse.click(rect.x+position[0],rect.y+position[1])
+  const tasks=page.getByRole('dialog',{name:'全部任务记录'});await tasks.getByRole('button',{name:'查询任务',exact:true}).waitFor()
+  await tasks.locator('.el-table__body-wrapper').waitFor()
+  await tasks.getByRole('button',{name:'Close this dialog',exact:true}).click()
+  result.checks.push('native task bar click opens filtered persisted task list')
+ }
+ await page.getByRole('button',{name:'打开可拖动的 AI 学习助手'}).click()
+ const assistant=page.getByRole('region',{name:'AI 学习助手',exact:true})
+ await assistant.waitFor()
+ const assistantBox=await assistant.boundingBox()
+ assert.ok(assistantBox.x>=0 && assistantBox.y>=0 && assistantBox.x+assistantBox.width<=1441 && assistantBox.y+assistantBox.height<=901)
+ await page.getByRole('button',{name:'关闭助手',exact:true}).click()
+ await page.getByRole('button',{name:'打开可拖动的 AI 学习助手'}).waitFor()
+ result.checks.push('original assistant opens and collapses from reserved header slot')
+ await dashboard.locator('.worker-health').getByRole('button',{name:'查看全部 →'}).click()
+ const workerDialog=page.getByRole('dialog',{name:'Worker 注册与心跳'})
+ await workerDialog.getByText(/ONLINE 依据心跳/).waitFor()
+ await workerDialog.getByRole('button',{name:'Close this dialog',exact:true}).click()
+ if(await dashboard.locator('.recent-table tbody tr').count()){
+  await dashboard.locator('.recent-table tbody tr button').first().click()
+  const task=page.getByRole('dialog',{name:'任务执行详情'});await task.getByRole('heading',{name:'执行尝试',exact:true}).waitFor()
+  await task.getByRole('button',{name:'Close this dialog',exact:true}).click()
+ }
+ await dashboard.locator('.recent-tasks').getByRole('button',{name:'查看更多 →'}).click()
+ const tasks=page.getByRole('dialog',{name:'全部任务记录'});await tasks.getByRole('button',{name:'查询任务',exact:true}).waitFor()
+ await tasks.getByRole('button',{name:'Close this dialog',exact:true}).click()
+ result.checks.push('Worker full drawer, recent task stages and attempts, all task list')
+ failWorkers=true
+ await dashboard.getByRole('button',{name:'刷新',exact:true}).click()
+ await dashboard.getByText('Worker 心跳读取失败，请刷新重试。',{exact:true}).first().waitFor()
+ await page.locator('.dashboard-kpis strong').first().waitFor()
+ assert.equal(await dashboard.locator('.model-trend canvas').count(),1)
+ failWorkers=false;failStatistics=true
+ await dashboard.getByRole('button',{name:'刷新',exact:true}).click()
+ await dashboard.getByText('用量统计读取失败，请刷新重试。',{exact:true}).waitFor()
+ assert.equal(await dashboard.locator('.model-trend canvas').count(),0)
+ await dashboard.getByText('统计图表未加载，请刷新重试；未使用替代统计数据。',{exact:true}).waitFor()
+ failStatistics=false
+ await dashboard.getByRole('button',{name:'刷新',exact:true}).click()
+ await dashboard.locator('.model-trend canvas').waitFor()
+ result.checks.push('partial Worker outage retains statistics, statistics 503 clears stale chart, retry restores')
+ await page.goto('http://127.0.0.1:5175/admin/tasks')
+ const floating=page.getByRole('button',{name:'打开可拖动的 AI 学习助手'})
+ await floating.waitFor()
+ assert.equal(await floating.evaluate(el=>getComputedStyle(el).position),'fixed')
+ await floating.click()
+ const legacyAssistant=page.getByRole('region',{name:'AI 学习助手',exact:true})
+ await legacyAssistant.waitFor()
+ const legacyBox=await legacyAssistant.boundingBox()
+ assert.ok(legacyBox.x>=0 && legacyBox.y>=0 && legacyBox.x+legacyBox.width<=1441 && legacyBox.y+legacyBox.height<=901)
+ await page.getByRole('button',{name:'关闭助手',exact:true}).click()
+ await page.goto('http://127.0.0.1:5175/admin')
+ await page.locator('.dashboard-kpis strong').first().waitFor()
+ result.checks.push('legacy AI operations route and floating assistant remain usable after navigation')
+ assert.deepEqual(result.pageErrors,[])
+ result.passed=true
+}catch(error){result.error=String(error.stack||error);await page.screenshot({path:path.join(dir,'failure.png'),fullPage:false}).catch(()=>{});process.exitCode=1}
+finally{fs.writeFileSync(path.join(dir,'result.json'),JSON.stringify(result,null,2));await browser.close()}

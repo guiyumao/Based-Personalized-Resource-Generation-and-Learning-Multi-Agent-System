@@ -1,8 +1,10 @@
 import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js/lib/common'
+import 'highlight.js/styles/github.css'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 
-const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
+const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true, highlight: (code: string, language: string) => language !== "mermaid" && hljs.getLanguage(language) ? hljs.highlight(code, { language, ignoreIllegals: true }).value : "" })
 const defaultLinkOpen = markdown.renderer.rules.link_open
 markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
   tokens[index].attrSet('target', '_blank')

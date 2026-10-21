@@ -298,7 +298,9 @@ def test_practice_submission_returns_feedback(test_user) -> None:
 
     assert feedback.is_correct is True
     assert feedback.score == 100
-    assert feedback.mastery_after_update is not None
+    # This ad-hoc ID was never an attributable stored exercise. Feedback is
+    # returned, but an unconfirmed point must not manufacture graded mastery.
+    assert feedback.mastery_after_update is None
 
 
 def test_subjective_practice_submission_provides_reference_answer(test_user) -> None:
@@ -323,4 +325,4 @@ def test_subjective_practice_submission_provides_reference_answer(test_user) -> 
 
     assert feedback.is_correct is True
     assert feedback.score == 70
-    assert feedback.mastery_after_update is not None
+    assert feedback.mastery_after_update is None

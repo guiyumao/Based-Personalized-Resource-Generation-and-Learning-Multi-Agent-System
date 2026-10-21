@@ -797,6 +797,9 @@ class QAService:
                 subject=request.subject,
                 grade=request.grade,
                 performance_mode="balanced",
+                retrieval_context=request.retrieval_context,
+                allow_web_knowledge=request.allow_web_knowledge,
+                force_regenerate="重新生成" in request.question,
             ),
             snapshot=self.personalization_snapshot,
         )

@@ -167,7 +167,8 @@ class ProfileAnalysisService:
             gen_time = self._parse_time(cached["generated_at"])
             age = now - gen_time if gen_time else timedelta(hours=999)
             is_stale = (
-                cached.get("stale", False)
+                cached.get("evidence_version") != learning_content.get("evidence_version")
+                or cached.get("stale", False)
                 or cached.get("latest_answer_id") != evidence_key
                 or cached.get("latest_resource_interaction_id") != resource_evidence_key
                 or cached.get("transcript_analysis_id") != transcript_analysis_id
@@ -217,7 +218,8 @@ class ProfileAnalysisService:
         profile = self.db.get(UserProfile, user_id)
         if profile and profile.profile_analysis:
             cached = profile.profile_analysis
-            if isinstance(cached, dict):
+            from common.learning_evidence import EVIDENCE_VERSION
+            if isinstance(cached, dict) and not cached.get("stale") and cached.get("evidence_version") == EVIDENCE_VERSION:
                 return {"status": "completed", "analysis": self._format_analysis(cached)}
 
         return {"status": "idle"}
@@ -331,6 +333,7 @@ class ProfileAnalysisService:
                 "model": self.settings.deepseek_model or self.settings.openai_model,
                 "stale": False,
                 "profile_snapshot": dims,
+                "evidence_version": learning_content.get("evidence_version"),
                 "latest_answer_id": evidence_key,
                 "latest_resource_interaction_id": resource_evidence_key,
                 "transcript_analysis_id": transcript_analysis_id,

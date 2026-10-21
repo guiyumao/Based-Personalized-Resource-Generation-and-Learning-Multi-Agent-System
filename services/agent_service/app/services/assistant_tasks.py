@@ -162,11 +162,17 @@ def create_task(
     allow_web_knowledge: bool = False,
     learning_context_id: str | None = None,
     artifact_kind: str | None = None,
+    resource_video: dict | None = None,
+    chapter_revision: dict | None = None,
 ) -> tuple[AssistantTask, bool]:
     session_id = session.id
     request = {"message": message, "knowledge_point": knowledge_point, "exercise_count": exercise_count}
+    if chapter_revision:
+        request["chapter_revision"] = chapter_revision
     if artifact_kind:
         request["artifact_kind"] = artifact_kind
+    if resource_video:
+        request["resource_video"] = resource_video
     if learning_context_id:
         from common.learning_context import validate_context
         validate_context(db, user_id, learning_context_id)
@@ -366,9 +372,15 @@ def _coordinated_result(db: Session, task: AssistantTask) -> tuple[dict[str, Any
     topic = str(request.get("knowledge_point") or "").strip()
     message = str(request.get("message") or "")
     workspace_context_id = request.get("learning_context_id")
+    workspace_subject = ""
+    workspace_point_id = ""
+    workspace_goal = ""
     if workspace_context_id:
         from common.learning_context import validate_context
-        _, _, _, _, point, _ = validate_context(db, task.user_id, workspace_context_id)
+        _, workspace_plan, _, workspace_task, point, _ = validate_context(db, task.user_id, workspace_context_id)
+        workspace_subject = str((workspace_plan.path_data_json or {}).get("subject") or "")
+        workspace_point_id = str(point.id)
+        workspace_goal = f"\n当前学习任务：{workspace_task.get('title', '')}；任务目标：{workspace_task.get('objective', '')}。围绕该任务展开讲解、案例和练习。"
         if topic != point.name:
             raise ValueError("Learning context knowledge point differs")
     generation_actions = requested_generation_actions(message) if action == "combined" else {action}
@@ -428,15 +440,16 @@ def _coordinated_result(db: Session, task: AssistantTask) -> tuple[dict[str, Any
         ) if action == "combined" else AGENTS_BY_ACTION[action],
         "operation": "search",
         "query": topic,
-        "request_text": str(request.get("message") or ""),
+        "request_text": str(request.get("message") or "") + workspace_goal,
         "exercise_count": first_count,
         "only_exercises": wants_exercises and "courseware" not in generation_actions,
         "persist_path": False,
         "reference_materials": reference_materials[:12000],
         "use_learning_context": use_history,
         "assistant_operation_root": str(request.get("side_effect_root_task_id") or getattr(task, "id", "")),
-        "subject": str(request.get("knowledge_subject") or ""),
-        "dynamic_knowledge": bool(request.get("knowledge_subject")),
+        "subject": workspace_subject or str(request.get("knowledge_subject") or ""),
+        "knowledge_point_id": workspace_point_id,
+        "dynamic_knowledge": bool(workspace_subject or request.get("knowledge_subject")),
         "allow_web_knowledge": request.get("allow_web_knowledge") is True,
     }
     raw = _run_task_workflow(db, task, CoordinationRequest(
@@ -514,6 +527,13 @@ def _coordinated_result(db: Session, task: AssistantTask) -> tuple[dict[str, Any
             "learning_context_id": linked_context_id,
         })
         lines.append(f"课件已保存到资源库（编号 {resource['id']}）。")
+        if resource.get('reused'):
+            lines.append('本次复用相同目标、学情、资料和模板版本的已有课件，未重复调用生成模型。')
+        video = (resource.get('media') or {}).get('video') or {}
+        if video.get('status') == 'ready':
+            lines.append('字幕课件视频已保存，可在课件阅读器内播放（无声）。')
+        elif video.get('status') == 'failed':
+            lines.append('课件已保存；本地视频制作失败，可在阅读器内单独重试。')
     exercises = (outputs.get("exercise_generation_agent") or {}).get("exercise_set")
     exercise_data = None
     valid_exercises = False
@@ -546,7 +566,7 @@ def _coordinated_result(db: Session, task: AssistantTask) -> tuple[dict[str, Any
             preview.append(f"- {str(stage.get('title') or '学习阶段')[:60]}：{task_names}")
         lines.append("\n".join(preview))
     citations = jsonable_encoder(raw.get("citations") or [])
-    acquisition = outputs.get("knowledge_acquisition") or {}
+    acquisition = outputs.get("knowledge_acquisition") or (resource.get("knowledge_evidence") if isinstance(resource, dict) else None) or {}
     for source in acquisition.get("sources") or []:
         if not isinstance(source, dict) or not source.get("url"):
             continue
@@ -580,6 +600,7 @@ def _coordinated_result(db: Session, task: AssistantTask) -> tuple[dict[str, Any
         "evidence": {"selected_agents": raw.get("selected_agents") or [], "learning_context_used": use_history,
                      "learning_context_basis": "explicit_request" if explicit_history else "preference" if use_history else "disabled",
                      "knowledge_coverage": (outputs.get("knowledge_acquisition") or {}).get("coverage"),
+                     "knowledge_supplementation": acquisition.get("supplementation"),
                      "shared_knowledge_context_id": ((outputs.get("knowledge_acquisition") or {}).get("retrieval_context") or {}).get("context_id"),
                      "public_knowledge_sources": (outputs.get("knowledge_acquisition") or {}).get("sources", [])},
         "partial": raw.get("status") == "partial",
@@ -646,6 +667,27 @@ def execute_task(task_id: int) -> None:
                 from services.agent_service.app.services.resource_artifacts import produce_artifact
                 result = produce_artifact(db, task)
                 calls = [{"agent": "local_artifact_renderer", "output_status": "completed", "elapsed_ms": 0}]
+            elif task.task_type == "resource_video":
+                from common.resource_version import resource_version
+                from services.agent_service.app.services.resource_artifacts import ensure_resource_video
+                spec = task.request_json["resource_video"]
+                source = db.get(Resource, spec["resource_id"])
+                if not source or source.generated_for_user_id != task.user_id or source.publish_status == "archived" or resource_version(source) != spec["version"]:
+                    raise ValueError("原课件已改变，请重新打开")
+                media = ensure_resource_video(source)
+                db.expire_all()
+                source = db.get(Resource, spec["resource_id"])
+                if not source or source.publish_status == "archived" or resource_version(source) != spec["version"]:
+                    raise ValueError("课件在视频制作期间发生改变，请重新打开")
+                result = {"content": "字幕视频已保存（无声）", "media": media}
+                calls = [{"agent": "local_video_renderer", "output_status": "completed", "elapsed_ms": 0}]
+            elif task.task_type == "courseware_revision":
+                from services.agent_service.app.services.resource_generation import ResourceGenerationService
+                revision = dict(task.request_json["chapter_revision"])
+                db.rollback()  # no write transaction during provider invocation
+                generated = ResourceGenerationService().regenerate_chapter(task.user_id, int(task.request_json.get("side_effect_root_task_id") or task.id), **revision)
+                result = {"content": "新章节版本已生成；原课件保留。", "resource": generated}
+                calls = [{"agent": "resource_generation_agent", "output_status": "completed", "elapsed_ms": 0}]
             else:
                 result, calls = _coordinated_result(db, task)
             expire_stale_tasks(db, task_id=task_id)

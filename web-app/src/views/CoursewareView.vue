@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import CoursewareReader from '../components/CoursewareReader.vue'
 import { Download } from '@element-plus/icons-vue'
 import { renderLearningMarkdown } from '../utils/renderLearningMarkdown'
 
 import {
-  agentApi,
+  agentApi, resourceApi,
   type LearningPathResponse,
-  type ResourcePayload,
   type ResourceResult,
   type ResourceVariant,
 } from '../api'
@@ -25,6 +25,8 @@ type StoredCoursewareSnapshot = {
   topic: string
   goal: string
   selectedVariantId: string
+  version?: string
+  teaching_json?: string
   generatedAt: number
   resourceResult: ResourceResult
 }
@@ -43,6 +45,15 @@ const router = useRouter()
 const authStore = useAuthStore()
 const snapshot = ref<StoredCoursewareSnapshot | null>(readStoredSnapshot())
 const selectedVariantId = ref(snapshot.value?.selectedVariantId ?? '')
+const reader = ref<InstanceType<typeof CoursewareReader>>()
+const availableUpgrade = ref<any>(null)
+const checkingStored = ref(false)
+const storedLoadError = ref('')
+const legacySnapshot = computed(() => {
+  try { return JSON.parse(snapshot.value?.teaching_json || '{}').schema !== 'teaching-v2' } catch { return true }
+})
+let mounted = true
+onUnmounted(() => { mounted = false })
 const autoGenerating = ref(false)
 const generationProgress = ref(0)
 const progressStages = ref<ProgressStage[]>(createProgressStages())
@@ -70,13 +81,7 @@ const coursewareTitle = computed(() => {
 const coursewareContent = computed(() => activeCoursewareVariant.value?.content ?? snapshot.value?.resourceResult.content ?? '')
 const resourceSections = computed<CoursewareSection[]>(() => buildCoursewareSections(coursewareContent.value))
 const _coursewareOutline = computed(() => resourceSections.value.map((section) => section.heading))
-const coursewarePersonalization = computed(() => snapshot.value?.resourceResult.personalization ?? null)
-const readingProgress = computed(() => {
-  if (!resourceSections.value.length) {
-    return 0
-  }
-  return Math.round((resourceSections.value.filter((section) => section.html.trim()).length / resourceSections.value.length) * 100)
-})
+const coursewarePersonalization = computed(() => { const value = snapshot.value?.resourceResult.personalization; return value?.evidence?.version === "point-evidence-v4" ? value : null })
 const generatedTimeLabel = computed(() => {
   if (!snapshot.value?.generatedAt) {
     return '刚刚生成'
@@ -88,10 +93,7 @@ const downloadFileName = computed(() => `${buildSafeFileName(coursewareTitle.val
 function createProgressStages(): ProgressStage[] {
   return [
     { key: 'path', label: '读取学习路径', detail: '拉取当前学生的最新学习主题、路径目标和章节任务。', percent: 12, status: 'pending' },
-    { key: 'profile', label: '装配学习画像', detail: '合并真实作答、掌握度、错题和空态画像，不使用演示假数据。', percent: 26, status: 'pending' },
-    { key: 'rag', label: '检索知识材料', detail: '从知识库与 RAG 片段中提取可用于课件的概念、示例和易错点。', percent: 42, status: 'pending' },
-    { key: 'plan', label: '制定生成规划', detail: '确定课件标题、章节大纲、难度、风格和目标字数。', percent: 58, status: 'pending' },
-    { key: 'generate', label: '生成正式课件', detail: '调用资源生成智能体输出 Markdown；模型失败时自动生成兜底课件。', percent: 82, status: 'pending' },
+    { key: 'generate', label: '持久任务生成课件', detail: '由独立Worker检索、规划并逐章生成，执行进度来自服务端。', percent: 82, status: 'pending' },
     { key: 'persist', label: '保存课件快照', detail: '写入浏览器会话缓存，课件中心可直接展开阅读。', percent: 100, status: 'pending' },
   ]
 }
@@ -117,6 +119,8 @@ function finishProgress() {
 onMounted(async () => {
   if (!snapshot.value) {
     await generateFromLatestPath()
+  } else {
+    await refreshSavedCourseware()
   }
 })
 
@@ -134,15 +138,17 @@ function readStoredSnapshot(): StoredCoursewareSnapshot | null {
     if (!parsed || typeof parsed !== 'object' || !('resourceResult' in parsed)) {
       return null
     }
+    if (parsed.resourceResult?.user_id !== authStore.user?.userId) return null
     return parsed as StoredCoursewareSnapshot
   } catch {
     return null
   }
 }
 
-function reloadSnapshot() {
+async function reloadSnapshot() {
   snapshot.value = readStoredSnapshot()
   selectedVariantId.value = snapshot.value?.selectedVariantId ?? ''
+  if (snapshot.value) await refreshSavedCourseware()
   if (!snapshot.value) {
     ElMessage.warning('当前没有可展示的课件内容，请先回到工作台生成课件。')
   }
@@ -161,8 +167,59 @@ function selectCoursewareVariant(variantId: string) {
 }
 
 function scrollToCoursewareSection(anchor: string) {
-  const target = document.getElementById(anchor)
-  target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const section = resourceSections.value.find(item => item.anchor === anchor)
+  if (section) reader.value?.openHeading(section.heading)
+}
+
+async function adoptSavedCourseware(detail: any) {
+  if (!snapshot.value) return
+  const teaching = JSON.parse(detail.teaching_json || '{}')
+  snapshot.value = { ...snapshot.value, version: detail.version, teaching_json: detail.teaching_json,
+    selectedVariantId: '', resourceResult: { ...snapshot.value.resourceResult, id: detail.id,
+      content: detail.content, variants: [], personalization: teaching.personalization || null,
+      generation_plan: teaching.generation_plan, references: teaching.sources || [],
+    } }
+  selectedVariantId.value = ''
+  sessionStorage.setItem(COURSEWARE_STORAGE_KEY, JSON.stringify(snapshot.value))
+}
+async function refreshSavedCourseware() {
+  if (!snapshot.value || checkingStored.value) return
+  const id = snapshot.value.resourceResult.id
+  const userId = authStore.user?.userId
+  checkingStored.value = true
+  storedLoadError.value = ''
+  availableUpgrade.value = null
+  try {
+    let current: any
+    if (id) {
+      current = (await resourceApi.get(`/resources/${id}`)).data.data
+      if (!mounted || authStore.user?.userId !== userId || snapshot.value?.resourceResult.id !== id) return
+      await adoptSavedCourseware(current)
+    }
+    if (!legacySnapshot.value || !current) return
+    const visible = (await resourceApi.get('/resources')).data.data || []
+    const candidates = visible.filter((item: any) => item.id > id && item.type === 'courseware'
+      && item.owner_user_id === userId && current.knowledge_point_id != null
+      && item.knowledge_point_id === current.knowledge_point_id
+      && item.generation_status === 'generated').sort((a: any, b: any) => b.id - a.id)
+    for (const item of candidates) {
+      const detail = (await resourceApi.get(`/resources/${item.id}`)).data.data
+      const teaching = JSON.parse(detail.teaching_json || '{}')
+      if (!mounted || authStore.user?.userId !== userId || snapshot.value?.resourceResult.id !== id) return
+      // Match the saved subject as well; equal topic names across subjects are not enough.
+      if (teaching.schema === 'teaching-v2' && teaching.subject === snapshot.value.subject) {
+        availableUpgrade.value = detail
+        break
+      }
+    }
+  } catch (error: any) {
+    storedLoadError.value = `未能核验已保存课件：${error?.response?.data?.detail || error?.message || '请稍后刷新'}`
+  } finally { checkingStored.value = false }
+}
+async function openUpgrade() {
+  if (!availableUpgrade.value) return
+  await adoptSavedCourseware(availableUpgrade.value)
+  availableUpgrade.value = null
 }
 
 function goBack() {
@@ -227,7 +284,7 @@ function buildSafeFileName(rawTitle: string) {
   return `${stem || 'courseware'}-${datePart}`
 }
 
-async function generateFromLatestPath() {
+async function generateFromLatestPath(useCurrentTopic = false) {
   const user = authStore.user
   if (!user || autoGenerating.value) {
     return
@@ -239,27 +296,53 @@ async function generateFromLatestPath() {
   progressStages.value = createProgressStages()
   try {
     setProgress('path', 12)
-    const pathResponse = await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)
-    const path = pathResponse.data
+    const path = useCurrentTopic && snapshot.value
+      ? { knowledge_point: snapshot.value.topic || snapshot.value.resourceResult.knowledge_point, subject: snapshot.value.subject, overview: snapshot.value.goal }
+      : (await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)).data
     if (!path?.knowledge_point) {
       pathMissing.value = true
       return
     }
 
-    setProgress('profile', 26)
-    const payload: ResourcePayload = {
-      user_id: user.userId,
-      knowledge_point: path.knowledge_point,
-      resource_style: 'interactive',
-      resource_type: 'courseware',
-      learner_profile: {},
-      request_text: `围绕 ${path.subject || '当前学科'} 的 ${path.knowledge_point} 生成可独立阅读的正式课件`,
+    const pendingKey = `courseware-task:v2:${user.userId}:${path.subject}:${path.knowledge_point}`
+    let pending = JSON.parse(sessionStorage.getItem(pendingKey) || 'null')
+    if (!pending) {
+      pending = { client_request_id: crypto.randomUUID(), task_id: null }
+      sessionStorage.setItem(pendingKey, JSON.stringify(pending))
     }
-    setProgress('rag', 42)
-    setProgress('plan', 58)
-    setProgress('generate', 82)
-    const { data } = await agentApi.post<ResourceResult>('/resources/generate', payload)
-    const resourceResult = (data as any).data ?? data
+    setProgress('generate', 20)
+    if (!pending.task_id) {
+      const { data: submitted } = await agentApi.post('/assistant/chat', {
+        message: `${useCurrentTopic ? '重新生成' : '生成'}${path.knowledge_point}完整标准课件`, action: 'courseware',
+        knowledge_point: path.knowledge_point, course_key: path.subject,
+        client_request_id: pending.client_request_id, use_learning_context: false,
+      })
+      pending.task_id = submitted.task.id
+      sessionStorage.setItem(pendingKey, JSON.stringify(pending))
+    }
+    let task: any
+    while (mounted && authStore.user?.userId === user.userId) {
+      task = (await agentApi.get(`/assistant/tasks/${pending.task_id}`)).data
+      const completed = String(task.current_step || '').match(/课件章节 (\d+)\/9/)
+      if (completed) generationProgress.value = Math.min(96, 20 + Number(completed[1]) * 8)
+      progressStages.value = progressStages.value.map(stage => stage.key === 'generate' ? { ...stage, detail: task.current_step || '等待Worker执行' } : stage)
+      if (task.status === 'SUCCEEDED') break
+      if (['FAILED', 'TIMED_OUT', 'CANCELLED'].includes(task.status)) throw new Error(`任务 #${task.id} ${task.current_step}；已完成章节保留，可在学习助手中重试。`)
+      await new Promise(resolve => setTimeout(resolve, 1500))
+    }
+    if (!mounted || authStore.user?.userId !== user.userId) return
+    const card = task.result?.cards?.find((item: any) => item.type === 'courseware')
+    if (!card?.resource_id) throw new Error('任务没有返回可用课件，请查看任务详情')
+    const detail = (await resourceApi.get(`/resources/${card.resource_id}`)).data.data
+    const teaching = JSON.parse(detail.teaching_json || '{}')
+    const resourceResult = { id: detail.id, user_id: user.userId, knowledge_point: path.knowledge_point,
+      resource_type: 'courseware', resource_style: 'interactive', content: detail.content, variants: [],
+      generation_plan: teaching.generation_plan, references: teaching.sources || [],
+      personalization: teaching.personalization || { mastery_score: null, correct_rate: null, answered_count: 0,
+        weak_question_types: [], basis: teaching.personalization_basis || [], recent_mistakes: [] },
+      generation_status: detail.generation_status, audit_status: detail.audit_status, publish_status: detail.publish_status,
+    } as ResourceResult
+    if (!mounted || authStore.user?.userId !== user.userId) return
     const nextSelectedVariantId =
       resourceResult.variants?.find((item: any) => item.is_recommended)?.variant_id
       ?? resourceResult.variants?.[0]?.variant_id
@@ -271,12 +354,14 @@ async function generateFromLatestPath() {
       goal: path.overview,
       selectedVariantId: nextSelectedVariantId,
       generatedAt: Date.now(),
-      resourceResult,
+      resourceResult, version: detail.version, teaching_json: detail.teaching_json,
     }
     window.sessionStorage.setItem(COURSEWARE_STORAGE_KEY, JSON.stringify(nextSnapshot))
     snapshot.value = nextSnapshot
     selectedVariantId.value = nextSelectedVariantId
+    sessionStorage.removeItem(pendingKey)
     finishProgress()
+    availableUpgrade.value = null
     ElMessage.success('已根据最新学习路径生成课件')
   } catch (error: any) {
     if (error?.response?.status === 404) {
@@ -335,7 +420,8 @@ function buildCoursewareSections(content: string): CoursewareSection[] {
 
         <div class="action-row">
           <el-button @click="goBack">返回工作台</el-button>
-          <el-button v-if="snapshot" type="primary" @click="reloadSnapshot">刷新当前课件</el-button>
+          <el-button v-if="snapshot" type="primary" :loading="checkingStored" @click="reloadSnapshot">刷新当前课件</el-button>
+          <el-button v-if="snapshot" :loading="autoGenerating" @click="generateFromLatestPath(true)">重新生成完整课件</el-button>
           <el-button v-if="snapshot" :icon="Download" @click="downloadCurrentCourseware">
             下载课件
           </el-button>
@@ -401,16 +487,11 @@ function buildCoursewareSections(content: string): CoursewareSection[] {
         </div>
       </div>
 
+      <el-alert v-if="storedLoadError" :title="storedLoadError" type="warning" :closable="false" />
+      <el-alert v-if="legacySnapshot" title="正在阅读历史课件：旧正文不会自动变详细，旧学情段落已停止展示。" type="warning" :closable="false" />
+      <el-button v-if="availableUpgrade" type="primary" @click="openUpgrade">打开已生成的九章新版（{{ availableUpgrade.content.length }} 字符）</el-button>
       <div class="reader-layout">
         <aside class="reader-toc">
-          <div class="courseware-reading-progress">
-            <div style="display:flex;justify-content:space-between;gap:12px;align-items:center">
-              <strong>阅读拆解进度</strong>
-              <span>{{ readingProgress }}%</span>
-            </div>
-            <el-progress :percentage="readingProgress" :stroke-width="8" :show-text="false" />
-            <p>已识别 {{ resourceSections.length }} 个章节，当前课件可按目录逐章学习。</p>
-          </div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:10px">课件目录</div>
           <div class="outline-list">
             <button
@@ -463,11 +544,11 @@ function buildCoursewareSections(content: string): CoursewareSection[] {
             <div class="report-evidence-grid">
               <div class="report-evidence-card">
                 <span>当前掌握度</span>
-                <strong>{{ coursewarePersonalization.mastery_score }}/100</strong>
+                <strong>{{ coursewarePersonalization.mastery_score == null ? '暂无可靠评估' : `${coursewarePersonalization.mastery_score}/100` }}</strong>
               </div>
               <div class="report-evidence-card">
                 <span>近期正确率</span>
-                <strong>{{ coursewarePersonalization.correct_rate }}%</strong>
+                <strong>{{ coursewarePersonalization.correct_rate == null ? '暂无有效作答' : `${coursewarePersonalization.correct_rate}%` }}</strong>
               </div>
               <div class="report-evidence-card">
                 <span>真实作答次数</span>
@@ -483,15 +564,7 @@ function buildCoursewareSections(content: string): CoursewareSection[] {
             </ul>
           </article>
 
-          <section
-            v-for="section in resourceSections"
-            :id="section.anchor"
-            :key="section.anchor"
-            class="learning-section"
-          >
-            <h3>{{ section.heading }}</h3>
-            <div class="learning-markdown" v-html="section.html"></div>
-          </section>
+          <CoursewareReader ref="reader" hide-navigation :content="coursewareContent" :resource-id="snapshot.resourceResult.id" :version="snapshot.version" :structured="snapshot.teaching_json" />
 
         </div>
       </div>

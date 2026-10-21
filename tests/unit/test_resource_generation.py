@@ -11,6 +11,11 @@ from services.agent_service.app.services.resource_generation import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_video_rendering(monkeypatch):
+    monkeypatch.setattr(ResourceGenerationService, '_ensure_courseware_video', lambda self, resource: {'video': {'status': 'not_tested'}})
+
+
 def test_generate_courseware_with_stubbed_llm(monkeypatch):
     """Generation service should return resource metadata and content."""
 
@@ -35,28 +40,12 @@ def test_generate_courseware_with_stubbed_llm(monkeypatch):
         ),
     )
 
-    generated_markdown = """# Python loops
-
-## 学习目标
-理解 for 和 while 循环的使用条件。
-
-## 知识讲解
-for 适合遍历已知序列，while 适合按条件重复执行。
-
-## 示例讲解
-`for item in items` 会依次取出每个元素。
-
-## 课堂小结
-根据是否已知迭代对象选择循环结构。
-
-## 学完后自测
-说明两种循环的适用场景。
-"""
     contexts = []
 
     def generate(variables, **_kwargs):
         contexts.append(variables["context_text"])
-        return generated_markdown
+        from test_courseware_teaching_pipeline import module_fixture
+        return module_fixture()
 
     monkeypatch.setattr(service, "_invoke_llm", generate)
 

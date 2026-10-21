@@ -1,0 +1,72 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import assert from 'node:assert/strict'
+import {loadPlaywright} from './lib/env.mjs'
+const {module:pw}=loadPlaywright(),origin=process.env.E2E_BASE_URL,api=process.env.INSIGHTS_API,root=process.env.INSIGHTS_ARTIFACTS
+assert.ok(root&&process.env.NO_COST_TEST==='1')
+const browser=await pw.chromium.launch({headless:true})
+const context=await browser.newContext({viewport:{width:1440,height:1000}})
+await context.route('**/*',route=>[origin,api].includes(new URL(route.request().url()).origin)?route.continue():route.abort())
+const page=await context.newPage();page.setDefaultTimeout(20000)
+const report={passed:false,steps:[],errors:[],failedResponses:[]}
+page.on('pageerror',e=>report.errors.push(String(e)))
+page.on('response',r=>{if(r.url().startsWith(api)&&r.status()>=400)report.failedResponses.push({url:r.url().replace(api,''),status:r.status()})})
+const shot=name=>page.screenshot({path:path.join(root,name+'.png'),fullPage:true})
+try {
+  await page.goto(origin+'/login')
+  await page.locator('input[autocomplete=username]').fill('insights-learner')
+  await page.locator('input[autocomplete=current-password]').fill(process.env.INSIGHTS_PASSWORD)
+  await page.getByRole('button',{name:'登录',exact:true}).click();await page.waitForURL(url=>['/student/dashboard','/profile-setup'].includes(url.pathname))
+  await page.goto(origin+'/student/analytics')
+  await page.getByRole('heading',{name:'学习分析仪表盘',exact:true}).waitFor()
+  await page.getByText('2 次作答，按已判分记录计算',{exact:true}).waitFor()
+  await page.getByText('50%',{exact:true}).first().waitFor()
+  await page.locator('.learning-heatmap button').last().click()
+  await page.locator('.day-detail').getByText(/作答 2 次/).waitFor()
+  await shot('analytics-overview')
+  await page.getByRole('combobox').selectOption('7')
+  await page.getByText('近7天学习',{exact:true}).waitFor()
+  await page.waitForFunction(()=>document.querySelectorAll('.learning-heatmap button').length===7)
+  await page.getByRole('tab',{name:'对话分布',exact:true}).click()
+  await page.getByRole('heading',{name:'每日提问分布',exact:true}).waitFor()
+  await page.getByRole('tab',{name:'复习助手',exact:true}).click()
+  await page.getByRole('heading',{name:'闪卡复习概览',exact:true}).waitFor()
+  await shot('analytics-review')
+  report.steps.push('real_statistics_heatmap_range_tabs')
+  await page.goto(origin+'/student/profile')
+  await page.getByRole('heading',{name:'我的学习画像',exact:true}).waitFor()
+  await page.getByText('0/4项已填写',{exact:true}).waitFor()
+  await page.getByRole('button',{name:'编辑画像',exact:true}).click()
+  await page.getByRole('checkbox',{name:'填写信息输入',exact:true}).check()
+  const slider=page.getByRole('slider',{name:'信息输入倾向',exact:true})
+  await slider.focus()
+  for(let i=0;i<13;i++) await slider.press('ArrowRight')
+  await page.getByRole('textbox',{name:'目标导向',exact:true}).fill('掌握分数计算并完成练习')
+  const [saved]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/learning-portrait')&&r.request().method()==='PUT'),page.getByRole('button',{name:'保存画像',exact:true}).click()])
+  assert.equal(saved.status(),200)
+  await page.reload()
+  await page.getByText('掌握分数计算并完成练习',{exact:true}).waitFor()
+  await page.getByText('视觉倾向 65%',{exact:true}).waitFor()
+  await shot('portrait-saved')
+  await page.getByRole('button',{name:'编辑画像',exact:true}).click()
+  await page.getByRole('textbox',{name:'目标导向',exact:true}).fill('未保存的修改')
+  await page.getByRole('button',{name:'取消',exact:true}).click()
+  await page.getByText('掌握分数计算并完成练习',{exact:true}).waitFor()
+  report.steps.push('profile_edit_save_refresh_cancel')
+  const auth=await page.evaluate(()=>JSON.parse(localStorage.getItem('learning-system-auth')))
+  const headers={Authorization:`Bearer ${auth.token}`}
+  for(const endpoint of ['/user/users/2/learning-portrait','/evaluation/evaluation/analytics/2/insights'])assert.equal((await context.request.get(api+endpoint,{headers})).status(),403)
+  assert.equal((await context.request.get(api+'/user/users/1/learning-portrait')).status(),401)
+  report.steps.push('cross_user_and_anonymous_rejected')
+  for(const route of ['analytics','profile']) {
+    await page.setViewportSize({width:390,height:844});await page.goto(origin+'/student/'+route)
+    await page.locator('.learner-insights').waitFor();await page.waitForTimeout(400)
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false)
+    await shot(route+'-mobile')
+  }
+  report.steps.push('mobile_routes')
+  assert.deepEqual(report.errors,[])
+  // Dashboard is outside this isolated service pair; retain failures separately.
+  assert.ok(report.failedResponses.every(r=>!r.url.includes('/insights')&&!r.url.includes('/learning-portrait')),JSON.stringify(report.failedResponses))
+  report.passed=true
+}catch(e){report.error=String(e);await shot('failure');throw e}finally{fs.writeFileSync(path.join(root,'browser-result.json'),JSON.stringify(report,null,2));await browser.close()}

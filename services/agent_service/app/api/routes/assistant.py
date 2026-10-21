@@ -50,7 +50,7 @@ class AssistantChatInput(BaseModel):
     exercise_count: int = Field(default=5, ge=3, le=20)
     teaching_mode: Literal["basic", "standard", "deep", "socratic", "exam"] = "standard"
     use_learning_context: bool = False
-    allow_web_knowledge: bool = False
+    allow_web_knowledge: bool = True
     course_key: str = Field(default="", max_length=100)
     attachment_ids: list[int] = Field(default_factory=list, max_length=3)
     learning_context_id: str | None = Field(default=None, max_length=36)
@@ -358,6 +358,15 @@ def get_task(
     if task is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     result = task_to_dict(task)
+    if task.status in {"RUNNING", "FAILED"} and task.task_type in {"courseware", "combined"}:
+        from common.models.learning import Resource
+        root = (task.request_json or {}).get("side_effect_root_task_id") or task.id
+        partial = db.query(Resource).filter_by(
+            assistant_operation_key=f"assistant:{root}:resource", generated_for_user_id=current_user.id,
+            generation_status="generating").first()
+        if partial and partial.publish_status != "archived" and partial.content:
+            result["partial_resource"] = {"id": partial.id, "title": partial.title,
+                                          "content": partial.content, "structured_json": partial.structured_json}
     result["agent_executions"] = [
         {"agent_code": row.agent_code, "status": row.status, "elapsed_ms": row.elapsed_ms, "error_code": row.error_code}
         for row in db.query(AssistantAgentExecution).filter(AssistantAgentExecution.task_id == task.id).order_by(AssistantAgentExecution.id).all()
@@ -453,11 +462,22 @@ def retry_task(
         if previous.id == original.id or previous.session_id != original.session_id or previous.task_type != original.task_type or previous_request != original_request or previous_root not in (None, expected_root):
             raise HTTPException(status_code=409, detail="请求标识已用于另一项任务")
         return {"kind": "task", "conversation_id": session.id, "original_task_id": original.id, "task": task_to_dict(previous)}
-    if original.task_type in {"courseware", "exercise", "plan", "combined"} and not payload.confirm_side_effects:
+    if original.task_type in {"courseware", "exercise", "plan", "combined", "courseware_revision"} and not payload.confirm_side_effects:
         raise HTTPException(
             status_code=409,
             detail="原任务可能已保存部分课件、练习或学习路径。请先检查已有成果，确认可能重复生成后再重试。",
         )
+    if payload.confirm_side_effects and original.task_type in {"courseware", "combined", "courseware_revision"}:
+        from common.models.learning import Resource
+        root_task = int(request.get("side_effect_root_task_id") or original.id)
+        operation_key = f"chapter-revision:{root_task}" if original.task_type == "courseware_revision" else f"assistant:{root_task}:resource"
+        partial = db.query(Resource).filter_by(assistant_operation_key=operation_key, generated_for_user_id=current_user.id, generation_status="generating").first()
+        if partial:
+            metadata = json.loads(partial.structured_json or "{}")
+            metadata["ambiguous_retry_acknowledged"] = {"task_id": original.id, "at": datetime.utcnow().isoformat()}
+            metadata["in_flight"] = None
+            partial.structured_json = json.dumps(metadata, ensure_ascii=False)
+            db.flush()
     task, created = _create_learning_task(
         db,
         user_id=current_user.id,
@@ -473,6 +493,7 @@ def retry_task(
         knowledge_subject=str(request.get("knowledge_subject") or ""),
         learning_context_id=request.get("learning_context_id"),
         artifact_kind=request.get("artifact_kind"),
+        chapter_revision=request.get("chapter_revision"),
         allow_web_knowledge=request.get("allow_web_knowledge") is True,
     )
     if created and task_execution_mode() == "background":

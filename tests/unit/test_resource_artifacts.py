@@ -18,6 +18,46 @@ from services.agent_service.app.main import app
 from services.agent_service.app.services import assistant_execution, assistant_tasks, resource_artifacts
 
 
+def test_resource_center_mindmap_edit_has_no_plan_requirement_and_checks_owner(media):
+    client, factory, _ = media
+    data = client.get('/learning/resources/1/mindmap').json()
+    body = {'expected_resource_version':data['resource_version'], 'nodes':[{'id':'root','label':'edited TCP','parent_id':None}]}
+    assert client.put('/learning/resources/1/mindmap',json=body).status_code == 200
+    assert len(client.get('/learning/resources/1/resource-history').json()['items']) == 2
+    assert client.put('/learning/resources/1/mindmap',json=body).status_code == 409
+    app.dependency_overrides[get_current_user] = lambda: User(id=2,username='other',password_hash='unused')
+    assert client.get('/learning/resources/1/mindmap').status_code == 404
+    assert client.put('/learning/resources/1/mindmap',json=body).status_code == 404
+    assert client.get('/learning/resources/1/resource-history').status_code == 404
+
+
+def test_resource_video_works_without_learning_plan_and_is_version_scoped(media, monkeypatch):
+    from common.db import session
+    client, factory, _ = media
+    monkeypatch.setattr(session, 'SessionLocal', factory)
+    with factory() as db:
+        source = db.get(Resource, 1)
+        source.type = 'courseware'
+        source.content = '# 冒泡排序\n比较相邻元素，大于右邻时交换。'
+        db.commit()
+        version = resource_version(source)
+    assert client.get('/resources/1/video').status_code == 404
+    response = client.post('/resources/1/video', json={'client_request_id': 'global-video-test', 'expected_version': version})
+    assert response.status_code == 202, response.text
+    task = client.get(f"/assistant/tasks/{response.json()['id']}").json()
+    assert task['status'] == 'SUCCEEDED', task
+    file = client.get('/resources/1/video')
+    assert file.status_code == 200 and file.headers['content-type'] == 'video/webm'
+    app.dependency_overrides[get_current_user] = lambda: User(id=2, username='other', password_hash='unused')
+    assert client.get('/resources/1/video').status_code == 404
+    app.dependency_overrides[get_current_user] = lambda: User(id=1, username='owner', password_hash='unused')
+    with factory() as db:
+        db.get(Resource, 1).content += '\n新的正文'
+        db.commit()
+    assert client.get('/resources/1/video').status_code == 404
+    assert client.post('/resources/1/video', json={'client_request_id': 'stale-video-test', 'expected_version': version}).status_code == 409
+
+
 @pytest.fixture
 def media(tmp_path, monkeypatch):
     engine=create_engine(f"sqlite:///{tmp_path/'media.sqlite'}",connect_args={"check_same_thread":False})
@@ -46,7 +86,7 @@ def media(tmp_path, monkeypatch):
     engine.dispose()
 
 
-@pytest.mark.parametrize("kind",["pptx","animation"])
+@pytest.mark.parametrize("kind",["pptx","animation","video"])
 def test_actual_file_roundtrip_replay_ownership_and_version(media,kind):
     client,factory,context_id=media
     body={"kind":kind,"client_request_id":f"render-{kind}-fixture"}
@@ -62,8 +102,17 @@ def test_actual_file_roundtrip_replay_ownership_and_version(media,kind):
         from pptx import Presentation
         slides=Presentation(io.BytesIO(content.content)).slides
         assert "TCP" in "".join(shape.text for slide in slides for shape in slide.shapes if shape.has_text_frame)
-    else:
+    elif kind=="animation":
         assert b"<animate " in content.content and b"<script" not in content.content
+    else:
+        import cv2
+        assert content.headers['content-type'] == 'video/webm'
+        assert content.content[:4] == bytes.fromhex('1a45dfa3')
+        with factory() as db:
+            capture = cv2.VideoCapture(str(resource_artifacts.verified_path(db.get(ResourceArtifact, artifact_id))))
+            assert capture.read()[0]
+            assert capture.get(cv2.CAP_PROP_FRAME_COUNT) >= 12
+            capture.release()
     assert client.post(f"/learning/contexts/{context_id}/artifacts",json=body).json()["id"]==task_id
     app.dependency_overrides[get_current_user]=lambda:User(id=2,username="other",password_hash="unused")
     assert client.get(f"/learning/artifacts/{artifact_id}/file").status_code==404

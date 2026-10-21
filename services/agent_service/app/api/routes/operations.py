@@ -1,7 +1,7 @@
 """Administrator task operations from durable records, without prompt disclosure."""
 
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -132,6 +132,30 @@ def operations_overview(days: int = Query(7, ge=1, le=90), db: Session = Depends
     }
 
 
+@router.get('/tasks')
+def operation_tasks(start: date | None = None, end: date | None = None,
+    days: int = Query(7, ge=1, le=90), kind: Literal['assistant', 'knowledge'] | None = None,
+    operation: str | None = Query(None, max_length=100), state: str | None = Query(None, max_length=30),
+    page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
+    from services.agent_service.app.services.dashboard_statistics import TASK_STATES, calendar_range
+    lower, upper = calendar_range(start, end, days)
+    rows, total = [], 0
+    for task_kind, model in MODELS.items():
+        if kind and kind != task_kind:
+            continue
+        query = db.query(model).filter(model.created_at >= lower, model.created_at < upper)
+        if operation is not None:
+            query = query.filter((model.task_type if task_kind == 'assistant' else model.operation_type) == operation)
+        if state:
+            statuses = [key for key, value in TASK_STATES.items() if value == state]
+            query = query.filter(model.status.notin_(list(TASK_STATES)) if state == 'other' else model.status.in_(statuses))
+        total += query.count()
+        rows.extend(task_summary(task_kind, task, datetime.utcnow()) for task in query.order_by(
+            model.created_at.desc(), model.id.desc()).limit(page * size).all())
+    rows.sort(key=lambda row: (row['created_at'], row['kind'], row['id']), reverse=True)
+    return {'items': rows[(page-1)*size:page*size], 'total': total, 'page': page, 'size': size, 'timezone': 'UTC'}
+
+
 @router.get("/tasks/{kind}/{task_id}")
 def operation_task(
     kind: Literal["assistant", "knowledge"], task_id: int, db: Session = Depends(get_db)
@@ -164,4 +188,20 @@ def operation_task(
     result["attempts"] = [{"attempt": row.attempt, "status": row.status, "started_at": row.started_at,
         "finished_at": row.finished_at, "error_code": code(row.error_code)} for row in db.query(TaskAttempt).filter_by(
             task_kind=kind, task_id=task_id).order_by(TaskAttempt.attempt).all()]
+    # Follow only persisted identifiers; never return arbitrary result JSON, prompts or local paths.
+    result['related_resources'] = []
+    if kind == 'assistant' and isinstance(task.result_json, dict):
+        from common.models.learning import Resource
+        resource_ids = set()
+        cards = task.result_json.get('cards')
+        for card in cards[:100] if isinstance(cards, list) else []:
+            if isinstance(card, dict) and type(card.get('resource_id')) is int:
+                resource_ids.add(card['resource_id'])
+        resource = task.result_json.get('resource')
+        if isinstance(resource, dict) and type(resource.get('id')) is int:
+            resource_ids.add(resource['id'])
+        if resource_ids:
+            result['related_resources'] = [{'id': row.id, 'title': row.title, 'type': row.type,
+                'publish_status': row.publish_status} for row in db.query(Resource).filter(
+                    Resource.id.in_(resource_ids), Resource.generated_for_user_id == task.user_id).all()]
     return result

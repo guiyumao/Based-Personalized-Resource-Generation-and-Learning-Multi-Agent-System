@@ -52,6 +52,7 @@ dependencies = [
     # the fixed line; the image helpers used by transcript_parser were re-verified
     # against 12.3.0 (grayscale/autocontrast/MedianFilter/ImageEnhance).
     "Pillow>=12.3.0",
+    "opencv-python-headless>=4.10.0",
     "pytesseract>=0.3.13",
     "pypdfium2>=4.30.0",
     "reportlab>=4.2.2",

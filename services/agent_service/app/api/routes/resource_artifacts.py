@@ -24,7 +24,7 @@ router = APIRouter(prefix="/learning", tags=["learning-artifacts"])
 
 
 class ArtifactRequest(BaseModel):
-    kind: Literal["pptx", "animation", "audio"]
+    kind: Literal["pptx", "animation", "audio", "video"]
     client_request_id: str = Field(min_length=8, max_length=80)
 
 
@@ -63,5 +63,5 @@ def artifact_file(artifact_id: str, db: Session = Depends(get_db), user: User = 
     validate_context(db, user.id, row.context_id)
     path = verified_path(row)
     return FileResponse(path, media_type=FORMATS[row.kind][0], filename=f"learning-{row.resource_id}.{FORMATS[row.kind][1]}",
-        content_disposition_type="inline" if row.kind in {"animation", "audio"} else "attachment",
+        content_disposition_type="inline" if row.kind in {"animation", "audio", "video"} else "attachment",
         headers={"Cache-Control": "private, no-store", "Content-Security-Policy": "sandbox; default-src 'none'", "X-Content-Type-Options": "nosniff"})

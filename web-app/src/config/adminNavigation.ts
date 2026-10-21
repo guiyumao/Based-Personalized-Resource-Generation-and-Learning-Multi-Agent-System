@@ -10,7 +10,7 @@ export const adminNavigation = [
   { key: 'review', label: '审核与发布', description: '候选审核、发布验证、版本比较与恢复', group: '学科与知识库', icon: DocumentChecked, route: '/admin/knowledge/review', routeName: 'admin-review', roles: ['admin'] as const },
   { key: 'maintenance', label: '自动维护配置', description: '定期巡检、自动补充策略与执行报告', group: '学科与知识库', icon: Setting, route: '/admin/knowledge/maintenance', routeName: 'admin-maintenance', roles: ['admin'] as const },
   { key: 'resources', label: '学习资源管理', description: '资源预览、审核状态、发布与归档', group: '教学与资源', icon: Collection, route: '/admin/resources', routeName: 'admin-resources', roles: ['admin'] as const },
-  { key: 'tasks', label: '知识建设与采集任务', description: '巡检、来源搜索与抓取、取消、重试和真实用量记录', group: 'AI 与任务管理', icon: Cpu, route: '/admin/tasks', routeName: 'admin-tasks', roles: ['admin'] as const },
+  { key: 'tasks', label: 'AI 用量与任务监控', description: 'Token 调用台账、预算、Worker 心跳、执行尝试及知识建设任务', group: 'AI 与任务管理', icon: Cpu, route: '/admin/tasks', routeName: 'admin-tasks', roles: ['admin'] as const },
   { key: 'prompts', label: '提示词与图文配置', description: 'Prompt 模板维护与图片 Provider 配置状态（BLOCKED 入口）', group: 'AI 内容编排', icon: EditPen, route: '/admin/prompts', routeName: 'admin-prompts', roles: ['admin'] as const },
   { key: 'logs', label: '操作日志', description: '系统审计记录与级别筛选', group: '系统运维', icon: Tickets, route: '/admin/logs', routeName: 'admin-logs', roles: ['admin'] as const },
   { key: 'settings', label: '系统配置', description: '现有非敏感配置参数维护', group: '系统运维', icon: Setting, route: '/admin/settings', routeName: 'admin-settings', roles: ['admin'] as const },

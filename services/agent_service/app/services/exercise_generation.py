@@ -58,11 +58,13 @@ class ExerciseGenerationService:
                     user_id=request.user_id,
                     knowledge_point=request.knowledge_point,
                     fallback_profile=request.learner_profile,
+                    point_id=request.knowledge_point_id, subject=request.subject,
                 )
             # Do not flush a newly inferred point before the provider call:
             # SQLite would hold a writer lock and block durable call accounting.
             # Persistence resolves/creates the point only after generation.
-            knowledge_point = db.query(KnowledgePoint).filter_by(name=request.knowledge_point).first()
+            from common.learning_evidence import resolve_point
+            knowledge_point = resolve_point(db, request.knowledge_point, point_id=request.knowledge_point_id, subject=request.subject, chapter=request.chapter)
             previous_signatures = set() if knowledge_point is None or snapshot.learner_profile.get("history_disabled") else self._load_recent_exercise_signatures(db, knowledge_point.id, request.user_id)
             agent_plan = self._build_exercise_agent_plan(request, snapshot, previous_signatures)
 
@@ -165,6 +167,7 @@ class ExerciseGenerationService:
                         "human",
                         (
                             "请围绕下面的信息生成一组真正可作答、可评估的练习题。\n"
+                            "学科：{subject}；章节：{chapter}；正式知识点ID：{knowledge_point_id}\n"
                             "知识点：{knowledge_point}\n"
                             "生成模式：{generation_mode}\n"
                             "呈现风格：{resource_style}\n"
@@ -212,6 +215,7 @@ class ExerciseGenerationService:
                 chain,
                 {
                     "knowledge_point": request.knowledge_point,
+                    "subject": request.subject, "chapter": request.chapter, "knowledge_point_id": request.knowledge_point_id,
                     "generation_mode": request.generation_mode,
                     "resource_style": request.resource_style,
                     "learner_profile": self._build_conditional_profile_text(request.knowledge_point, snapshot),
@@ -424,6 +428,10 @@ class ExerciseGenerationService:
 
     def _build_retrieval_text(self, request: ExerciseGenerationRequest) -> str:
         supplied = request.retrieval_context
+        if not supplied:
+            from .knowledge_acquisition import prepare_generation_context
+            with SessionLocal() as db:
+                supplied = prepare_generation_context(db, request)
         chunks: list[dict[str, Any]] = []
         if (
             isinstance(supplied, dict)
@@ -433,7 +441,9 @@ class ExerciseGenerationService:
             }
             and isinstance(supplied.get("retrieved_chunks"), list)
         ):
-            chunks = list(supplied["retrieved_chunks"])
+            from .knowledge_publication import visible_chunks
+            chunks = visible_chunks(list(supplied["retrieved_chunks"]))
+            request.retrieval_context = {**supplied, "retrieved_chunks": chunks}
             trace = get_current_trace()
             if trace is not None:
                 trace.record_retrieval(len(chunks), cache_hit=True, cache_type="retrieval_context")
@@ -599,11 +609,12 @@ class ExerciseGenerationService:
         return mapping.get(normalized, "foundation")
 
     def _build_llm_system_prompt(self) -> str:
+        self.prompt_template = _load_prompt_template("exercise_gen.md")
         return (
             f"{self.prompt_template}\n\n"
             "额外硬性要求：\n"
-            "1. 先根据学习者画像、画像分析摘要、掌握度、近期错题和当前知识点确定出题角度，再生成题目。\n"
-            "2. 题目必须体现个性化依据，尤其要针对薄弱题型、错误模式、学习速度、兴趣方向或目标导向中的至少一项。\n"
+            "1. 只在可信同主题作答证据存在时针对错点命题；其他情况按当前主题的通用教学目标命题。\n"
+            "2. 不强制个性化：未知掌握度、未验证画像和旧课件学情段落不能用来推断学生薄弱点、学习速度或风格。\n"
             "3. 不得生成与近期已生成题目签名相同或仅替换题号的题目。\n"
             "4. 如果近期题目签名很多，请改换考查场景、条件、数据、问法和干扰项，生成新的变式。\n"
             "5. 近期已生成题目签名如下：{previous_question_signatures}\n"
@@ -685,7 +696,7 @@ class ExerciseGenerationService:
 
         if snapshot.learner_profile.get("history_disabled"):
             difficulty_mix = {"foundation": 0.5, "intermediate": 0.4, "advanced": 0.1}
-        elif snapshot.mastery_score < 40:
+        elif snapshot.mastery_score is None or snapshot.mastery_score < 40:
             difficulty_mix = {"foundation": 0.7, "intermediate": 0.3, "advanced": 0.0}
         elif snapshot.mastery_score < 70:
             difficulty_mix = {"foundation": 0.5, "intermediate": 0.4, "advanced": 0.1}
@@ -723,7 +734,7 @@ class ExerciseGenerationService:
         if snapshot.learner_profile.get("history_disabled"):
             return ["已关闭自动使用历史学习信息；本次仅依据当前需求与资料生成练习。"]
         basis: list[str] = []
-        if snapshot.answered_count:
+        if snapshot.mastery_score is not None:
             basis.append(
                 f"当前掌握度约 {snapshot.mastery_score}/100，来自 {snapshot.answered_count} 次真实作答。"
             )
@@ -1794,7 +1805,7 @@ class ExerciseGenerationService:
             "practice": "已生成一组分层练习题。",
         }.get(request.generation_mode, "已生成一组练习题。")
 
-        if snapshot.answered_count:
+        if snapshot.mastery_score is not None:
             summary = (
                 f"{prefix} 当前掌握度约 {snapshot.mastery_score}/100，"
                 f"该知识点已有 {snapshot.answered_count} 次真实作答记录，"
@@ -1825,7 +1836,7 @@ class ExerciseGenerationService:
     ) -> tuple[str, list[str], str, str]:
         article = self.knowledge_base.get_article(knowledge_point)
         topic = article.title if article is not None else knowledge_point
-        novice_hint = mastery_score < 60
+        novice_hint = mastery_score is None or mastery_score < 60
 
         if question_type == "choice":
             prompt, options, answer, analysis = self._build_choice_variant(
@@ -1988,7 +1999,7 @@ class ExerciseGenerationService:
                 if len(existing) != request.exercise_count:
                     raise ValueError("已保存题组数量不完整，停止重复生成")
                 return [self._saved_assistant_exercise(row, request.user_id) for row in existing]
-        knowledge_point = knowledge_point or self._resolve_or_create_knowledge_point(db, request.knowledge_point)
+        knowledge_point = knowledge_point or self._resolve_or_create_knowledge_point(db, request.knowledge_point, request)
         ensure_write_allowed(db)
         if operation_key:
             existing = db.query(Exercise).filter(
@@ -2075,8 +2086,13 @@ class ExerciseGenerationService:
             "answer": row.answer, "analysis": row.analysis,
         }
 
-    def _resolve_or_create_knowledge_point(self, db: Session, knowledge_point: str) -> KnowledgePoint:
-        existing = db.query(KnowledgePoint).filter(KnowledgePoint.name == knowledge_point).first()
+    def _resolve_or_create_knowledge_point(self, db: Session, knowledge_point: str, request=None) -> KnowledgePoint:
+        if request is not None:
+            from common.learning_evidence import resolve_point
+            point = resolve_point(db, knowledge_point, point_id=request.knowledge_point_id, subject=request.subject)
+            if point is not None:
+                return point
+        existing = db.query(KnowledgePoint).filter(KnowledgePoint.name == knowledge_point, KnowledgePoint.subject_id.is_(None)).first()
         if existing is not None:
             return existing
 
@@ -2086,7 +2102,7 @@ class ExerciseGenerationService:
             description=article.summary if article is not None else f"{knowledge_point} 自动生成知识点。",
             difficulty=2,
             importance=3,
-            subject_id=1,
+            subject_id=None,
         )
         db.add(record)
         db.flush()

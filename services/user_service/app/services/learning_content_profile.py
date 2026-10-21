@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections import defaultdict
 from typing import Any
 
@@ -30,52 +29,24 @@ def build_learning_content_profile(db: Session, user_id: int, profile: UserProfi
         .limit(500)
         .all()
     )
-    mastery = profile.mastery_json if isinstance(profile.mastery_json, dict) else {}
-    topics: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"attempts": 0, "graded": 0, "correct": 0, "wrong": 0, "latest_answer_id": 0}
-    )
-    graded = correct = 0
-    for answer, exercise, knowledge_point in rows:
-        evaluation = answer.evaluation_json if isinstance(answer.evaluation_json, dict) else {}
-        try:
-            content = json.loads(exercise.content) if exercise.content else {}
-        except (TypeError, ValueError):
-            content = {}
-        content = content if isinstance(content, dict) else {}
-        raw_points = evaluation.get("knowledge_point_ids") or content.get("knowledge_point_ids")
-        if not isinstance(raw_points, list) or not raw_points:
-            raw_points = [knowledge_point.name] if knowledge_point is not None else []
-        names = list(dict.fromkeys(str(point).strip() for point in raw_points if str(point).strip()))[:5]
-        if isinstance(answer.is_correct, bool):
-            graded += 1
-            correct += int(answer.is_correct)
-        for name in names:
-            item = topics[name]
-            item["attempts"] += 1
-            item["latest_answer_id"] = max(item["latest_answer_id"], answer.id)
-            if isinstance(answer.is_correct, bool):
-                item["graded"] += 1
-                item["correct"] += int(answer.is_correct)
-                item["wrong"] += int(not answer.is_correct)
-
+    from common.learning_evidence import EVIDENCE_VERSION, load_evidence, summarize
+    evidence = load_evidence(db, user_id)
+    grouped = defaultdict(list)
+    for row in evidence:
+        grouped[row["knowledge_point_id"]].append(row)
     knowledge_points = []
-    for name, item in topics.items():
-        saved = mastery.get(name)
-        score = saved.get("score") if isinstance(saved, dict) else None
-        if not isinstance(score, (int, float)) or isinstance(score, bool):
-            score = None
-        knowledge_points.append(
-            {
-                "name": name,
-                "attempts": item["attempts"],
-                "wrong": item["wrong"],
-                "accuracy": round(100 * item["correct"] / item["graded"])
-                if item["graded"] else None,
-                "mastery": round(max(0, min(100, score))) if score is not None else None,
-                "weak": bool(saved.get("weak")) if isinstance(saved, dict) else False,
-                "latest_answer_id": item["latest_answer_id"],
-            }
-        )
+    for point_id, records in grouped.items():
+        stats = summarize(records)
+        latest = records[-1]
+        knowledge_points.append({"name": latest["knowledge_point"], "knowledge_point_id": point_id,
+            "subject_id": latest["subject_id"], "attempts": stats["sample_size"],
+            "wrong": sum(not r["is_correct"] for r in {r["exercise_id"]: r for r in records}.values()),
+            "accuracy": stats["correct_rate"], "mastery": stats["mastery_score"],
+            "weak": stats["mastery_score"] is not None and stats["mastery_score"] < 60,
+            "latest_answer_id": latest["attempt_id"], "evidence": stats})
+    all_stats = summarize(evidence)
+    graded = all_stats["sample_size"]
+    correct = all_stats["correct_rate"] or 0
     knowledge_points.sort(key=lambda item: (-item["latest_answer_id"], item["name"]))
     interaction_rows = (
         db.query(ResourceInteraction.id, ResourceInteraction.knowledge_point)
@@ -91,9 +62,10 @@ def build_learning_content_profile(db: Session, user_id: int, profile: UserProfi
             explored[name] = explored.get(name, 0) + 1
     return {
         "source": "answer_records_and_resource_interactions",
+        "evidence_version": EVIDENCE_VERSION,
         "total_answers": total_answers,
         "sampled_answers": len(rows),
-        "accuracy": round(100 * correct / graded) if graded else None,
+        "accuracy": correct if graded else None,
         "latest_answer_id": rows[0][0].id if rows else None,
         "knowledge_points": knowledge_points[:12],
         "knowledge_point_count": len(knowledge_points),
@@ -103,4 +75,5 @@ def build_learning_content_profile(db: Session, user_id: int, profile: UserProfi
             {"name": name, "interactions": count}
             for name, count in sorted(explored.items(), key=lambda pair: (-pair[1], pair[0]))[:8]
         ],
+        "flashcard_review_evidence": (profile.mastery_json or {}).get("flashcard_review", {}),
     }

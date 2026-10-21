@@ -783,7 +783,7 @@ def test_assistant_side_effect_keys_reuse_saved_resource_and_exercises(assistant
         db.commit()
     resource_service = ResourceGenerationService.__new__(ResourceGenerationService)
     monkeypatch.setattr(resource_service, "_resolve_or_create_knowledge_point",
-                        lambda db, _name: db.query(KnowledgePoint).filter_by(name="TCP").first())
+                        lambda db, _name, request=None: db.query(KnowledgePoint).filter_by(name="TCP").first())
     resource_request = ResourceGenerationRequest(
         user_id=user_id, knowledge_point="TCP", assistant_operation_key="assistant:77:resource",
     )
@@ -792,7 +792,7 @@ def test_assistant_side_effect_keys_reuse_saved_resource_and_exercises(assistant
         first = resource_service._persist_generated_resource(db, resource_request, plan, {"title": "TCP", "content": "original"})
     restarted_resource_service = ResourceGenerationService.__new__(ResourceGenerationService)
     monkeypatch.setattr(restarted_resource_service, "_resolve_or_create_knowledge_point",
-                        lambda db, _name: db.query(KnowledgePoint).filter_by(name="TCP").first())
+                        lambda db, _name, request=None: db.query(KnowledgePoint).filter_by(name="TCP").first())
     with assistant_tasks.SessionLocal() as db:
         replay = restarted_resource_service._persist_generated_resource(db, resource_request, plan, {"title": "TCP", "content": "duplicate"})
         assert replay == first
@@ -844,7 +844,7 @@ def test_two_agents_concurrently_save_one_resource(assistant_client, monkeypatch
         task_ids = [task.id for task in tasks]
     service = ResourceGenerationService.__new__(ResourceGenerationService)
     monkeypatch.setattr(service, "_resolve_or_create_knowledge_point",
-                        lambda db, _name: db.query(KnowledgePoint).filter_by(name="TCP").first())
+                        lambda db, _name, request=None: db.query(KnowledgePoint).filter_by(name="TCP").first())
     request = ResourceGenerationRequest(user_id=user_id, knowledge_point="TCP",
                                         assistant_operation_key="assistant:shared:resource")
     barrier = threading.Barrier(2)

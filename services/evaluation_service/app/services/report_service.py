@@ -342,7 +342,7 @@ class ReportService:
         total_time = round(sum(item.time_spent for item in chapter_traces), 2)
         knowledge_points_status = "\n".join(
             (
-                f"- {item.knowledge_point_id}：掌握度{item.mastery_score:.2f}，"
+                f"- {item.knowledge_point_id}：掌握度{item.mastery_score if item.mastery_score is not None else '证据不足'}，"
                 f"正确率{item.accuracy:.2f}%"
             )
             for item in kp_statuses
@@ -856,12 +856,13 @@ class ReportService:
         profile: UserProfile,
     ) -> dict[str, object]:
         mastery_json = profile.mastery_json if isinstance(profile.mastery_json, dict) else {}
+        mastery_json = {key: value for key, value in mastery_json.items() if not key.startswith("kp:") and isinstance(value, dict) and value.get("version") == "point-evidence-v4"}
         mastery_values = [
             float(value.get("score", 0))
             for value in mastery_json.values()
             if isinstance(value, dict) and isinstance(value.get("score"), (int, float)) and not isinstance(value.get("score"), bool)
         ]
-        mastery_overview = round(mean(mastery_values), 2) if mastery_values else 0.0
+        mastery_overview = round(mean(mastery_values), 2) if mastery_values else None
         total_time = sum(item.time_spent for item in traces)
         answered_days = {item.created_at.date().isoformat() for item in traces}
         avg_time = round(total_time / len(traces), 2) if traces else 0.0
@@ -879,7 +880,7 @@ class ReportService:
                 else ""
             ),
             "radar_metrics": [
-                {"dimension": "知识掌握", "score": round(mastery_overview)},
+                {"dimension": "知识掌握", "score": round(mastery_overview) if mastery_overview is not None else None},
                 {"dimension": "答题准确", "score": round(self._calculate_accuracy(traces))},
                 {"dimension": "用时稳定", "score": max(0, round(100 - min(avg_time, 100)))},
                 {"dimension": "薄弱点控制", "score": max(0, 100 - (len(weak_points) * 15))},
@@ -1026,20 +1027,13 @@ class ReportService:
             difficulty = normalize_difficulty(
                 self._map_difficulty_level(exercise) if exercise is not None else payload.difficulty
             )
-            knowledge_point_ids = list(payload.knowledge_point_ids)
-            if exercise is not None:
-                stored_point = session.get(KnowledgePoint, exercise.knowledge_point_id)
-                if stored_point is not None:
-                    knowledge_point_ids = [stored_point.name]
-            if not knowledge_point_ids and exercise_content.get("knowledge_point_ids"):
-                knowledge_point_ids = [str(item) for item in exercise_content["knowledge_point_ids"]]
-            if not knowledge_point_ids and exercise is not None:
-                knowledge_point = session.get(KnowledgePoint, exercise.knowledge_point_id)
-                if knowledge_point is not None:
-                    knowledge_point_ids = [knowledge_point.name]
-
+            from common.learning_evidence import point_memberships
+            memberships = point_memberships(session, exercise) if exercise else []
+            knowledge_point_ids = [point.name for point, weight in memberships]
             if not knowledge_point_ids:
-                raise ValueError("knowledge_point_ids is required when the exercise has no stored metadata.")
+                knowledge_point_ids = list(exercise_content.get("knowledge_point_ids") or payload.knowledge_point_ids)
+                if not knowledge_point_ids:
+                    raise ValueError("Unclassified exercise requires a candidate label")
 
             standard_answer = exercise.answer if exercise is not None else payload.standard_answer
             reference_answer = (
@@ -1056,14 +1050,17 @@ class ReportService:
             if normalized_type not in {"short_answer", "code"} and not standard_answer:
                 raise ValueError("Objective submissions require standard_answer or stored exercise answer.")
 
-            chapter_id = payload.chapter_id or self._string_or_none(exercise_content.get("chapter_id"))
-            chapter_name = payload.chapter_name or self._string_or_none(exercise_content.get("chapter_name"))
-            subject = (
-                self._string_or_none(payload.subject)
-                or self._string_or_none(exercise_content.get("subject"))
-                or self._infer_subject_from_knowledge_points(knowledge_point_ids)
-                or ""
-            )
+            primary_point = memberships[0][0] if memberships else None
+            if exercise is not None:
+                chapter_id = self._string_or_none(exercise_content.get("chapter_id")) or (primary_point.chapter if primary_point and primary_point.chapter else None)
+                chapter_name = self._string_or_none(exercise_content.get("chapter_name")) or (primary_point.chapter if primary_point and primary_point.chapter else None)
+                subject = self._string_or_none(exercise_content.get("subject")) or ""
+            else:
+                chapter_id, chapter_name, subject = payload.chapter_id, payload.chapter_name, payload.subject or ""
+            if primary_point and primary_point.subject_id:
+                from common.models.learning import SystemSubject
+                catalog_subject = session.get(SystemSubject, primary_point.subject_id)
+                subject = catalog_subject.name if catalog_subject else ""
             explanation = (exercise.analysis if exercise is not None else payload.explanation) or ""
             if not explanation:
                 explanation = self._string_or_none(exercise_content.get("analysis")) or ""
@@ -1177,6 +1174,9 @@ class ReportService:
                     "chapter_name": prepared.chapter_name,
                     "subject": prepared.subject,
                     "llm_used": outcome.llm_used,
+                    "scoring_status": "completed",
+                    "evidence_source": "llm_scored" if outcome.llm_used else "objective_or_rule",
+                    "attribution_version": "point-evidence-v4",
                 },
                 created_at=answered_at,
             )
@@ -1185,6 +1185,7 @@ class ReportService:
 
             updates = self._profile_updater.update_profile(
                 profile,
+                db=session,
                 knowledge_point_ids=prepared.knowledge_point_ids,
                 is_correct=outcome.is_correct,
                 time_spent=prepared.time_spent,
@@ -1218,7 +1219,7 @@ class ReportService:
                 knowledge_points=[
                     KnowledgePointFeedback(
                         knowledge_point_id=item.knowledge_point_id,
-                        mastery_score=round(item.mastery_score, 4),
+                        mastery_score=round(item.mastery_score, 4) if item.mastery_score is not None else None,
                         recent_accuracy=round(item.recent_accuracy, 2),
                         consecutive_incorrect=item.consecutive_incorrect,
                         weak=item.weak,
@@ -1295,9 +1296,11 @@ class ReportService:
         for answer_record, exercise, knowledge_point in query.all():
             metadata = answer_record.evaluation_json if isinstance(answer_record.evaluation_json, dict) else {}
             content = self._parse_exercise_content(exercise.content)
-            knowledge_point_ids = metadata.get("knowledge_point_ids") or content.get("knowledge_point_ids") or []
-            if not knowledge_point_ids and knowledge_point is not None:
-                knowledge_point_ids = [knowledge_point.name]
+            from common.learning_evidence import point_memberships
+            memberships = point_memberships(session, exercise)
+            knowledge_point_ids = [point.name for point, weight in memberships]
+            if not isinstance(answer_record.is_correct, bool):
+                continue
             question_type = normalize_exercise_type(
                 str(metadata.get("exercise_type") or content.get("exercise_type") or exercise.type or "choice")
             )
@@ -1307,12 +1310,12 @@ class ReportService:
             score = float(metadata.get("score", 1.0 if answer_record.is_correct else 0.0))
             max_score = float(metadata.get("max_score", 1.0))
             ratio = float(metadata.get("ratio", (score / max_score) if max_score else 0.0))
-            subject = (
-                self._string_or_none(metadata.get("subject"))
-                or self._string_or_none(content.get("subject"))
-                or self._infer_subject_from_knowledge_points([str(item) for item in knowledge_point_ids])
-                or ""
-            )
+            subject = self._string_or_none(content.get("subject")) or ""
+            primary_point = memberships[0][0] if memberships else None
+            if primary_point and primary_point.subject_id:
+                from common.models.learning import SystemSubject
+                catalog_subject = session.get(SystemSubject, primary_point.subject_id)
+                subject = catalog_subject.name if catalog_subject else ""
             traces.append(
                 AnswerTrace(
                     answer_record_id=answer_record.id,
@@ -1322,8 +1325,8 @@ class ReportService:
                     knowledge_point_ids=[str(item) for item in knowledge_point_ids],
                     question_type=question_type,
                     difficulty=difficulty,
-                    chapter_id=self._string_or_none(metadata.get("chapter_id") or content.get("chapter_id")),
-                    chapter_name=self._string_or_none(metadata.get("chapter_name") or content.get("chapter_name")),
+                    chapter_id=self._string_or_none(content.get("chapter_id") or (primary_point.chapter if primary_point else "")),
+                    chapter_name=self._string_or_none(content.get("chapter_name") or (primary_point.chapter if primary_point else "")),
                     subject=subject,
                     prompt=str(metadata.get("exercise_content") or content.get("exercise_content") or ""),
                     options=str(metadata.get("options") or content.get("options") or ""),
@@ -1388,7 +1391,7 @@ class ReportService:
             statuses.append(
                 KnowledgePointStageStatus(
                     knowledge_point_id=knowledge_point_id,
-                    mastery_score=float(profile_item.get("score", 0)) if isinstance(profile_item, dict) else 0.0,
+                    mastery_score=profile_item.get("score") if isinstance(profile_item, dict) and profile_item.get("version") == "point-evidence-v4" else None,
                     accuracy=self._calculate_accuracy(items),
                     attempts=len(items),
                     weak=bool(profile_item.get("weak")) if isinstance(profile_item, dict) else False,
@@ -1397,7 +1400,7 @@ class ReportService:
                     else "none",
                 )
             )
-        statuses.sort(key=lambda item: (item.weak is False, item.accuracy, item.mastery_score))
+        statuses.sort(key=lambda item: (item.weak is False, item.accuracy, item.mastery_score if item.mastery_score is not None else -1))
         return statuses
 
     def _build_evidence(self, traces: list[AnswerTrace]) -> ReportEvidence:
@@ -1490,7 +1493,7 @@ class ReportService:
         for knowledge_point_id, items in grouped.items():
             profile_item = mastery_json.get(knowledge_point_id, {})
             weak = bool(profile_item.get("weak")) if isinstance(profile_item, dict) else False
-            mastery = float(profile_item.get("score", 0)) if isinstance(profile_item, dict) else 0.0
+            mastery = (profile_item.get("score") or 0) if isinstance(profile_item, dict) and profile_item.get("version") == "point-evidence-v4" else 0.0
             accuracy = self._calculate_accuracy(items)
             candidates.append((not weak, accuracy, mastery, knowledge_point_id))
         candidates.sort()
@@ -1539,7 +1542,7 @@ class ReportService:
                 "event_type": "ProfileUpdateEvent",
                 "user_id": prepared.user_id_str,
                 "knowledge_point_id": update.knowledge_point_id,
-                "new_mastery": round(update.mastery_score, 4),
+                "new_mastery": round(update.mastery_score, 4) if update.mastery_score is not None else None,
                 "weak": update.weak,
                 "recent_accuracy": round(update.recent_accuracy, 2),
                 "consecutive_incorrect": update.consecutive_incorrect,
@@ -1589,6 +1592,7 @@ class ReportService:
         content_payload = {
             "generated_for_user_id": prepared.user_id_int,
             "external_exercise_id": prepared.exercise_id_str,
+            "classification_status": "pending",
             "exercise_content": prepared.exercise_content,
             "knowledge_point_ids": prepared.knowledge_point_ids,
             "exercise_type": prepared.exercise_type,
@@ -1639,7 +1643,7 @@ class ReportService:
             description=f"Evaluation-tracked knowledge point {knowledge_point_id}",
             difficulty=2,
             importance=3,
-            subject_id=1,
+            subject_id=None,
         )
         session.add(knowledge_point)
         session.flush()
@@ -1661,7 +1665,7 @@ class ReportService:
 
     def _save_report(self, user_id: int, report_type: str, content_json: dict[str, Any]) -> None:
         with self._session_factory() as session:
-            session.add(LearningReport(user_id=user_id, report_type=report_type, content_json=content_json))
+            session.add(LearningReport(user_id=user_id, report_type=report_type, content_json={**content_json, "evidence_version": "point-evidence-v4"}))
             session.commit()
 
     def _empty_detail(self, user_id: int, report_type: str, title: str) -> ReportDetail:

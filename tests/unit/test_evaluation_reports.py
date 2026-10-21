@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+from teaching_fixtures import registered_catalog  # noqa: F401
+
 from common.models.learning import AnswerRecord
 from services.evaluation_service.app.schemas.report import (
     AnswerRecordSubmission,

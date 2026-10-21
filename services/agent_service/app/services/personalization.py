@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from statistics import mean
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from common.models.learning import AnswerRecord, Exercise, UserProfile
-from common.profile_scoring import normalize_answer_row
+from common.learning_evidence import load_evidence, resolve_point, summarize
+from common.models.learning import UserProfile
 from services.agent_service.app.services.profile_mapping import build_zhishu_profile_view
 
 
@@ -19,10 +17,10 @@ class LearnerPersonalizationSnapshot:
     """Normalized learner snapshot used by generation services."""
 
     learner_profile: dict[str, Any]
-    mastery_score: int
+    mastery_score: int | None
     recent_mistakes: list[dict[str, Any]]
     answered_count: int
-    correct_rate: int
+    correct_rate: int | None
 
 
 class PersonalizationService:
@@ -31,11 +29,12 @@ class PersonalizationService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def build_snapshot(self, user_id: int, knowledge_point: str, fallback_profile: dict[str, Any]) -> LearnerPersonalizationSnapshot:
+    def build_snapshot(self, user_id: int, knowledge_point: str, fallback_profile: dict[str, Any], *, point_id=None, subject="", chapter="") -> LearnerPersonalizationSnapshot:
         """Return a real personalization snapshot for one learner and knowledge point."""
 
+        if fallback_profile.get("history_disabled"):
+            return LearnerPersonalizationSnapshot({"history_disabled": True}, None, [], 0, None)
         profile = self.db.get(UserProfile, user_id)
-        mastery_json = profile.mastery_json if profile and isinstance(profile.mastery_json, dict) else {}
         learning_style = profile.learning_style if profile and profile.learning_style else fallback_profile.get("learning_style", "")
         cognitive_abilities = profile.cognitive_abilities if profile and isinstance(profile.cognitive_abilities, dict) else {}
         habits = profile.habits if profile and isinstance(profile.habits, dict) else {}
@@ -52,14 +51,20 @@ class PersonalizationService:
             else {}
         )
 
-        records = self._load_records(user_id, knowledge_point)
-        correct_count = sum(1 for item in records if item["is_correct"])
-        answered_count = len(records)
-        correct_rate = round((correct_count / answered_count) * 100) if answered_count else 0
-
-        explicit_mastery = self._lookup_mastery(mastery_json, knowledge_point)
-        if explicit_mastery is None:
-            explicit_mastery = self._estimate_mastery_from_records(records)
+        point = resolve_point(self.db, knowledge_point, point_id=point_id, subject=subject, chapter=chapter)
+        records = load_evidence(self.db, user_id, point=point) if point else []
+        evidence = summarize(records)
+        answered_count = evidence["sample_size"]
+        correct_rate = evidence["correct_rate"]
+        explicit_mastery = evidence["mastery_score"]
+        # Global inferred summaries are not evidence about the selected point.
+        profile_analysis = {}
+        profile_analysis_summaries = {}
+        collaboration_context = {}
+        records = list({item["exercise_id"]: item for item in records}.values())
+        for item in records:
+            item["difficulty_level"] = item["difficulty"]
+            item["difficulty"] = self._map_difficulty(item["difficulty"])
 
         recent_mistakes = [item for item in records if not item["is_correct"]][-5:]
         weakest_types = self._count_labels(item["question_type"] for item in recent_mistakes)
@@ -80,6 +85,8 @@ class PersonalizationService:
             "weakness_hint": collaboration_context.get("weakness_hint", "") if isinstance(collaboration_context, dict) else "",
             "learning_speed": collaboration_context.get("learning_speed", "") if isinstance(collaboration_context, dict) else "",
             "mastery": explicit_mastery,
+            "evidence": evidence,
+            "evidence_scope": {"level": "knowledge_point", "knowledge_point_id": point.id if point else None, "subject_id": point.subject_id if point else None},
             "cognitive_abilities": cognitive_abilities,
             "habits": habits,
             "answered_count": answered_count,
@@ -89,7 +96,7 @@ class PersonalizationService:
         }
         learner_profile["zhishu_profile"] = build_zhishu_profile_view(
             learner_profile=learner_profile,
-            mastery_score=int(explicit_mastery),
+            mastery_score=explicit_mastery,
             answered_count=answered_count,
             correct_rate=correct_rate,
             recent_mistakes=recent_mistakes,
@@ -98,83 +105,15 @@ class PersonalizationService:
 
         return LearnerPersonalizationSnapshot(
             learner_profile=learner_profile,
-            mastery_score=int(explicit_mastery),
+            mastery_score=explicit_mastery,
             recent_mistakes=recent_mistakes,
             answered_count=answered_count,
             correct_rate=correct_rate,
         )
 
-    def _lookup_mastery(self, mastery_json: dict[str, Any], knowledge_point: str) -> int | None:
-        if knowledge_point in mastery_json:
-            value = mastery_json.get(knowledge_point)
-            if isinstance(value, (int, float)):
-                return max(0, min(100, int(round(value))))
-            if isinstance(value, dict):
-                score = value.get("score")
-                if isinstance(score, (int, float)):
-                    return max(0, min(100, int(round(score))))
-
-        normalized = knowledge_point.strip().lower()
-        for key, value in mastery_json.items():
-            if normalized in str(key).strip().lower() or str(key).strip().lower() in normalized:
-                if isinstance(value, (int, float)):
-                    return max(0, min(100, int(round(value))))
-                if isinstance(value, dict):
-                    score = value.get("score")
-                    if isinstance(score, (int, float)):
-                        return max(0, min(100, int(round(score))))
-        return None
-
-    def _estimate_mastery_from_records(self, records: list[dict[str, Any]]) -> int:
-        if not records:
-            return 0
-        scores: list[int] = []
-        for item in records:
-            base = 85 if item["is_correct"] else 40
-            if item["time_spent"] > 0:
-                speed_bonus = max(-10, min(8, 20 - item["time_spent"]))
-            else:
-                speed_bonus = 0
-            difficulty_bonus = {"foundation": 0, "intermediate": 4, "advanced": 8}.get(
-                item.get("difficulty"),
-                0,
-            )
-            scores.append(max(0, min(100, base + speed_bonus + difficulty_bonus)))
-        return int(round(mean(scores)))
-
     def _load_records(self, user_id: int, knowledge_point: str) -> list[dict[str, Any]]:
-        query = (
-            self.db.query(AnswerRecord, Exercise)
-            .join(Exercise, Exercise.id == AnswerRecord.exercise_id)
-            .filter(AnswerRecord.user_id == user_id)
-            .order_by(AnswerRecord.id.asc())
-        )
-        records: list[dict[str, Any]] = []
-        normalized = knowledge_point.strip().lower()
-        for answer_record, exercise in query.all():
-            exercise_payload = self._parse_exercise_payload(exercise.content)
-            exercise_knowledge = str(exercise_payload.get("knowledge_point") or knowledge_point)
-            if normalized not in exercise_knowledge.strip().lower() and exercise_knowledge.strip().lower() not in normalized:
-                continue
-            record = normalize_answer_row(answer_record, exercise)
-            record.update(
-                {
-                    "knowledge_point": exercise_knowledge,
-                    "difficulty": self._map_difficulty(exercise.difficulty),
-                    "difficulty_level": exercise.difficulty,
-                    "correct_answer": exercise.answer,
-                    "analysis": exercise.analysis,
-                }
-            )
-            records.append(record)
-        return records
-
-    def _parse_exercise_payload(self, content: str) -> dict[str, Any]:
-        try:
-            parsed = json.loads(content)
-            return parsed if isinstance(parsed, dict) else {}
-        except Exception:
-            return {}
+        point = resolve_point(self.db, knowledge_point)
+        return load_evidence(self.db, user_id, point=point) if point else []
 
     def _map_difficulty(self, difficulty: int) -> str:
         if difficulty <= 1:

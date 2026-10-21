@@ -69,8 +69,8 @@ const dashboardCards = computed<DashboardCard[]>(() => {
   if (!data) return []
   const cards: DashboardCard[] = []
   if (isRealLearningStyle(data.learning_style)) cards.push({ label: '学习偏好', value: data.learning_style, hint: '来自画像补充资料', icon: MagicStick, tone: 'violet' })
-  if (hasLearningActivity.value && data.heatmap.length) cards.push({ label: '平均掌握度', value: `${Math.round(data.mastery_overview)}%`, hint: '已练习知识点的评估结果', icon: TrendCharts, tone: 'indigo' })
-  if (hasLearningActivity.value && data.mastery_overview > 0) cards.push({ label: '综合评分', value: `${data.mastery_overview}%`, hint: '练习、错题与报告综合结果', icon: DataAnalysis, tone: 'emerald' })
+  if (hasLearningActivity.value && data.mastery_overview != null && data.heatmap.length) cards.push({ label: '平均掌握度', value: `${Math.round(data.mastery_overview)}%`, hint: '已练习知识点的评估结果', icon: TrendCharts, tone: 'indigo' })
+  if (hasLearningActivity.value && data.mastery_overview != null && data.mastery_overview > 0) cards.push({ label: '综合评分', value: `${data.mastery_overview}%`, hint: '练习、错题与报告综合结果', icon: DataAnalysis, tone: 'emerald' })
   return cards
 })
 

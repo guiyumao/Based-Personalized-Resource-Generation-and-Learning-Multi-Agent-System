@@ -28,9 +28,9 @@ watch(navigationOpen, async (open, previous) => {
       @click="navigationOpen = false"
     ></button>
     <div class="app-main" :inert="navigationOpen">
-      <AppTopbar @toggle-navigation="navigationOpen = !navigationOpen" />
-      <div class="app-content">
-        <header v-if="page?.roles.includes('admin')" class="admin-page-heading"><span>LEARNING OS · 管理后台</span><h1>{{ page.label }}</h1><p>{{ page.description }}</p></header>
+      <AppTopbar @toggle-navigation="navigationOpen = !navigationOpen"><template #assistant><AssistantPet v-show="!navigationOpen" /></template></AppTopbar>
+      <div class="app-content" :class="{'dashboard-content':route.name === 'admin'}">
+        <header v-if="page?.roles.includes('admin') && route.name !== 'admin'" class="admin-page-heading"><span>LEARNING OS · 管理后台</span><h1>{{ page.label }}</h1><p>{{ page.description }}</p></header>
         <router-view v-slot="{ Component, route }">
           <transition name="page" mode="out-in">
             <component :is="Component" :key="route.fullPath" />
@@ -38,7 +38,6 @@ watch(navigationOpen, async (open, previous) => {
         </router-view>
       </div>
     </div>
-    <AssistantPet v-show="!navigationOpen" />
   </div>
 </template>
 
@@ -77,6 +76,7 @@ watch(navigationOpen, async (open, previous) => {
 }
 
 .navigation-backdrop { display: none; }
+.dashboard-content{padding-top:16px}
 .admin-page-heading { margin-bottom:22px; }
 .admin-page-heading span { color:var(--accent); font-size:11px; letter-spacing:.08em; }
 .admin-page-heading h1 { margin:8px 0; color:var(--text); font-size:28px; }

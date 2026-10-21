@@ -102,6 +102,25 @@ def test_zero_call_budget_prevents_sdk_provider_contact(ledger, tmp_path, monkey
         provider.close()
 
 
+def test_admin_can_save_budget_and_worker_reads_it_without_restart(ledger, monkeypatch):
+    monkeypatch.delenv("AI_PROVIDER_DAY_CALL_LIMIT", raising=False)
+    monkeypatch.delenv("AI_PROVIDER_USER_DAY_CALL_LIMIT", raising=False)
+    client = TestClient(app)
+    assert client.put("/admin/model-budget", json={"day_call_limit": 0}).status_code == 401
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(role="student")
+    assert client.put("/admin/model-budget", json={"day_call_limit": 0}).status_code == 403
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(role="admin")
+    response = client.put("/admin/model-budget", json={"day_call_limit": 0})
+    assert response.status_code == 200
+    assert response.json()["effective"]["day_call_limit"] == 0
+    with pytest.raises(model_usage.ModelCallBudgetExceeded):
+        model_usage.begin_call(str(uuid4()), "test", "model")
+    # Persisted settings cannot relax a stricter process-level safety limit.
+    monkeypatch.setenv("AI_PROVIDER_DAY_CALL_LIMIT", "1")
+    assert client.put("/admin/model-budget", json={"day_call_limit": 10}).json()["effective"]["day_call_limit"] == 1
+    assert client.put("/admin/model-budget", json={"day_call_limit": -1}).status_code == 422
+
+
 def test_usage_and_worker_api_deny_nonadmins_and_infer_staleness(ledger):
     client = TestClient(app)
     assert client.get("/admin/usage").status_code == 401

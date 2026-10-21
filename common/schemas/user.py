@@ -132,7 +132,7 @@ class LearnerProfileDashboard(BaseModel):
 
     user_id: int
     learning_style: str
-    mastery_overview: int
+    mastery_overview: int | None
     weekly_focus_minutes: int
     habit_summary: str
     radar_metrics: list[LearnerRadarMetric]
