@@ -122,7 +122,7 @@ python -m uvicorn services.system_service.app.main:app --host 127.0.0.1 --port 8
 ## 文档
 
 - 系统功能与实现逻辑：[docs/system-full-guide.md](docs/system-full-guide.md)
-- 功能说明：[docs/functionality.md](docs/functionality.md)
+- 当前功能文档（2026-10-21，含三类角色、页面入口、主要接口与验证边界）：[docs/functionality.md](docs/functionality.md)
 - 系统改进路线图：[docs/system-improvement-roadmap.md](docs/system-improvement-roadmap.md)
 - OpenAPI 草案：[docs/openapi.yaml](docs/openapi.yaml)
 - 项目目录说明：[docs/project-structure.md](docs/project-structure.md)

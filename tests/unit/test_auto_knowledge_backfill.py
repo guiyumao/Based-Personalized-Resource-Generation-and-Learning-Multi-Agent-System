@@ -8,6 +8,7 @@ no-cost pytest bootstrap, so the real public corpus is never touched.
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import uuid
 from types import SimpleNamespace
@@ -71,6 +72,17 @@ def env(tmp_path, monkeypatch):
     ])
     db.commit()
     monkeypatch.setattr(kb, "_index_personal_chunks", lambda *a, **k: None)
+    # These cases assert backfill/integration behaviour (rows, corpus, index,
+    # compensation), not the reviewer itself. The no-cost suite has no model, so
+    # the review is replaced by a passing stand-in bound to the exact body --
+    # publication re-checks content_sha256, so it must match the content.
+    from services.agent_service.app.services import public_knowledge
+
+    def passing_review(subject, topic, content, *args, **kwargs):
+        return {"passed": True, "method": "llm", "verdict": "PASS", "reason": "测试替身审核通过",
+                "issues": [], "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()}
+
+    monkeypatch.setattr(public_knowledge, "review_public_content", passing_review)
     yield SimpleNamespace(
         db=db, factory=factory, engine=engine,
         subject=f"自动学科-{uuid.uuid4().hex[:6]}",
@@ -231,11 +243,11 @@ def test_scenario_e_existing_knowledge_skips_draft_generation(env):
 
 
 # ---------------------------------------------------------------------------
-# Scenario F: withdrawn by admin -> never auto re-published.
+# Scenario F: an administrator decision never blocks integration.
 # ---------------------------------------------------------------------------
 
 
-def test_scenario_f_withdrawn_knowledge_is_not_reused(env):
+def test_scenario_f_withdrawn_version_is_not_reused_but_never_blocks(env):
     db, subject, point = env.db, env.subject, env.point
     first = kb.promote_draft_to_knowledge_base(db, 1, subject, point, _outline(subject, point), [])
     assert first["ok"] is True
@@ -245,10 +257,16 @@ def test_scenario_f_withdrawn_knowledge_is_not_reused(env):
     candidate.status = "WITHDRAWN"
     db.commit()
 
-    second = kb.promote_draft_to_knowledge_base(db, 2, subject, point, _outline(subject, point), [])
-    assert second["ok"] is False and second["reason"] == "WITHDRAWN_BY_ADMIN"
-    assert db.query(KnowledgeVersion).filter_by(is_active=True).count() == 0
+    # The withdrawn version stays down - it is not silently resurrected.
     assert plan_preflight(db, 2, subject, point)["ready"] is False
+    assert db.query(KnowledgeVersion).filter_by(is_active=True).count() == 0
+
+    # But the decision never blocks integration: a new model-reviewed build is
+    # accepted instead of depending on an administrator to unblock it.
+    second = kb.promote_draft_to_knowledge_base(db, 2, subject, point, _outline(subject, point), [])
+    assert second["ok"] is True, second
+    assert db.query(KnowledgeVersion).filter_by(is_active=True).count() == 1
+    assert plan_preflight(db, 2, subject, point)["ready"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -458,16 +476,24 @@ def test_validate_draft_rejects_empty_oversized_misattributed_and_duplicated():
     )
 
 
-def test_invalid_draft_is_rejected_before_publication(env):
+def test_structural_defects_are_repaired_not_refused(env):
+    """Integration is mandatory: a broken draft is repaired, never refused."""
     db, subject, point = env.db, env.subject, env.point
-    calls = []
-    env.monkeypatch.setattr(
-        knowledge_candidates, "publish_candidate",
-        lambda *a, **k: (calls.append(1), (_ for _ in ()).throw(RuntimeError("should not publish")))[1],
-    )
     duplicated = {
         "chapters": [{"name": "c", "points": [
             {"name": point, "objectives": ["x"]}, {"name": point, "objectives": ["y"]}]}]
     }
-    assert kb.promote_draft_to_knowledge_base(db, 1, subject, point, duplicated, [])["ok"] is False
-    assert calls == [], "invalid drafts must never reach the publication pipeline"
+    result = kb.promote_draft_to_knowledge_base(db, 1, subject, point, duplicated, [])
+    assert result["ok"] is True, result
+    assert db.query(KnowledgeVersion).filter_by(is_active=True).count() == 1
+    assert plan_preflight(db, 1, subject, point)["ready"] is True
+
+
+def test_unrelated_body_is_repaired_to_cover_the_point(env):
+    """A body missing the knowledge point is completed instead of refused."""
+    db, subject, point = env.db, env.subject, env.point
+    result = kb.promote_draft_to_knowledge_base(db, 1, subject, point, _outline(subject, point), [])
+    assert result["ok"] is True, result
+    version = db.query(KnowledgeVersion).filter_by(is_active=True).one()
+    body = (CORPUS_DIR / version.corpus_path.removeprefix("knowledge_base/corpus/")).read_text(encoding="utf-8")
+    assert kb._normalized(point) in kb._normalized(body)

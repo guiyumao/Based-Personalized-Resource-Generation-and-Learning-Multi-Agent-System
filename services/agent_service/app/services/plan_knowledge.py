@@ -190,12 +190,9 @@ def assess_plan_knowledge(db: Session, user_id: int, subject: str, knowledge_poi
     """Read-only model-construction preflight; generation performs the build."""
     result = plan_preflight(db, user_id, subject, knowledge_point)
     result["mode"] = "public" if result["ready"] else "public_build_pending"
-    if result["reason"] in {"INDEX_UNAVAILABLE", "INDEX_STALE_OR_MISSING"}:
-        result["mode"] = "public_unavailable"
-        return result
     if not result["ready"]:
         result["message"] = (
             "公共知识尚未就绪；生成时自动建设，经模型审核、发布及检索验证通过后再使用。"
-            "审核或发布失败会明确报错，不使用个人临时草稿。"
+            "发现问题自动修订，服务暂不可用时保存进度并自动重试，不需要管理员处理。"
         )
     return result

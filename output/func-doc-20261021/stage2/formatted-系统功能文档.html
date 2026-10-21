@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="docx-page-size" content="A4">
+  <title>基于大模型的个性化资源生成与学习多智能体系统 — 系统功能文档</title>
+  <style>
+  /* 页面规则：正文页脚居中页码；封面与目录页无页眉页脚 */
+  @page {
+    @bottom-center { content: counter(page); }
+  }
+  @page cover {
+    @bottom-center { content: none; }
+  }
+  section[role="cover"] { page: cover; }
+
+  :root {
+    --fs-cover-title: 22pt;
+    --fs-cover-category: 14pt;
+    --fs-cover-subtitle: 14pt;
+    --fs-h1: 16pt;
+    --fs-h2: 13pt;
+    --fs-h3: 11pt;
+    --fs-body: 12pt;
+    --fs-small: 10.5pt;
+    --fs-tiny: 9.5pt;
+    --ff-heading: "微软雅黑", "Microsoft YaHei", sans-serif;
+    --ff-body: "SimSun", "宋体", serif;
+    --ff-code: "Consolas", "Source Code Pro", monospace;
+    --lh-body: 1.6;
+    --color-primary: #1565C0;
+    --color-secondary: #0288D1;
+    --color-accent: #00897B;
+    --color-text: #212121;
+    --color-muted: #616161;
+    --color-heading: #1A237E;
+    --color-border: #E0E0E0;
+    --color-surface: #F5F7FA;
+    --color-bg: #FFFFFF;
+    --spacing-paragraph: 0.75em;
+    --spacing-section: 2em;
+    --spacing-block: 1em;
+    --spacing-tiny: 0.3em;
+    --spacing-half: 0.5em;
+    --spacing-cover-gap: 3em;
+    --page-content-width: 15.6cm;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--ff-body);
+    font-size: var(--fs-body);
+    line-height: var(--lh-body);
+    color: var(--color-text);
+    background: var(--color-bg);
+    max-width: var(--page-content-width);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* 封面 */
+  .report-cover { padding: var(--spacing-cover-gap) var(--spacing-block) var(--spacing-section) var(--spacing-block); }
+  .cover-category { font-size: var(--fs-cover-category); font-family: var(--ff-heading); font-weight: 700; color: var(--color-primary); letter-spacing: 0.08em; margin-bottom: var(--spacing-block); text-align: center; }
+  .cover-title { font-size: var(--fs-cover-title); font-family: var(--ff-heading); font-weight: 700; color: var(--color-heading); margin-bottom: var(--spacing-half); text-align: center; line-height: var(--lh-body); }
+  .cover-subtitle { font-size: var(--fs-cover-subtitle); font-family: var(--ff-heading); color: var(--color-muted); margin-bottom: var(--spacing-cover-gap); text-align: center; }
+  .cover-meta { font-size: var(--fs-small); color: var(--color-muted); text-align: center; }
+  .cover-meta p { text-align: center; margin-bottom: var(--spacing-tiny); }
+
+  /* 目录 */
+  .toc-title { font-size: var(--fs-h1); font-family: var(--ff-heading); font-weight: 700; color: var(--color-heading); margin-bottom: var(--spacing-paragraph); }
+  .toc-list, .toc-list ol, .toc-list ul { list-style: none; list-style-type: none; }
+  .toc-list { padding-left: 0; }
+  .toc-list ol { padding-left: var(--spacing-block); }
+  .toc-list li { margin-bottom: var(--spacing-tiny); text-indent: 0; font-size: var(--fs-body); }
+  .toc-list a { color: var(--color-primary); text-decoration: none; }
+
+  /* 执行摘要 */
+  .executive-summary {
+    margin-bottom: var(--spacing-section);
+    padding: var(--spacing-block);
+    border-left: 4px solid var(--color-primary);
+    background: var(--color-surface);
+  }
+  .summary-header { margin-bottom: var(--spacing-half); }
+  .summary-header h2 { font-size: var(--fs-h2); font-family: var(--ff-heading); color: var(--color-heading); margin-top: 0; }
+  .summary-body p { text-indent: 2em; margin-bottom: var(--spacing-paragraph); }
+
+  /* 正文 */
+  h1 {
+    font-size: var(--fs-h1); font-family: var(--ff-heading); font-weight: 700;
+    color: var(--color-heading);
+    border-left: 4px solid var(--color-primary);
+    padding-left: var(--spacing-half);
+    margin-top: var(--spacing-section); margin-bottom: var(--spacing-paragraph);
+  }
+  h2 {
+    font-size: var(--fs-h2); font-family: var(--ff-heading); font-weight: 700;
+    color: var(--color-primary);
+    margin-top: var(--spacing-block); margin-bottom: var(--spacing-paragraph);
+  }
+  h3 {
+    font-size: var(--fs-h3); font-family: var(--ff-heading); font-weight: 700;
+    color: var(--color-text);
+    margin-top: var(--spacing-block); margin-bottom: var(--spacing-half);
+  }
+  p {
+    font-family: var(--ff-body); font-size: var(--fs-body);
+    text-indent: 2em; margin-bottom: var(--spacing-paragraph);
+  }
+  ul, ol { margin-left: var(--spacing-section); margin-bottom: var(--spacing-paragraph); }
+  li { font-family: var(--ff-body); font-size: var(--fs-body); margin-bottom: var(--spacing-tiny); }
+  code { font-family: var(--ff-code); font-size: var(--fs-small); color: var(--color-primary); }
+  pre {
+    font-family: var(--ff-code); font-size: var(--fs-tiny); background: var(--color-surface);
+    border: 1px solid var(--color-border); padding: var(--spacing-paragraph) var(--spacing-block); margin-bottom: var(--spacing-paragraph);
+    white-space: pre-wrap;
+  }
+  pre code { color: var(--color-text); }
+
+  table { width: 100%; border-collapse: collapse; margin-bottom: var(--spacing-paragraph); }
+  th, td { padding: var(--spacing-half) var(--spacing-paragraph); border: 1px solid var(--color-border); font-size: var(--fs-small); font-family: var(--ff-body); text-align: left; vertical-align: top; }
+  th { background: var(--color-surface); font-family: var(--ff-heading); font-weight: 700; color: var(--color-heading); }
+
+  .note {
+    border-left: 3px solid var(--color-accent); background: var(--color-surface);
+    padding: var(--spacing-half) var(--spacing-block); margin-bottom: var(--spacing-paragraph);
+    text-indent: 0; font-size: var(--fs-small);
+  }
+  </style>
+</head>
+<body>
+
+  <section role="cover" class="report-cover">
+    <p class="cover-category">技术文档 · TECHNICAL DOCUMENT</p>
+    <p class="cover-title">基于大模型的个性化资源生成与学习多智能体系统<br>系统功能文档</p>
+    <p class="cover-subtitle">从总体架构到功能明细的完整说明</p>
+    <div class="cover-meta">
+      <p>文档版本：V1.0（功能基线 2026-10-21）</p>
+      <p>适用读者：产品、开发、测试与验收人员</p>
+    </div>
+  </section>
+
+  <section role="cover">
+    <nav class="doc-toc" aria-label="文档目录">
+      <p class="toc-title">目录</p>
+      <ol class="toc-list">
+        <li><a href="#section-1">1. 文档说明</a></li>
+        <li><a href="#section-2">2. 系统概述</a>
+          <ol>
+            <li><a href="#section-2-1">2.1 定位</a></li>
+            <li><a href="#section-2-2">2.2 「千人千面」的四个维度</a></li>
+            <li><a href="#section-2-3">2.3 技术栈</a></li>
+          </ol>
+        </li>
+        <li><a href="#section-3">3. 角色体系</a></li>
+        <li><a href="#section-4">4. 总体架构</a>
+          <ol>
+            <li><a href="#section-4-1">4.1 微服务划分</a></li>
+            <li><a href="#section-4-2">4.2 多智能体协调器</a></li>
+            <li><a href="#section-4-3">4.3 共享层与基础设施</a></li>
+          </ol>
+        </li>
+        <li><a href="#section-5">5. 功能模块详述</a>
+          <ol>
+            <li><a href="#section-5-1">5.1 用户认证</a></li>
+            <li><a href="#section-5-2">5.2 学习者画像</a></li>
+            <li><a href="#section-5-3">5.3 学习路径</a></li>
+            <li><a href="#section-5-4">5.4 个性化资源生成</a></li>
+            <li><a href="#section-5-5">5.5 资源推荐</a></li>
+            <li><a href="#section-5-6">5.6 习题生成与作答评价</a></li>
+            <li><a href="#section-5-7">5.7 学习报告与洞察</a></li>
+            <li><a href="#section-5-8">5.8 笔记与闪卡</a></li>
+            <li><a href="#section-5-9">5.9 知识图谱与思维导图</a></li>
+            <li><a href="#section-5-10">5.10 智能答疑</a></li>
+            <li><a href="#section-5-11">5.11 聊天系统（大小模型协作）</a></li>
+            <li><a href="#section-5-12">5.12 小智学习助手</a></li>
+            <li><a href="#section-5-13">5.13 教师端功能</a></li>
+            <li><a href="#section-5-14">5.14 成绩单分析</a></li>
+            <li><a href="#section-5-15">5.15 公共知识库建设与治理</a></li>
+            <li><a href="#section-5-16">5.16 知识检索（RAG）</a></li>
+            <li><a href="#section-5-17">5.17 管理端功能</a></li>
+          </ol>
+        </li>
+        <li><a href="#section-6">6. 数据模型概览</a></li>
+        <li><a href="#section-7">7. 提示词体系</a></li>
+        <li><a href="#section-8">8. 运行与部署</a></li>
+        <li><a href="#section-9">9. 测试与质量保障</a></li>
+        <li><a href="#section-10">10. 已知边界与限制</a></li>
+        <li><a href="#section-11">11. 附录：目录结构</a></li>
+      </ol>
+    </nav>
+  </section>
+
+  <section role="body" data-page-restart="1">
+
+    <div class="executive-summary">
+      <div class="summary-header">
+        <h2>执行摘要</h2>
+      </div>
+      <div class="summary-body">
+        <p>本系统是一个面向学生、教师、管理员三类角色的多智能体个性化学习平台，以大语言模型为核心驱动力，围绕「学习规划 → 资源学习 → 练习评价 → 问题诊断 → 补强调整」组织连续学习闭环，从「学什么、怎么学、练什么、下一步做什么」四个维度实现千人千面。</p>
+        <p>系统采用 Vue 3 前端 + Python FastAPI 六微服务（8001–8007）架构，内置 8 个协作智能体（画像、图谱、知识库、路径规划、资源生成、习题生成、答疑、评价反馈），以 LangGraph 编排；配套独立 RAG 知识库（119 份语料、1296 个向量分块）、Neo4j 知识图谱与完整的管理员治理工具链，支持公共知识的学生触发式自动建设与模型全文审核。</p>
+      </div>
+    </div>
+
+    <h1 id="section-1">1. 文档说明</h1>
+    <p>本文档面向产品、开发与验收人员，从头到尾完整描述「基于大模型的个性化资源生成与学习多智能体系统」的功能全貌，内容包括：系统定位、角色体系、总体架构、各微服务功能明细、核心业务流程、数据模型、接口清单、运行部署方式以及当前已知边界。文档内容以仓库源码与 2026-10-21 版功能基线为准。</p>
+
+    <h1 id="section-2">2. 系统概述</h1>
+
+    <h2 id="section-2-1">2.1 定位</h2>
+    <p>本系统是一个面向<strong>学生、教师、管理员</strong>三类角色的多智能体个性化学习平台。系统以大语言模型（LLM）为核心驱动力，围绕「学习规划 → 资源学习 → 练习评价 → 问题诊断 → 补强调整」组织连续的学习闭环。</p>
+
+    <h2 id="section-2-2">2.2 「千人千面」的四个维度</h2>
+    <p>系统通过多智能体协作实现个性化，体现在四个维度：</p>
+    <ol>
+      <li><strong>学什么</strong>：由路径规划智能体依据学习者画像与知识图谱生成个性化学习路径。</li>
+      <li><strong>怎么学</strong>：由资源生成智能体生成个性化课件（图文、导图、代码案例、讲稿等）。</li>
+      <li><strong>练什么</strong>：由习题生成智能体针对薄弱知识点生成练习。</li>
+      <li><strong>下一步做什么</strong>：由评价反馈智能体根据作答表现给出诊断报告与补强建议，并反哺路径调整。</li>
+    </ol>
+
+    <h2 id="section-2-3">2.3 技术栈</h2>
+    <table>
+      <thead><tr><th>层</th><th>技术</th></tr></thead>
+      <tbody>
+      <tr><td>前端</td><td>Vue 3 + Element Plus + Vite（开发端口 5175）</td></tr>
+      <tr><td>主后端</td><td>Python FastAPI 多服务（端口 8001–8007）</td></tr>
+      <tr><td>迁移预研</td><td>Java 17 + Spring Boot 3 骨架（java-services/，非主链路）</td></tr>
+      <tr><td>关系库</td><td>本地 SQLite（learning_system.db）/ 生产 PostgreSQL</td></tr>
+      <tr><td>向量库</td><td>Chroma（集合 education_resources，约 1296 个语义分块）</td></tr>
+      <tr><td>图数据库</td><td>Neo4j（知识图谱）</td></tr>
+      <tr><td>其他中间件</td><td>Redis、RabbitMQ、MinIO、Elasticsearch（docker-compose 编排）</td></tr>
+      <tr><td>智能体编排</td><td>LangChain / LangGraph</td></tr>
+      </tbody>
+    </table>
+
+    <h1 id="section-3">3. 角色体系</h1>
+
+    <h2>3.1 学生</h2>
+    <p>学生是学习闭环的核心使用者，可使用：学习路径生成与调整、课件学习、课后自测、错题本与重练题、收藏本、学习报告（章节/阶段/月度/综合）、学习洞察、知识图谱与思维导图、智能答疑、聊天助手（大小模型协作）、小智学习助手（附件、流式对话、持久任务、个人记忆）、笔记与闪卡、成绩单导入与分析、讨论区等。</p>
+
+    <h2>3.2 教师</h2>
+    <p>教师侧能力由 teacher-service 提供：班级管理、学生入班、教学范围（TeachingScope）设定、作业布置与提交批改、讨论区与通知。配合 evaluation-service 的成绩单分析能力，教师可导入 XLSX/CSV/DOCX/PDF/图片（OCR）格式的成绩单并获得学情分析。</p>
+
+    <h2>3.3 管理员</h2>
+    <p>管理员负责平台的治理与运营，共 12 个管理页面、7 个功能分组：数据看板、用户与角色管理、学科规划与公共知识建设、知识文档与候选审核发布、自动维护计划、资源管理与内容改写、提示词与图文配置、操作日志与系统配置等。本地默认管理员账号为 <code>admin</code>，密码由 <code>.env</code> 的 <code>DEFAULT_ADMIN_PASSWORD</code> 配置。</p>
+
+    <h1 id="section-4">4. 总体架构</h1>
+
+    <h2 id="section-4-1">4.1 微服务划分</h2>
+    <table>
+      <thead><tr><th>服务</th><th>端口</th><th>职责</th></tr></thead>
+      <tbody>
+      <tr><td>user_service</td><td>8001</td><td>认证、学习者画像、学习画像（learning_portrait）、笔记/闪卡（study_tools）</td></tr>
+      <tr><td>agent_service</td><td>8002</td><td>核心服务：多智能体协调、资源/习题生成、路径、答疑、聊天、小智助手、知识治理、运营看板</td></tr>
+      <tr><td>resource_service</td><td>8003</td><td>资源目录、推荐、导入、下载、DOCX 导出</td></tr>
+      <tr><td>evaluation_service</td><td>8004</td><td>作答评分、错题本、学习报告、成绩单分析、学习洞察</td></tr>
+      <tr><td>teacher_service</td><td>8005</td><td>班级、教学范围、作业、讨论、通知</td></tr>
+      <tr><td>system_service</td><td>8006</td><td>用户管理、角色、学科、系统配置、日志</td></tr>
+      <tr><td>agent-service-qa-compat</td><td>8007</td><td>答疑兼容部署入口</td></tr>
+      <tr><td>assistant-worker</td><td>无端口</td><td>持久任务 Worker（心跳、租约、执行尝试恢复）</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="section-4-2">4.2 多智能体协调器</h2>
+    <p>协调器位于 <code>services/agent_service/app/agents/coordinator.py</code>，基于 LangGraph StateGraph 编排，执行链为<strong>意图分析（analyze_intent）→ 任务分发（dispatch_tasks）→ 冲突消解（resolve_conflicts）</strong>。对外入口为 <code>POST /agents/coordinate</code>。</p>
+    <p>受支持的 8 个智能体：</p>
+    <table>
+      <thead><tr><th>智能体</th><th>职责</th></tr></thead>
+      <tbody>
+      <tr><td>learner_profiling_agent</td><td>学习者画像构建（对话式 + 手工修补）</td></tr>
+      <tr><td>knowledge_graph_agent</td><td>知识图谱构建与查询</td></tr>
+      <tr><td>knowledge_base_agent</td><td>公共知识库检索与治理</td></tr>
+      <tr><td>path_planning_agent</td><td>个性化学习路径规划与调整</td></tr>
+      <tr><td>resource_generation_agent</td><td>个性化课件/资源生成</td></tr>
+      <tr><td>exercise_generation_agent</td><td>个性化习题生成</td></tr>
+      <tr><td>qa_agent</td><td>智能答疑（优先 DeepSeek）</td></tr>
+      <tr><td>evaluation_feedback_agent</td><td>作答评价与反馈建议</td></tr>
+      </tbody>
+    </table>
+    <p>各智能体的本体实现分布于 <code>services/agent_service/app/services/</code> 下的 50+ 个服务模块，代表性模块包括：<code>personalization.py</code>（画像快照）、<code>learning_path.py</code>（路径生成/调整）、<code>resource_generation.py</code>（课件生成，含显式生成规划）、<code>exercise_generation.py</code>、<code>qa_service.py</code>、<code>rag.py</code>（ChromaRetriever：查询改写/重排/TTL 缓存）、<code>llm_factory.py</code>（LLM 工厂，支持按任务构建模型与预热）。</p>
+
+    <h2 id="section-4-3">4.3 共享层与基础设施</h2>
+    <p><code>common/</code> 目录提供共享能力：SQLAlchemy 模型（models/）、Pydantic 模式（schemas/）、数据库会话与迁移引导（db/）、统一配置（config.py）、安全（security/）、消息队列封装（messaging/rabbitmq.py）、模型调用台账（model_usage.py）、学习上下文与证据（learning_context.py / learning_evidence.py）、画像评分（profile_scoring.py）等。</p>
+
+    <h1 id="section-5">5. 功能模块详述</h1>
+
+    <h2 id="section-5-1">5.1 用户认证</h2>
+    <table>
+      <thead><tr><th>接口</th><th>说明</th></tr></thead>
+      <tbody>
+      <tr><td><code>POST /users/register</code></td><td>注册</td></tr>
+      <tr><td><code>POST /users/login</code></td><td>登录</td></tr>
+      <tr><td><code>GET /users/me</code></td><td>获取当前用户</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="section-5-2">5.2 学习者画像</h2>
+    <ul>
+      <li>对话式画像构建：<code>POST /users/{user_id}/profile/chat</code>（来自 agent-core 集成）。</li>
+      <li>手工维度修补：<code>PUT /users/{user_id}/profile</code>。</li>
+      <li>画像读模型包含持久化的 profile_dimensions，底层为四维画像：掌握度（mastery_json）、学习风格（learning_style）、认知能力（cognitive_abilities）、学习习惯（habits）。</li>
+    </ul>
+
+    <h2 id="section-5-3">5.3 学习路径</h2>
+    <table>
+      <thead><tr><th>接口</th><th>说明</th></tr></thead>
+      <tbody>
+      <tr><td><code>POST /paths/generate</code></td><td>生成学习路径（持久化生命周期）</td></tr>
+      <tr><td><code>GET /paths/{user_id}</code></td><td>查询我的路径</td></tr>
+      <tr><td><code>POST /paths/adjust</code></td><td>调整路径</td></tr>
+      <tr><td><code>POST /paths/preflight</code></td><td>知识覆盖预检</td></tr>
+      <tr><td><code>POST /paths/adaptation/preview</code> / <code>confirm</code></td><td>调整提案需本人确认后生效</td></tr>
+      </tbody>
+    </table>
+    <p>路径生成与调整结合知识图谱、画像掌握度与学习缺口（LearningKnowledgeGap），调整采用「先预览提案、本人确认」的安全模式。</p>
+
+    <h2 id="section-5-4">5.4 个性化资源生成</h2>
+    <p>入口：<code>POST /resources/generate</code>。完整链路：</p>
+    <ol>
+      <li>身份与学习上下文核验；</li>
+      <li>材料获取（协调器共享检索，RAG 召回）；</li>
+      <li><strong>生成规划</strong>：先产出显式 generation_plan，包含主题规范化、大纲、难度、目标字数与个性化提示；</li>
+      <li>本人候选复用判断（30 天内，按用户/目标/学情/模板/篇幅指纹去重，避免重复生成）；</li>
+      <li>正式生成（默认返回 1 份正式模型课件，保证稳定性；可通过 <code>RESOURCE_COURSEWARE_VARIANT_COUNT</code> 开启多候选版本）；</li>
+      <li>保存资源与版本记录；</li>
+      <li>导出与产物制作。</li>
+    </ol>
+    <p>配套能力：</p>
+    <ul>
+      <li><strong>分章修订</strong>：<code>POST /resources/{resource_id}/chapters/{chapter_key}/regenerate</code>，支持对单个章节重新生成。</li>
+      <li><strong>资源编辑器</strong>：管理员对资源进行改写与配图（改写操作受 <code>RUN_LIVE_LLM=1</code> + <code>DEEPSEEK_LIVE_PAID_ACK=1</code> 双闸门保护）。</li>
+      <li><strong>本地产物</strong>：可制作 PPTX、SVG 动画、WAV 语音、无声 WebM 视频等课件产物，存放于 storage/ 并以 /storage 静态路径对外提供。</li>
+      <li><strong>资源交互沉淀</strong>：<code>POST /resources/{resource_id}/interactions</code> 记录查看、下载、来源打开等隐式反馈，供推荐系统使用。</li>
+    </ul>
+
+    <h2 id="section-5-5">5.5 资源推荐</h2>
+    <p><code>GET /resources/recommendations</code> 采用混合推荐策略，融合 User-CF、Item-CF、学习画像、知识点薄弱度与资源热度五路信号。资源目录、导入、下载与 DOCX 导出由 resource_service（8003）承担。</p>
+
+    <h2 id="section-5-6">5.6 习题生成与作答评价</h2>
+    <ul>
+      <li>习题生成：<code>POST /exercises/generate</code>，按知识点与画像定向出题。</li>
+      <li>作答提交：<code>POST /evaluation/practice/submit</code> 与 <code>/batch_submit</code>。</li>
+      <li>错题本：<code>GET /evaluation/mistakes/{user_id}/detail</code>，支持补救练习（remedial）生成重练题。</li>
+      <li>收藏本：practice/favorites。</li>
+      <li>评价反馈：评价反馈智能体汇总作答表现，输出诊断结论并反哺学习建议、知识漏洞与错题本。</li>
+    </ul>
+
+    <h2 id="section-5-7">5.7 学习报告与洞察</h2>
+    <ul>
+      <li>报告：章节报告、阶段报告、月度报告、综合报告。</li>
+      <li>确定性分析建议：<code>GET /reports/suggestions/{user_id}</code>（源自 agent-core 分析层的确定性建议）。</li>
+      <li>学习洞察与活动心跳：记录学习活动流，支撑时长、节奏与坚持度分析。</li>
+    </ul>
+
+    <h2 id="section-5-8">5.8 笔记与闪卡</h2>
+    <ul>
+      <li>学习笔记：<code>/study/notes</code>，带编辑历史（CAS 乐观锁保护，防止并发覆盖）。</li>
+      <li>复习闪卡：<code>/study/cards</code>，支持到期复习调度、回执去重，卡片可与知识点绑定（CardKnowledgeBinding）。</li>
+    </ul>
+
+    <h2 id="section-5-9">5.9 知识图谱与思维导图</h2>
+    <ul>
+      <li>知识图谱基于 Neo4j，提供图谱查询与可视化数据。</li>
+      <li>私人思维导图保存时校验版本冲突、单根节点与无环约束。</li>
+    </ul>
+
+    <h2 id="section-5-10">5.10 智能答疑</h2>
+    <p><code>POST /qa/analyze</code>：</p>
+    <ul>
+      <li>优先调用 DeepSeek 生成具体教师式讲解正文；</li>
+      <li>作答前进行轻量关键词接地检索，返回 context_snippets 与 confidence；</li>
+      <li>同时返回结构化分析，供系统更新学习建议、知识漏洞与错题本；</li>
+      <li>8007 端口提供答疑兼容部署入口。</li>
+    </ul>
+
+    <h2 id="section-5-11">5.11 聊天系统（大小模型协作）</h2>
+    <table>
+      <thead><tr><th>接口</th><th>说明</th></tr></thead>
+      <tbody>
+      <tr><td><code>POST /chat/sessions/new</code></td><td>新建会话</td></tr>
+      <tr><td><code>GET /chat/sessions</code></td><td>会话列表</td></tr>
+      <tr><td><code>GET /chat/sessions/{id}</code></td><td>会话详情</td></tr>
+      <tr><td><code>POST /chat/chat</code></td><td>发送消息</td></tr>
+      <tr><td><code>DELETE /chat/sessions/{id}</code></td><td>删除会话</td></tr>
+      </tbody>
+    </table>
+    <p>决策规则：知识库无相关内容、含复杂关键词、或问题长度超过 100 字符时路由到大模型；否则由小模型作答，并由小模型对质量做二次分析。会话上下文保留最近 10 条消息。</p>
+
+    <h2 id="section-5-12">5.12 小智学习助手</h2>
+    <ul>
+      <li>对话：<code>POST /assistant/chat</code>，流式 <code>POST /assistant/chat/stream</code>。</li>
+      <li>附件：/assistant 附件上传与引用。</li>
+      <li>持久任务：<code>/assistant/tasks</code>、取消请求、重试、路径确认（confirm-path）；服务启动时自动恢复中断任务（fail_interrupted_tasks），可由独立 Worker（<code>ASSISTANT_TASK_EXECUTION_MODE=worker</code>）执行，带心跳与租约机制。</li>
+      <li>能力与记忆：<code>/assistant/capabilities</code>、个人记忆 <code>/assistant/memory</code>。</li>
+    </ul>
+
+    <h2 id="section-5-13">5.13 教师端功能</h2>
+    <ul>
+      <li>班级管理：创建班级、学生入班（ClassEnrollment）。</li>
+      <li>教学范围：TeachingScope 界定教学边界，约束生成内容范围。</li>
+      <li>作业：布置（Assignment）与提交（Submission）。</li>
+      <li>讨论与通知：DiscussionThread/Reply、Notification。</li>
+    </ul>
+
+    <h2 id="section-5-14">5.14 成绩单分析</h2>
+    <p>成绩单接口支持 parse / analyze / history / chat / share / export 全流程：上传 XLSX/CSV/DOCX/PDF/图片（OCR，单文件 20MB 上限）→ 结构化解析（TranscriptImport/Score）→ 学情分析（TranscriptAnalysis）→ 可分享与导出。</p>
+
+    <h2 id="section-5-15">5.15 公共知识库建设与治理</h2>
+    <p>这是平台内容供给的中枢，分「自动建设」与「人工治理」两条线。</p>
+    <h3>自动建设链路（学生触发、无需等待管理员）</h3>
+    <ol>
+      <li>公共版本预检：检查公共知识库是否已有所需学科/知识点/已发布内容；</li>
+      <li>模型建设：缺口内容由模型生成草稿；</li>
+      <li>独立模型全文审核：仅接受严格 PASS，正文哈希绑定，被拒绝最多修订一次；</li>
+      <li>自动入库：直接创建 SystemSubject/KnowledgePoint、发布 KnowledgeVersion 并写入向量索引，标记 <code>license_name=AI_GENERATED</code>，语料头注明「AI 自动构建，管理员可修订/下架」，状态为 <code>AUTO_APPROVED</code>（与人工 <code>APPROVED</code> 严格区分）；</li>
+      <li>发布/索引验证与重新检索；</li>
+      <li>失败补偿：因 SQL/语料文件/Chroma 无法原子提交，采用「写锁 → 复用检查 → 发布 → 版本级校验 → 失败补偿（DB→文件→索引→reconcile）」，补偿失败写 AuditLog ERROR 并排队对账任务；任何失败返回结构化失败原因而非伪成功。被管理员下架（WITHDRAWN）或驳回（REJECTED）的知识不会被自动补建。</li>
+    </ol>
+    <h3>管理员工具链</h3>
+    <ul>
+      <li>建设任务：学科/知识点规划、计划确认、知识点构建、采集（Search/Fetch）；</li>
+      <li>候选审核：提交、审核、发布、撤回、版本 diff；</li>
+      <li>版本管理：compare / impact / rollback；</li>
+      <li>知识文档：上传、归类、分块、归档、转候选；</li>
+      <li>知识融合决策：A 新建 / B 补充 / C 修订 / D 重复 / E 冲突；</li>
+      <li>自动维护：维护计划、启停与报告；</li>
+      <li>预算控制：KnowledgeBudgetCounter 限制建设开销。</li>
+    </ul>
+
+    <h2 id="section-5-16">5.16 知识检索（RAG）</h2>
+    <table>
+      <thead><tr><th>接口</th><th>说明</th></tr></thead>
+      <tbody>
+      <tr><td><code>GET /knowledge-base/search</code></td><td>检索，模式 hybrid / lexical / vector，支持 subject、university、license 等过滤</td></tr>
+      <tr><td><code>GET /knowledge-base/status</code></td><td>索引状态</td></tr>
+      <tr><td><code>GET /knowledge-base/sources</code></td><td>来源列表</td></tr>
+      <tr><td><code>POST /knowledge-base/reindex</code></td><td>重建索引（仅管理员）</td></tr>
+      <tr><td><code>POST /knowledge-base/sources/crawl</code></td><td>来源采集</td></tr>
+      </tbody>
+    </table>
+    <p>检索器 ChromaRetriever 具备查询改写、结果重排与 TTL 缓存。口径约定：SQL 中的发布状态/版本/可见性是内容准入依据，Chroma 仅作为检索索引。知识库语料约 119 份 Markdown，覆盖 23 个学科目录（Python、C、Java、C++、算法、数据库等），索引约 1296 个语义分块。</p>
+
+    <h2 id="section-5-17">5.17 管理端功能</h2>
+    <ol>
+      <li><strong>数据看板</strong>（/admin）：<code>GET /admin/dashboard</code>、运营任务 <code>/admin/operations/tasks</code>、模型用量 <code>/admin/usage</code>（UTC 自然日口径）与导出、Worker 实例 <code>/admin/workers</code>、模型预算 <code>GET/PUT /admin/model-budget</code>。</li>
+      <li><strong>用户与角色</strong>：搜索、分页、启停、角色分配。</li>
+      <li><strong>学科规划与知识建设 / 知识文档 / 审核发布 / 自动维护</strong>：见 5.15。</li>
+      <li><strong>资源管理与内容改写</strong>：管理员改写受双闸门保护。</li>
+      <li><strong>提示词与图文配置</strong>：提示词模板带版本历史与恢复；图片 Provider 四态管理（blocked / invalid / disabled / configured）。</li>
+      <li><strong>操作日志与系统配置</strong>：<code>/system/configs</code>、<code>/system/logs</code>、AuditLog。</li>
+    </ol>
+
+    <h1 id="section-6">6. 数据模型概览</h1>
+    <p>关系模型集中于 <code>common/models/learning.py</code>（约 50 个实体类），按域划分：</p>
+    <table>
+      <thead><tr><th>域</th><th>主要实体</th></tr></thead>
+      <tbody>
+      <tr><td>用户与画像</td><td>User、UserProfile、ProfileConversation</td></tr>
+      <tr><td>知识体系</td><td>KnowledgePoint、KnowledgeRelation、SystemSubject</td></tr>
+      <tr><td>资源</td><td>Resource、ResourceInteraction</td></tr>
+      <tr><td>学习过程</td><td>StudySession、StudyActivity、LearningPath、LearningTask、LearningKnowledgeGap、LearningContext、ContextExercise</td></tr>
+      <tr><td>练习评价</td><td>Exercise、ExerciseFavorite、AnswerRecord、LearningReport</td></tr>
+      <tr><td>笔记闪卡</td><td>StudyNote、ReviewCard、CardReviewEvent、NoteRevision、CardKnowledgeBinding、CardReviewReceipt</td></tr>
+      <tr><td>成绩单</td><td>TranscriptImport、TranscriptScore、TranscriptAnalysis</td></tr>
+      <tr><td>教学</td><td>Course、Classroom、ClassEnrollment、Assignment、Submission、TeachingScope</td></tr>
+      <tr><td>社区</td><td>DiscussionThread、DiscussionReply、Notification</td></tr>
+      <tr><td>聊天与助手</td><td>ChatSession、ChatMessage、AssistantTask、AssistantAgentExecution、AssistantMemory、AssistantAttachment</td></tr>
+      <tr><td>知识治理</td><td>KnowledgeBuildTask、KnowledgeMaintenancePlan、KnowledgeBudgetCounter、KnowledgeCandidate、KnowledgeVersion、KnowledgeDocument</td></tr>
+      <tr><td>运营</td><td>ModelCall、WorkerInstance、TaskAttempt、SystemConfig、AuditLog</td></tr>
+      <tr><td>媒体产物</td><td>ResourceArtifact、ResourceRevision、ResourceIllustration</td></tr>
+      </tbody>
+    </table>
+    <p>数据库迁移由 Alembic 管理，共 33 个版本（0001 初始 schema → 0033 note_card_evidence），演进路径覆盖作答元数据、资源生命周期、学习社区、成绩单、助手任务、知识建设、学习上下文、运营台账、证据链等。</p>
+
+    <h1 id="section-7">7. 提示词体系</h1>
+    <p><code>prompts/</code> 目录内置 13 份提示词模板，与智能体一一对应：协调器（coordinator）、画像（learner_profile）、知识图谱（knowledge_graph）、路径规划（path_planning）、资源生成（resource_gen）、习题生成（exercise_gen）、答疑（qa）、评价反馈（evaluation_feedback）、思维导图（mind_map_gen）、代码案例（code_case_gen）、视频脚本（video_script_gen）、公共知识建设（public_knowledge_build）、公共知识审核（public_knowledge_review）。提示词支持在管理端进行版本化管理与恢复。</p>
+
+    <h1 id="section-8">8. 运行与部署</h1>
+
+    <h2>8.1 本地一键启动</h2>
+    <pre><code>powershell -ExecutionPolicy Bypass -File scripts/start_local_services.ps1</code></pre>
+    <p>脚本拉起 8001–8007 全部服务与前端（5175）。启动后访问：</p>
+    <ul>
+      <li>前端：<code>http://127.0.0.1:5175</code></li>
+      <li>健康检查：<code>http://127.0.0.1:8001/health</code>（用户）/ <code>8002</code>（智能体）/ <code>8003</code>（资源）</li>
+    </ul>
+
+    <h2>8.2 手动启动</h2>
+    <pre><code>python -m uvicorn services.user_service.app.main:app --host 127.0.0.1 --port 8001
+python -m uvicorn services.agent_service.app.main:app --host 127.0.0.1 --port 8002
+python -m uvicorn services.evaluation_service.app.main:app --host 127.0.0.1 --port 8004
+python -m uvicorn services.teacher_service.app.main:app --host 127.0.0.1 --port 8005
+python -m uvicorn services.system_service.app.main:app --host 127.0.0.1 --port 8006</code></pre>
+    <p>前端：<code>cd web-app &amp;&amp; npm install &amp;&amp; npm run dev</code>。</p>
+
+    <h2>8.3 Docker 部署</h2>
+    <p><code>docker-compose.yml</code> 编排 postgres:16、redis:7.2、rabbitmq:3.13、neo4j:5、minio、elasticsearch:8.15、chroma:0.5.5 及 6 个应用服务与 nginx；Worker 通过 <code>deployment/assistant-worker.compose.yml</code> 以 overlay 方式部署。另提供 sakurafrp 内网穿透部署脚本与 nginx 反向代理配置。</p>
+
+    <h2>8.4 环境要求</h2>
+    <ul>
+      <li>Python 3.12+，Node.js 20+，可选 JDK 17 + Maven 3.9+（Java 骨架）。</li>
+      <li>核心依赖：FastAPI ≥ 0.115、SQLAlchemy ≥ 2.0、LangChain/LangGraph、chromadb（≥0.5.5,&lt;1.0）、psycopg、neo4j、pika、redis、minio、elasticsearch&lt;9、python-docx/pptx、reportlab、pytesseract/opencv（成绩单 OCR）。</li>
+      <li>测试标记：<code>live_llm</code>（需 <code>RUN_LIVE_LLM=1</code>）、<code>external_service</code>。</li>
+    </ul>
+
+    <h1 id="section-9">9. 测试与质量保障</h1>
+    <ul>
+      <li>测试分层：<code>tests/unit/</code>、<code>tests/integration/</code>、<code>tests/e2e/</code>、<code>tests/global/</code> 及聊天专项测试。</li>
+      <li>RAG 回归：<code>benchmarks/rag_queries.json</code> 固定 50 条查询集，配合 <code>scripts/benchmark_rag.py</code> 做检索质量回归。</li>
+      <li>验收脚本：<code>scripts/verify_*.py</code> 提供大量端到端验收入口。</li>
+      <li>无费用运行护栏：<code>scripts/no_cost_runtime/</code>。</li>
+      <li>功能状态分级：IMPLEMENTED / TESTED_ISOLATED / LIVE_VERIFIED，引用管理功能融合矩阵（ADMIN_FUNCTION_FUSION_MATRIX.md）时需区分状态等级。</li>
+    </ul>
+
+    <h1 id="section-10">10. 已知边界与限制</h1>
+    <p class="note">&nbsp;&nbsp;依据当前功能基线，以下事项尚不能统一宣称完成，验收与对外材料中需如实标注。</p>
+    <ol>
+      <li>全站端到端（E2E）联调覆盖仍不完整；</li>
+      <li>外部图片生成、TTS、视频生成等外部能力未默认启用；</li>
+      <li>个性化推荐的长期效果缺少量化评估；</li>
+      <li>未做正式压测与公网发布准备；</li>
+      <li>管理功能融合矩阵中多数项为 PARTIAL/MISSING 状态（Token 分析为 MISSING）；</li>
+      <li>新课件/习题禁止使用 Mermaid flowchart 图形；</li>
+      <li>本地实际运行库为 <code>artifacts/local-start-20261019/runtime.sqlite</code>（而非根目录 learning_system.db）；</li>
+      <li>答疑默认优先 DeepSeek，受密钥与预算配置约束。</li>
+    </ol>
+
+    <h1 id="section-11">11. 附录：目录结构</h1>
+    <table>
+      <thead><tr><th>目录</th><th>职责</th></tr></thead>
+      <tbody>
+      <tr><td><code>services/</code></td><td>6 个 Python FastAPI 微服务</td></tr>
+      <tr><td><code>common/</code></td><td>共享模型、模式、配置、安全、消息、台账</td></tr>
+      <tr><td><code>alembic/</code></td><td>数据库迁移（33 个版本）</td></tr>
+      <tr><td><code>knowledge_base/</code></td><td>独立 RAG 知识库：语料 + Chroma 索引</td></tr>
+      <tr><td><code>prompts/</code></td><td>13 份智能体提示词模板</td></tr>
+      <tr><td><code>web-app/</code></td><td>Vue 3 前端（学生端 16 页、管理端 12 页）</td></tr>
+      <tr><td><code>scripts/</code></td><td>启动、采集、索引、基准、验收等运维脚本</td></tr>
+      <tr><td><code>deployment/</code></td><td>Worker overlay 与内网穿透部署</td></tr>
+      <tr><td><code>java-services/</code></td><td>Java 迁移骨架（非主链路）</td></tr>
+      <tr><td><code>benchmarks/</code></td><td>RAG 基准查询集与结果</td></tr>
+      <tr><td><code>tests/</code></td><td>单元/集成/E2E/全局测试</td></tr>
+      <tr><td><code>docs/</code></td><td>40+ 份设计与验收文档</td></tr>
+      </tbody>
+    </table>
+
+  </section>
+</body>
+</html>

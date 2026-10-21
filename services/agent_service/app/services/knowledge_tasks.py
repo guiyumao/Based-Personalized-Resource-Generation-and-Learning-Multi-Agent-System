@@ -31,7 +31,7 @@ from services.agent_service.app.services.knowledge_base_admin import (
     reindex_knowledge_base,
 )
 
-SUPPORTED_OPERATIONS = frozenset({"KNOWLEDGE_HEALTH_CHECK", "INDEX_REPAIR", "SEARCH_SOURCES", "FETCH_SOURCE", "AI_SUBJECT_PLAN", "BUILD_POINT", "MAINTENANCE_RUN", "PUBLISH_CANDIDATE", "RECONCILE_PUBLICATIONS"})
+SUPPORTED_OPERATIONS = frozenset({"KNOWLEDGE_HEALTH_CHECK", "INDEX_REPAIR", "SEARCH_SOURCES", "FETCH_SOURCE", "AI_SUBJECT_PLAN", "BUILD_POINT", "MAINTENANCE_RUN", "PUBLISH_CANDIDATE", "RECONCILE_PUBLICATIONS", "PUBLIC_KNOWLEDGE_BUILD"})
 LOGGER = logging.getLogger(__name__)
 LEASE_SECONDS = 45
 MAX_ATTEMPTS = 3
@@ -280,6 +280,7 @@ def guard_write(db: Session, task_id: int, worker_id: str, attempt: int) -> None
 
 def _finish(task_id: int, worker_id: str, attempt: int, **values: Any) -> bool:
     with SessionLocal() as db:
+        queued = values.get("status") == "QUEUED"
         cancelled = KnowledgeBuildTask.cancel_requested.is_(True)
         values["status"] = case((cancelled, "CANCELLED"), else_=values.get("status", "FAILED"))
         values["current_step"] = case((cancelled, "已安全停止"), else_=values.get("current_step", "执行失败"))
@@ -290,7 +291,7 @@ def _finish(task_id: int, worker_id: str, attempt: int, **values: Any) -> bool:
         if "result_json" in values:
             values["result_json"] = case((cancelled, literal({}, type_=JSON)), else_=literal(values["result_json"], type_=JSON))
         result = db.execute(update(KnowledgeBuildTask).where(*_owned(task_id, worker_id, attempt)).values(
-            **values, completed_at=datetime.utcnow(), lease_expires_at=None,
+            **values, completed_at=case((cancelled, datetime.utcnow()), else_=None if queued else datetime.utcnow()), lease_expires_at=None,
         ))
         db.commit()
         return result.rowcount == 1
@@ -329,10 +330,29 @@ def execute_task(task_id: int) -> bool:
         record_attempt_started(db, "knowledge", task)
         thread = threading.Thread(target=heartbeat, daemon=True)
         thread.start()
-        from services.agent_service.app.services.knowledge_budget import current_knowledge_task, task_usage
+        from services.agent_service.app.services.knowledge_budget import (
+            current_knowledge_task,
+            task_usage,
+        )
         budget_token = current_knowledge_task.set(task_id)
         try:
-            if task.operation_type == "KNOWLEDGE_HEALTH_CHECK":
+            if task.operation_type == "PUBLIC_KNOWLEDGE_BUILD":
+                from services.agent_service.app.services.public_knowledge import (
+                    advance_public_build,
+                )
+                def public_guard(write_db=None):
+                    if write_db is not None:
+                        guard_write(write_db, task_id, worker_id, attempt)
+                    elif not renew_lease(task_id, worker_id, attempt):
+                        raise KnowledgeLeaseLost()
+                result = advance_public_build(db, task, public_guard)
+                if not result.get("ready"):
+                    db.rollback()
+                    _finish(task_id, worker_id, attempt, result_json=result, status="QUEUED",
+                            next_attempt_at=datetime.utcnow() + timedelta(seconds=min(300, 15 * max(1, attempt))),
+                            current_step="模型自动修改与融入中，无需人工审核", error_code="")
+                    return True
+            elif task.operation_type == "KNOWLEDGE_HEALTH_CHECK":
                 status = knowledge_base_status()
                 catalog = list_knowledge_subject_catalog()
                 selected = [item for item in catalog if item["value"] == task.subject] if task.subject else catalog
@@ -377,7 +397,9 @@ def execute_task(task_id: int) -> bool:
                 with SessionLocal() as write_db:
                     result = reconcile(write_db, guard=publication_guard)
                     if task.operation_type == "PUBLISH_CANDIDATE":
-                        from services.agent_service.app.services.knowledge_candidates import publish_candidate
+                        from services.agent_service.app.services.knowledge_candidates import (
+                            publish_candidate,
+                        )
                         candidate = write_db.get(KnowledgeCandidate, task.requirements_json["candidate_id"])
                         if candidate is None or candidate.content_hash != task.requirements_json["content_hash"]:
                             raise ValueError("Candidate changed after publication was queued")
@@ -411,7 +433,9 @@ def execute_task(task_id: int) -> bool:
                         raise KnowledgeLeaseLost()
                 result = build_point(task, guard)
             elif task.operation_type == "MAINTENANCE_RUN":
-                from services.agent_service.app.services.knowledge_maintenance import run_maintenance
+                from services.agent_service.app.services.knowledge_maintenance import (
+                    run_maintenance,
+                )
                 def guard(write_db: Session | None = None) -> None:
                     if write_db is not None:
                         guard_write(write_db, task_id, worker_id, attempt)
@@ -430,6 +454,11 @@ def execute_task(task_id: int) -> bool:
         except Exception as exc:
             db.rollback()
             if not isinstance(exc, KnowledgeLeaseLost):
+                if task.operation_type == "PUBLIC_KNOWLEDGE_BUILD":
+                    _finish(task_id, worker_id, attempt, status="QUEUED",
+                            next_attempt_at=datetime.utcnow() + timedelta(seconds=60),
+                            current_step="内容已保存，自动恢复后继续融入", error_code="")
+                    return True
                 _finish(task_id, worker_id, attempt, status="FAILED", current_step="执行失败", error_code=_failure_code(exc))
                 raise
         finally:
@@ -447,7 +476,8 @@ def run_pending_tasks(batch_size: int = 1) -> int:
     with SessionLocal() as db:
         task_ids = [
             row.id for row in db.query(KnowledgeBuildTask.id)
-            .filter(KnowledgeBuildTask.status == "QUEUED")
+            .filter(KnowledgeBuildTask.status == "QUEUED",
+                    or_(KnowledgeBuildTask.next_attempt_at.is_(None), KnowledgeBuildTask.next_attempt_at <= datetime.utcnow()))
             .order_by(KnowledgeBuildTask.id).limit(batch_size).all()
         ]
     for task_id in task_ids:
@@ -469,14 +499,14 @@ def expire_interrupted_tasks() -> int:
         ).all()
         changed = 0
         for task in rows:
-            retry = not task.cancel_requested and task.operation_type in SAFE_RECOVERY_OPERATIONS and task.execution_attempt < MAX_ATTEMPTS
+            retry = not task.cancel_requested and (task.operation_type == "PUBLIC_KNOWLEDGE_BUILD" or (task.operation_type in SAFE_RECOVERY_OPERATIONS and task.execution_attempt < MAX_ATTEMPTS))
             state = "QUEUED" if retry else "CANCELLED" if task.cancel_requested else "FAILED"
             result = db.execute(update(KnowledgeBuildTask).where(
                 KnowledgeBuildTask.id == task.id, KnowledgeBuildTask.status == "RUNNING",
                 KnowledgeBuildTask.execution_attempt == task.execution_attempt,
                 or_(KnowledgeBuildTask.lease_expires_at <= now, KnowledgeBuildTask.lease_expires_at.is_(None)),
             ).values(status=state, worker_id=None, lease_expires_at=None,
-                     next_attempt_at=now + timedelta(seconds=2 ** task.execution_attempt) if retry else None,
+                     next_attempt_at=now + timedelta(seconds=min(300, 2 ** min(task.execution_attempt, 8))) if retry else None,
                      current_step="等待安全恢复" if retry else "执行中断", error_code="WORKER_INTERRUPTED",
                      completed_at=None if retry else now))
             changed += result.rowcount

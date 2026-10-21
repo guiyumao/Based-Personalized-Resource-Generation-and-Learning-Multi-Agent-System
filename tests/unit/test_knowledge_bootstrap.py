@@ -32,6 +32,8 @@ def boot_db(monkeypatch):
     monkeypatch.setattr(knowledge_bootstrap, "_index_personal_chunks", lambda *a, **k: None)
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
+    from services.agent_service.app.services import knowledge_tasks
+    monkeypatch.setattr(knowledge_tasks, "SessionLocal", sessionmaker(bind=engine))
     with sessionmaker(bind=engine)() as db:
         db.add(User(id=1, username="learner", password_hash="unused"))
         db.commit()
@@ -222,6 +224,8 @@ def test_generate_path_backfills_publication_when_subject_exists(tmp_path, monke
         f"sqlite:///{tmp_path / 'real.sqlite'}", connect_args={"check_same_thread": False}
     )
     Base.metadata.create_all(engine)
+    from services.agent_service.app.services import knowledge_tasks
+    monkeypatch.setattr(knowledge_tasks, "SessionLocal", sessionmaker(bind=engine))
     with sessionmaker(bind=engine)() as db:
         db.add(User(id=1, username="learner", password_hash="unused"))
         db.add(SystemSubject(id=10, name="数据结构", code="data_structures", description="fixture"))

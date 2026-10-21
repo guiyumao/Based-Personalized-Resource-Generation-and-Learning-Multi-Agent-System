@@ -1,0 +1,26 @@
+{
+  "genre": "business-report",
+  "theme_name": "business-modern",
+  "css_variables": {
+    "--typography-fontFamily-heading": "微软雅黑, Microsoft YaHei, PingFang SC",
+    "--typography-fontFamily-body": "SimSun, 宋体",
+    "--typography-fontSize-title": "28pt",
+    "--typography-fontSize-h1": "20pt",
+    "--typography-fontSize-h2": "13pt",
+    "--typography-fontSize-h3": "11pt",
+    "--typography-fontSize-body": "12pt",
+    "--typography-lineHeight-body": "1.6",
+    "--color-primary": "#1565C0",
+    "--color-secondary": "#0288D1",
+    "--color-accent": "#00897B",
+    "--color-text": "#212121",
+    "--color-textSecondary": "#616161",
+    "--color-heading": "#1A237E",
+    "--color-divider": "#E0E0E0",
+    "--color-surface": "#F5F7FA",
+    "--spacing-paragraph": "0.75em",
+    "--spacing-sectionGap": "2.5em",
+    "--layout-pageSize": "A4",
+    "--page-content-width": "15.6cm"
+  }
+}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
@@ -46,6 +46,8 @@ const pathForm = reactive<LearningPathPayload>({
 
 const learningPath = ref<LearningPathResponse | null>(null)
 const loading = ref(false)
+let pageDisposed = false
+onUnmounted(() => { pageDisposed = true })
 const pathError = ref('')
 const knowledgeCheck = ref<{ ready: boolean; message: string; reason: string; mode?: string; gap_id?: string } | null>(null)
 async function checkKnowledge() {
@@ -53,7 +55,7 @@ async function checkKnowledge() {
   knowledgeCheck.value = data
   // Generation builds and model-reviews missing public knowledge before use.
   if (!data.ready && data.mode === 'public_build_pending') {
-    ElMessage.info('将自动建设公共知识，经模型审核、发布并验证检索后再生成；失败时不使用个人草稿。')
+    ElMessage.info('将自动建设公共知识，经模型审核、发布并验证检索后再生成；内容会保存并自动修订，不需要人工处理。')
     return true
   }
   return Boolean(data.ready)
@@ -98,7 +100,7 @@ const BACKFAIL_REASON_TEXT: Record<string, string> = {
   BACKFILL_UNAVAILABLE: '本次未成功入库（已发布但预检未通过或入库不可用）',
 }
 const backfillReasonText = computed(
-  () => BACKFAIL_REASON_TEXT[learningPath.value?.knowledge_backfill_reason ?? ''] ?? '本次未成功入库，已保留个人草稿',
+  () => BACKFAIL_REASON_TEXT[learningPath.value?.knowledge_backfill_reason ?? ''] ?? '历史记录尚未进入公共知识，请重新生成以自动完成融入',
 )
 const publicKnowledgeTitle = computed(() => {
   const versions = learningPath.value?.knowledge_versions?.length ?? 0
@@ -294,6 +296,13 @@ async function generateLearningPath() {
 
     clearWorkspaceForNewTopic(requestedTopic)
     learningPath.value = coordinatedPath
+    // Only claim the published version is in use when it actually is: on a
+    // personal-draft fallback the model integration has not landed yet and the
+    // draft alert has to stay authoritative.
+    if (coordinatedPath.knowledge_scope === 'public') {
+      knowledgeCheck.value = { ready: true, mode: 'public', reason: 'READY',
+        message: '公共知识已由模型自动审核、修订并融入，正在使用已发布版本。' }
+    }
     pathForm.subject = coordinatedPath.subject
     pathForm.knowledge_point = coordinatedPath.knowledge_point
     persistWorkspaceContext(coordinatedPath)
@@ -314,7 +323,7 @@ async function generateLearningPath() {
   }
 }
 
-async function requestCoordination() {
+async function requestCoordination(): Promise<void> {
   const teacherScope = selectedTeachingScope.value
   const { data } = await agentApi.post<CoordinationResponse>('/agents/coordinate', {
     user_id: user.userId,
@@ -342,6 +351,17 @@ async function requestCoordination() {
       teacher_scope: teacherScope ?? undefined,
     },
   })
+  const pending = (data as any)?.detail
+  if (pending?.code === 'PUBLIC_KNOWLEDGE_PROCESSING') {
+    knowledgeCheck.value = { ready: false, mode: 'public_build_pending', reason: 'PROCESSING', message: pending.message }
+    while (!pageDisposed) {
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      if (pageDisposed) return
+      const check = await agentApi.post('/paths/preflight', { subject: pathForm.subject, knowledge_point: pathForm.knowledge_point })
+      if (check.data.ready) return requestCoordination()
+    }
+    return
+  }
   coordination.value = (data as any).data ?? data
 }
 
@@ -551,7 +571,7 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
         </div>
 
         <div v-if="pathError" class="path-error">{{ pathError }}</div>
-        <el-alert v-if="knowledgeCheck" :title="knowledgeCheck.message" :type="knowledgeCheck.ready ? 'success' : (knowledgeCheck.mode === 'public_build_pending' ? 'info' : 'warning')" :closable="false"><span v-if="knowledgeCheck.gap_id && knowledgeCheck.mode !== 'public_build_pending'">缺口请求 #{{ knowledgeCheck.gap_id }}，请管理员在知识库中处理后重试。</span></el-alert>
+        <el-alert v-if="knowledgeCheck" :title="knowledgeCheck.message" :type="knowledgeCheck.ready ? 'success' : (knowledgeCheck.mode === 'public_build_pending' ? 'info' : 'warning')" :closable="false"><span v-if="knowledgeCheck.gap_id && knowledgeCheck.mode !== 'public_build_pending'">公共建设跟踪编号 #{{ knowledgeCheck.gap_id }}，系统自动处理。</span></el-alert>
 
         <div v-if="learningPath" class="timeline">
           <el-alert

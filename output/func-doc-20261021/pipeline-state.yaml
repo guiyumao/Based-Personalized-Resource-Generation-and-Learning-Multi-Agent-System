@@ -1,0 +1,31 @@
+request_id: func-doc-20261021
+entry_type: full_pipeline
+intent_length: long
+output_docx_path: C:\Users\wdx\Desktop\基于大模型的个性化资源生成与学习多智能体系统\output\func-doc-20261021\stage3\系统功能文档.docx
+output_docx_user_specified: false
+current_stage: done
+stage_1:
+  status: completed
+  executor: doc-writer
+  output_path: stage1/final_draft.md
+  genre: general
+  expert_used: general-writer
+  route_tag: general_writing
+stage_2:
+  status: completed
+  executor: doc-formatter
+  route: html
+  html_sub: template
+  output_path: stage2/formatted-系统功能文档.html
+  output_format: html
+  html_review_attempts: 1
+stage_3:
+  status: completed
+  executor: doc-converter
+  input_format: html
+  output_path: C:\Users\wdx\Desktop\基于大模型的个性化资源生成与学习多智能体系统\output\func-doc-20261021\stage3\系统功能文档.docx
+  skill_used: [html-to-doc]
+  present_files_opened: true
+  fallback: false
+  fallback_reason: null
+consistency_check: pass

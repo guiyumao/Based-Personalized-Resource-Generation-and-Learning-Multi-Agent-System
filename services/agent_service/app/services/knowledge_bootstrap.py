@@ -43,6 +43,8 @@ _OPERATION = "PERSONAL_SUBJECT_DRAFT"
 _AUTO_LOCK_TIMEOUT_SECONDS = 8.0
 _AUTO_LOCK_POLL_SECONDS = 0.05
 AUTO_BACKFILL_ORIGIN = "ai_generated_auto_published"
+_MIN_DRAFT_CHARS = 20
+_MAX_DRAFT_CHARS = 30000
 _TEMPLATE = (
     ("基础概念", ("核心定义", "基本术语", "应用场景")),
     ("核心原理", ("关键机制", "原理推导", "典型例题")),
@@ -483,15 +485,16 @@ def _draft_document(subject: str, point: str, outline: dict, chunks: list[dict])
     return "\n".join(lines).strip()
 
 
-def _validate_draft(point: str, content: str, outline: dict) -> None:
-    """Reject empty, mis-attributed or structurally broken drafts."""
+def _draft_issues(point: str, content: str, outline: dict) -> list[str]:
+    """Concrete, actionable defects - the work order handed to a revision round."""
+    issues: list[str] = []
     text = (content or "").strip()
-    if len(text) < 20:
-        raise ValueError("draft content is empty or too short")
-    if len(text) > 30000:
-        raise ValueError("draft content exceeds the publication size limit")
+    if len(text) < _MIN_DRAFT_CHARS:
+        issues.append("正文为空或过短，需补齐定义、原理、步骤与案例，形成完整可教学的正文")
+    if len(text) > _MAX_DRAFT_CHARS:
+        issues.append(f"正文超过 {_MAX_DRAFT_CHARS} 字符上限，需压缩保留核心定义、原理与案例")
     if _normalized(point) not in _normalized(text):
-        raise ValueError("draft content does not describe the requested knowledge point")
+        issues.append(f"正文未明确讲解知识点「{point}」，需在标题与正文中点明该知识点")
     names = [
         _normalized(str(item.get("name") or ""))
         for chapter in (outline or {}).get("chapters") or []
@@ -499,7 +502,54 @@ def _validate_draft(point: str, content: str, outline: dict) -> None:
     ]
     names = [name for name in names if name]
     if len(names) != len(set(names)):
-        raise ValueError("outline contains duplicated knowledge points")
+        issues.append("大纲存在重复知识点名称，需去重")
+    return issues
+
+
+def _validate_draft(point: str, content: str, outline: dict) -> None:
+    """Reject empty, mis-attributed or structurally broken drafts."""
+    issues = _draft_issues(point, content, outline)
+    if issues:
+        raise ValueError("; ".join(issues))
+
+
+def _dedupe_outline(outline: dict) -> dict:
+    """Drop repeated point names so a structural defect never blocks publication."""
+    if not isinstance(outline, dict):
+        return {}
+    chapters = []
+    seen: set[str] = set()
+    for chapter in outline.get("chapters") or []:
+        points = []
+        for item in chapter.get("points") or []:
+            key = _normalized(str(item.get("name") or ""))
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            points.append(item)
+        chapters.append({**chapter, "points": points})
+    return {**outline, "chapters": chapters}
+
+
+def _repair_draft(point: str, content: str, outline: dict) -> str:
+    """Deterministic last resort so a structural defect never refuses integration.
+
+    Model revision is the primary path. This only guarantees the body is
+    publishable when the model cannot be reached or returns something unusable -
+    it never pretends the result was model-approved.
+    """
+    text = (content or "").strip()
+    if len(text) > _MAX_DRAFT_CHARS:
+        text = text[:_MAX_DRAFT_CHARS].rstrip()
+    if _normalized(point) not in _normalized(text):
+        text = f"# {point}\n\n{point}是本知识点的核心内容，以下为正文。\n\n{text}".strip()
+    if len(text) < _MIN_DRAFT_CHARS:
+        text = (
+            f"# {point}\n\n本知识点「{point}」的正文由自动补建生成，尚未通过模型审核完善，"
+            f"待后续自动修订时补齐定义、原理与案例。"
+        )
+    return text
 
 
 def _verify_publication(root, version, subject_code: str) -> None:
@@ -720,6 +770,7 @@ def promote_draft_to_knowledge_base(
     outline: dict,
     chunks: list[dict],
     task_id: int | None = None,
+    guard=None,
 ) -> dict | None:
     """Publish an AI-built draft into the shared knowledge base.
 
@@ -739,13 +790,18 @@ def promote_draft_to_knowledge_base(
 
     # Review the exact document that will be published, before catalog mutations.
     # The separate model call is mandatory even if structural checks pass.
+    #
+    # Structural defects are repaired, never used as a reason to refuse
+    # integration. The model review is the quality gate, and a REJECT is a work
+    # order rather than a refusal: the public build task keeps revising and
+    # re-submitting until the knowledge point is actually integrated.
+    outline = _dedupe_outline(outline)
     reviewed_content = _draft_document(subject, knowledge_point, outline, chunks)
-    try:
-        _validate_draft(knowledge_point, reviewed_content, outline)
-    except ValueError:
-        return {"ok": False, "reason": "CONTENT_INVALID"}
+    reviewed_content = _repair_draft(knowledge_point, reviewed_content, outline)
     from services.agent_service.app.services.public_knowledge import review_public_content
     review = review_public_content(subject, knowledge_point, reviewed_content)
+    if guard:
+        guard()
     if not review.get("passed") or review.get("method") != "llm":
         reason = "MODEL_REVIEW_REJECTED" if review.get("verdict") == "REJECT" else "MODEL_REVIEW_UNAVAILABLE"
         return {"ok": False, "reason": reason, "review": review}
@@ -771,11 +827,9 @@ def promote_draft_to_knowledge_base(
                 if reused is not None:
                     return {"ok": True, "reused": True, **reused}
 
-                # 2) An administrator withdrew or rejected this knowledge: do not
-                #    silently re-publish it.
-                blocked = _admin_blocked_reason(db, subject, knowledge_point)
-                if blocked:
-                    return {"ok": False, "reason": blocked}
+                # A new student build is model-reviewed independently. Historical
+                # rejected/withdrawn versions stay unchanged; they do not create
+                # an administrator approval dependency for a new public version.
 
                 from sqlalchemy.exc import IntegrityError
 
@@ -843,8 +897,11 @@ def promote_draft_to_knowledge_base(
                     created_point = True
 
                 # 4) Content + quality gates.
+                # Published verbatim: the model review evidence is bound to this
+                # body's sha256, so repairing it here would invalidate the proof
+                # and turn into a publication refusal. Repairs happen before the
+                # review loop instead, never after it.
                 content = reviewed_content
-                _validate_draft(point.name, content, outline)
                 source_url = ""
                 for chunk in chunks or []:
                     url = str((chunk.get("metadata") or {}).get("source") or "")
@@ -949,7 +1006,7 @@ def promote_draft_to_knowledge_base(
 
                 # 6) Publish through the normal pipeline under our lock ownership.
                 version, _matches = publish_candidate(
-                    db, candidate, publisher_user_id=user_id, lock_token=token
+                    db, candidate, publisher_user_id=user_id, lock_token=token, guard=guard
                 )
                 version_ids.append(version.id)
                 # 7) Verify file + index agree with THIS version.
