@@ -11,7 +11,7 @@ catalog (SystemSubject / KnowledgePoint / KnowledgeVersion + corpus file +
 retrieval index), clearly marked as AI-built, so the NEXT request for the same
 subject/point is served directly from the knowledge base instead of being
 regenerated.  When the retrieval index is unavailable the promotion rolls back
-cleanly and the request falls back to the owner-scoped personal draft.
+cleanly and new public learning requests fail closed without a personal draft.
 
 This is deliberately additive to the existing V8.3 knowledge-construction stack:
 the LLM path reuses ``knowledge_construction.plan_subject`` (schema-validated),
@@ -452,7 +452,7 @@ def _draft_document(subject: str, point: str, outline: dict, chunks: list[dict])
         f"# {subject} · {point}",
         "",
         f"> 来源类型: {AUTO_BACKFILL_ORIGIN}",
-        "> 审核状态: AI 自动生成并自动发布，未经人工审核；管理员可修订、复核或下架。",
+        "> 审核方式: 独立模型审核；仅审核通过且发布验证成功的版本进入公共知识。",
         "",
     ]
     if chapter_name:
@@ -469,6 +469,8 @@ def _draft_document(subject: str, point: str, outline: dict, chunks: list[dict])
     lines.append("")
     for chunk in chunks or []:
         meta = chunk.get("metadata") or {}
+        if meta.get("generated_for_public") is True:
+            lines.extend(["## 公共知识正文", "", str(chunk.get("content") or ""), ""])
         url = str(meta.get("source") or "")
         if url.startswith(("http://", "https://")):
             lines.append("## 参考资料（自动抓取，未经人工核验，不作为可信引用）")
@@ -723,8 +725,7 @@ def promote_draft_to_knowledge_base(
 
     Returns ``{"ok": True, ...}`` with the catalog ids when public knowledge is
     available (created now or reused), or ``{"ok": False, "reason": ...}`` when
-    it is not; the caller must then fall back to the personal draft and must
-    never present the result as public knowledge.
+    it is not; callers must fail closed rather than use a personal draft.
     """
     subject = (subject or "").strip()[:100]
     knowledge_point = (knowledge_point or "").strip()[:100]
@@ -733,8 +734,21 @@ def promote_draft_to_knowledge_base(
 
     from contextlib import ExitStack
 
-    from common.knowledge_paths import KNOWLEDGE_ROOT
     from common.knowledge_lock import knowledge_write_lock
+    from common.knowledge_paths import KNOWLEDGE_ROOT
+
+    # Review the exact document that will be published, before catalog mutations.
+    # The separate model call is mandatory even if structural checks pass.
+    reviewed_content = _draft_document(subject, knowledge_point, outline, chunks)
+    try:
+        _validate_draft(knowledge_point, reviewed_content, outline)
+    except ValueError:
+        return {"ok": False, "reason": "CONTENT_INVALID"}
+    from services.agent_service.app.services.public_knowledge import review_public_content
+    review = review_public_content(subject, knowledge_point, reviewed_content)
+    if not review.get("passed") or review.get("method") != "llm":
+        reason = "MODEL_REVIEW_REJECTED" if review.get("verdict") == "REJECT" else "MODEL_REVIEW_UNAVAILABLE"
+        return {"ok": False, "reason": reason, "review": review}
 
     created_subject = created_point = created_candidate = False
     catalog = point = candidate = None
@@ -829,7 +843,7 @@ def promote_draft_to_knowledge_base(
                     created_point = True
 
                 # 4) Content + quality gates.
-                content = _draft_document(catalog.name, point.name, outline, chunks)
+                content = reviewed_content
                 _validate_draft(point.name, content, outline)
                 source_url = ""
                 for chunk in chunks or []:
@@ -890,12 +904,9 @@ def promote_draft_to_knowledge_base(
                         .first()
                     )
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-                license_evidence = (
-                    source_url or f"https://autogen.example.com/license/{content_hash[:12]}"
-                )
-                review_note = (
-                    "AI 自动生成并自动发布，未经人工审核；管理员可修订、复核或下架。"
-                )
+                # Model provenance is a digest, not an invented external license URL.
+                license_evidence = f"urn:sha256:{content_hash}"
+                review_note = json.dumps({"type": "public_model_review", "review": review}, ensure_ascii=False)
                 if candidate is None:
                     candidate = KnowledgeCandidate(
                         creator_user_id=user_id,
@@ -930,10 +941,8 @@ def promote_draft_to_knowledge_base(
                     candidate.review_notes = review_note
                     candidate.reviewed_by = None
                     candidate.reviewed_at = None
-                    candidate.license_name = candidate.license_name or AI_LICENSE_NAME
-                    candidate.license_evidence_url = (
-                        candidate.license_evidence_url or license_evidence
-                    )
+                    candidate.license_name = AI_LICENSE_NAME
+                    candidate.license_evidence_url = license_evidence
                     candidate.publication_allowed = True
                 db.commit()
                 db.refresh(candidate)

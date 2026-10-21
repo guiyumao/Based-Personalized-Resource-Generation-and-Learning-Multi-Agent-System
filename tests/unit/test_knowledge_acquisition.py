@@ -61,50 +61,35 @@ def test_absence_needs_known_catalog_and_available_index(coverage_db, monkeypatc
     assert knowledge_acquisition.assess_coverage(coverage_db, subject="计算机网络", knowledge_point="unknown")["state"] == "UNCERTAIN"
 
 
-def test_owned_saved_supplement_reused_without_new_search(coverage_db, monkeypatch):
+def test_pending_private_candidate_is_not_used_as_public_knowledge(coverage_db, monkeypatch):
+    from fastapi import HTTPException
+
     from common.models.learning import KnowledgeCandidate
-    from services.agent_service.app.services import knowledge_tasks
+    from services.agent_service.app.services import public_knowledge
     db = coverage_db
-    monkeypatch.setattr(knowledge_acquisition, 'assess_coverage', lambda *a, **kw: {
-        'chunks': [], 'state': 'MISSING', 'point_id': 1, 'subject': 'computer_networks',
-        'knowledge_point': 'BBR', 'missing_facets': ['definition']})
     db.add(KnowledgeCandidate(creator_user_id=7, source_task_id=1, subject='computer_networks',
-        knowledge_point='BBR', title='Saved BBR source', content='BBR reliable source text',
+        knowledge_point='BBR', title='private draft', content='must not be used',
         source_url='https://example.org/bbr', source_hash='h', content_hash='c', status='DRAFT'))
     db.commit()
-    monkeypatch.setattr(knowledge_tasks, 'create_task', lambda *a, **kw: pytest.fail('Repeated external search'))
-    result = knowledge_acquisition.acquire_context(db, actor_user_id=7, subject='网络', knowledge_point='BBR', allow_web=True)
-    assert result['supplementation']['reused'] is True
-    assert result['supplementation']['candidate_ids']
-    assert result['retrieval_context']['retrieved_chunks'][0]['content'] == 'BBR reliable source text'
-    disabled = knowledge_acquisition.acquire_context(db, actor_user_id=8, subject='网络', knowledge_point='BBR', allow_web=False)
-    assert disabled['retrieval_context']['retrieved_chunks'] == []
+    def fail(*a, **kw):
+        raise HTTPException(503, {'code': 'MODEL_REVIEW_UNAVAILABLE'})
+    monkeypatch.setattr(public_knowledge, 'ensure_public_knowledge', fail)
+    with pytest.raises(HTTPException):
+        knowledge_acquisition.acquire_context(db, actor_user_id=7, subject='网络', knowledge_point='BBR', allow_web=True)
 
 
-def test_search_fetch_persists_candidate_then_next_request_reuses_it(coverage_db, monkeypatch):
-    from common.models.learning import KnowledgeBuildTask, KnowledgeCandidate
-    from services.agent_service.app.services import knowledge_tasks
-    db = coverage_db
-    monkeypatch.setattr(knowledge_acquisition, 'assess_coverage', lambda *a, **kw: {
-        'chunks': [], 'state': 'MISSING', 'point_id': 1, 'subject': 'computer_networks',
-        'knowledge_point': 'BBR', 'missing_facets': ['definition']})
-    operations = []
-    def create(db, **kwargs):
-        operation = kwargs['operation_type']; operations.append(operation)
-        row = KnowledgeBuildTask(actor_user_id=7, client_request_id=kwargs['client_request_id'],
-            request_hash=operation, trigger_source='test',
-            operation_type=operation, subject=kwargs['subject'], status='COMPLETED',
-            result_json={'sources': [{'url': 'https://source.example/bbr'}]} if operation == 'SEARCH_SOURCES' else
-                {'source': {'url': 'https://source.example/bbr', 'title': 'BBR source', 'content': 'Reliable BBR source text for a saved candidate.'}})
-        db.add(row); db.commit()
-        return row
-    monkeypatch.setattr(knowledge_tasks, 'create_task', create)
-    monkeypatch.setattr(knowledge_tasks, 'execute_task', lambda task_id: None)
-    first = knowledge_acquisition.acquire_context(db, actor_user_id=7, subject='网络', knowledge_point='BBR', allow_web=True)
-    second = knowledge_acquisition.acquire_context(db, actor_user_id=7, subject='网络', knowledge_point='BBR', allow_web=True)
-    assert operations == ['SEARCH_SOURCES', 'FETCH_SOURCE']
-    assert db.query(KnowledgeCandidate).count() == 1
-    assert first['supplementation']['reused'] is False
-    assert second['supplementation']['reused'] is True
-    assert first['supplementation']['candidate_ids'] == second['supplementation']['candidate_ids']
-    assert first['retrieval_context']['retrieved_chunks'] == second['retrieval_context']['retrieved_chunks']
+def test_both_learners_receive_same_verified_public_version(coverage_db, monkeypatch):
+    from services.agent_service.app.services import public_knowledge
+    calls = []
+    chunk = {'id': 'public', 'content': 'BBR verified public knowledge',
+             'metadata': {'source': 'computer_networks/published.md'}}
+    def ensure(db, user_id, subject, topic, **kw):
+        calls.append((user_id, kw['allow_web']))
+        return {'subject': 'computer_networks', 'point_id': 1, 'published_versions': [12], 'usable_chunks': [chunk]}
+    monkeypatch.setattr(public_knowledge, 'ensure_public_knowledge', ensure)
+    first = knowledge_acquisition.acquire_context(coverage_db, actor_user_id=7, subject='网络', knowledge_point='BBR', allow_web=True)
+    second = knowledge_acquisition.acquire_context(coverage_db, actor_user_id=8, subject='网络', knowledge_point='BBR', allow_web=False)
+    assert first['retrieval_context']['retrieved_chunks'] == second['retrieval_context']['retrieved_chunks'] == [chunk]
+    assert first['coverage']['published_versions'] == [12]
+    assert all(source['review_status'] == 'PUBLISHED' for source in first['sources'])
+    assert calls == [(7, True), (8, False)]

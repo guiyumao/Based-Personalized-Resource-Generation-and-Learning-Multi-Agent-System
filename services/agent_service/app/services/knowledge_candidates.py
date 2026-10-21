@@ -10,10 +10,17 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from common.knowledge_paths import KNOWLEDGE_ROOT
-from common.knowledge_lock import knowledge_write_lock
 
-from common.models.learning import AuditLog, KnowledgeBuildTask, KnowledgeCandidate, KnowledgePoint, KnowledgeVersion, SystemSubject
+from common.knowledge_lock import knowledge_write_lock
+from common.knowledge_paths import KNOWLEDGE_ROOT
+from common.models.learning import (
+    AuditLog,
+    KnowledgeBuildTask,
+    KnowledgeCandidate,
+    KnowledgePoint,
+    KnowledgeVersion,
+    SystemSubject,
+)
 from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.knowledge_base_admin import publish_document_and_reindex
 
@@ -155,7 +162,7 @@ def _document(item: KnowledgeCandidate) -> str:
     auto_generated = item.status == AUTO_APPROVED_STATUS or item.license_name == AI_LICENSE_NAME
     source_type = "ai_generated_auto_published" if auto_generated else "administrator_reviewed_candidate"
     review_state = (
-        "AI 自动生成并自动发布，未经人工审核"
+        "模型审核通过后自动发布，未经人工审核" if '"public_model_review"' in (item.review_notes or "") else "AI 自动生成并自动发布，未经人工审核"
         if auto_generated
         else "管理员已审核"
     )
@@ -203,7 +210,26 @@ def _publish_candidate(db: Session, item: KnowledgeCandidate, *, publisher_user_
         raise KnowledgeCandidateConflict("Candidate must be approved before publication")
     from common.knowledge_paths import PROJECT_ROOT
     from services.agent_service.app.services.deepseek_search import _public_url
-    if not item.publication_allowed or not item.license_name or not _public_url(item.license_evidence_url):
+    model_provenance = False
+    if item.status == AUTO_APPROVED_STATUS:
+        import json
+        try:
+            evidence = json.loads(item.review_notes or "{}")
+            review = evidence.get("review") or {}
+            model_provenance = (
+                evidence.get("type") == "public_model_review"
+                and review.get("method") == "llm" and review.get("passed") is True
+                and review.get("verdict") == "PASS" and review.get("issues") == []
+                and review.get("content_sha256") == _hash(item.content)
+                and item.content_hash == _hash(item.content)
+                and item.license_name == AI_LICENSE_NAME
+                and item.license_evidence_url == f"urn:sha256:{item.content_hash}"
+            )
+        except (ValueError, TypeError, AttributeError):
+            pass
+        if not model_provenance:
+            raise KnowledgeCandidateConflict("Automatic publication requires a model PASS bound to the exact content")
+    if not item.publication_allowed or not item.license_name or not (model_provenance or _public_url(item.license_evidence_url)):
         raise KnowledgeCandidateConflict("Verified publication permission and a license evidence URL are required")
     if item.license_name == "INTERNAL_TEST_ONLY" and ROOT_DIR == PROJECT_ROOT:
         raise KnowledgeCandidateConflict("Internal test permissions cannot publish to the shared corpus")

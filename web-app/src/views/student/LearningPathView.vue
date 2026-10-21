@@ -51,10 +51,9 @@ const knowledgeCheck = ref<{ ready: boolean; message: string; reason: string; mo
 async function checkKnowledge() {
   const { data } = await agentApi.post('/paths/preflight', { subject: pathForm.subject, knowledge_point: pathForm.knowledge_point })
   knowledgeCheck.value = data
-  // Constructive gate: when public knowledge is missing the backend now builds a
-  // personal AI draft instead of blocking, so proceed rather than abort.
-  if (!data.ready && data.mode === 'personal_draft') {
-    ElMessage.info('知识库暂未收录该学科，将自动构建学习知识并直接补充到知识库，下次即可直接检索使用。')
+  // Generation builds and model-reviews missing public knowledge before use.
+  if (!data.ready && data.mode === 'public_build_pending') {
+    ElMessage.info('将自动建设公共知识，经模型审核、发布并验证检索后再生成；失败时不使用个人草稿。')
     return true
   }
   return Boolean(data.ready)
@@ -552,7 +551,7 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
         </div>
 
         <div v-if="pathError" class="path-error">{{ pathError }}</div>
-        <el-alert v-if="knowledgeCheck" :title="knowledgeCheck.message" :type="knowledgeCheck.ready ? 'success' : (knowledgeCheck.mode === 'personal_draft' ? 'info' : 'warning')" :closable="false"><span v-if="knowledgeCheck.gap_id && knowledgeCheck.mode !== 'personal_draft'">缺口请求 #{{ knowledgeCheck.gap_id }}，请管理员在知识库中处理后重试。</span></el-alert>
+        <el-alert v-if="knowledgeCheck" :title="knowledgeCheck.message" :type="knowledgeCheck.ready ? 'success' : (knowledgeCheck.mode === 'public_build_pending' ? 'info' : 'warning')" :closable="false"><span v-if="knowledgeCheck.gap_id && knowledgeCheck.mode !== 'public_build_pending'">缺口请求 #{{ knowledgeCheck.gap_id }}，请管理员在知识库中处理后重试。</span></el-alert>
 
         <div v-if="learningPath" class="timeline">
           <el-alert
@@ -565,7 +564,7 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
             v-if="learningPath.knowledge_scope === 'personal_draft'"
             type="info"
             :closable="false"
-            title="本次使用自动构建的临时学习草稿（知识库自动补充未成功，本次未计入公共知识，下次将自动重试入库）"
+            title="历史个人草稿：不是公共知识。请重新生成，经模型审核入公共知识库后使用。"
           >
             <p class="knowledge-draft-reason">未入库原因：{{ backfillReasonText }}</p>
             <div class="knowledge-draft">

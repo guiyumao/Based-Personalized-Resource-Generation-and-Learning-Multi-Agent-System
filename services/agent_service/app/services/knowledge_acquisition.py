@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from common.knowledge_paths import CORPUS_DIR
-from common.models.learning import KnowledgeBuildTask, KnowledgeCandidate, KnowledgePoint
+from common.models.learning import KnowledgeCandidate, KnowledgePoint
 from services.agent_service.app.services.knowledge_construction import find_subject, normalize_name
 from services.agent_service.app.services.rag import ChromaRetriever
 
@@ -105,69 +105,21 @@ def assess_coverage(db: Session, *, subject: str, knowledge_point: str, max_sour
 
 
 def acquire_context(db: Session, *, actor_user_id: int, subject: str, knowledge_point: str, allow_web: bool) -> dict[str, Any]:
-    coverage = assess_coverage(db, subject=subject, knowledge_point=knowledge_point)
-    chunks = list(coverage["chunks"])
-    sources = []
-    supplementation = {"status": "NOT_NEEDED" if coverage["state"] == "COMPLETE" else "DISABLED",
-                       "candidate_ids": [], "reused": False}
-    recent = None
-    if allow_web and coverage["state"] != "COMPLETE":
-        recent = db.query(KnowledgeCandidate).filter(
-            KnowledgeCandidate.creator_user_id == actor_user_id,
-            KnowledgeCandidate.subject == str(coverage["subject"]),
-            KnowledgeCandidate.knowledge_point == str(coverage["knowledge_point"]),
-            KnowledgeCandidate.status.in_(["DRAFT", "PENDING_REVIEW", "APPROVED", "AUTO_APPROVED"]),
-            KnowledgeCandidate.updated_at >= datetime.utcnow() - timedelta(days=30),
-        ).order_by(KnowledgeCandidate.id.desc()).first()
-    if recent:
-        chunks.append({"id": f"candidate-{recent.id}", "content": recent.content[:8000],
-                       "metadata": {"source_url": recent.source_url, "title": recent.title,
-                                    "review_status": "PENDING", "subject": coverage["subject"]}})
-        sources.append({"url": recent.source_url, "title": recent.title, "review_status": "PENDING"})
-        supplementation = {"status": "SAVED_PENDING_REVIEW", "candidate_ids": [recent.id], "reused": True}
-    if allow_web and not recent and coverage["point_id"] and coverage["state"] in {"MISSING", "PARTIAL", "STALE", "RETRIEVAL_FAILURE"}:
-        supplementation["status"] = "SEARCH_FAILED"
-        from services.agent_service.app.services.knowledge_tasks import create_task, execute_task
-        from services.agent_service.app.services.knowledge_candidates import create_from_fetch
-        query = f"{coverage['subject']} {coverage['knowledge_point']} {' '.join(coverage['missing_facets'])}"[:128]
-        key = hashlib.sha256(query.encode()).hexdigest()[:30]
-        day = datetime.utcnow().strftime("%Y%m%d")
-        searched = create_task(db, actor_user_id=actor_user_id, client_request_id=f"dynamic-{day}-{key}-search",
-                               operation_type="SEARCH_SOURCES", subject=str(coverage["subject"]), requirements={"query": query})
-        execute_task(searched.id)
-        db.expire_all(); searched = db.get(KnowledgeBuildTask, searched.id)
-        if searched.status == "COMPLETED" and searched.result_json.get("sources"):
-            supplementation["status"] = "FETCH_FAILED"
-            fetched = create_task(db, actor_user_id=actor_user_id, client_request_id=f"dynamic-{day}-{key}-fetch", operation_type="FETCH_SOURCE",
-                                  subject=str(coverage["subject"]), requirements={"source_task_id": searched.id, "source_index": 0})
-            execute_task(fetched.id)
-            db.expire_all(); fetched = db.get(KnowledgeBuildTask, fetched.id)
-            if fetched.status == "COMPLETED":
-                source = fetched.result_json["source"]
-                candidate = create_from_fetch(db, actor_user_id=actor_user_id, source_task_id=fetched.id,
-                                              subject=str(coverage["subject"]), knowledge_point=str(coverage["knowledge_point"]))
-                supplementation = {"status": "SAVED_PENDING_REVIEW", "candidate_ids": [candidate.id], "reused": False}
-                chunks.append({"id": f"candidate-{candidate.id}", "content": source["content"][:8000],
-                               "metadata": {"source_url": source["url"], "title": source["title"], "review_status": "PENDING", "subject": coverage["subject"]}})
-                sources.append({"url": source["url"], "title": source["title"], "review_status": "PENDING"})
-        elif searched.status == "COMPLETED":
-            supplementation["status"] = "NO_SOURCES"
-    if allow_web and not coverage["point_id"] and not recent:
-        supplementation["status"] = "UNRESOLVED_POINT"
     from common.config import get_settings
-    seen_urls = {item["url"] for item in sources}
-    for chunk in chunks:
-        metadata = chunk.get("metadata") or {}
-        url = metadata.get("source_url")
-        if url and url not in seen_urls:
-            sources.append({"url": url, "title": metadata.get("title") or knowledge_point,
-                            "review_status": metadata.get("review_status") or "PUBLISHED"})
-            seen_urls.add(url)
+    from services.agent_service.app.services.public_knowledge import ensure_public_knowledge
+
+    verified = ensure_public_knowledge(db, actor_user_id, subject, knowledge_point, allow_web=allow_web)
+    chunks = verified["usable_chunks"]
     now = datetime.utcnow()
     context = {"context_id": hashlib.sha256(f"{subject}:{knowledge_point}:{now.isoformat()}".encode()).hexdigest()[:24],
                "query": knowledge_point, "knowledge_point_id": knowledge_point, "scope_id": "public",
                "knowledge_base_version": get_settings().knowledge_base_version, "retrieved_chunks": chunks,
                "source_ids": [str(row.get("id") or "") for row in chunks], "created_at": f"{now.isoformat()}Z",
-               "expire_at": f"{(now + timedelta(minutes=5)).isoformat()}Z", "filters": {"subject": coverage["subject"]}}
-    return {"coverage": {key: value for key, value in coverage.items() if key != "chunks"},
-            "retrieval_context": context, "sources": sources, "supplementation": supplementation}
+               "expire_at": f"{(now + timedelta(minutes=5)).isoformat()}Z", "filters": {"subject": verified["subject"]}}
+    return {"coverage": {"state": "COMPLETE", "subject": verified["subject"],
+                         "point_id": verified["point_id"], "published_versions": verified["published_versions"]},
+            "retrieval_context": context,
+            "sources": [{"source": (row.get("metadata") or {}).get("source"), "review_status": "PUBLISHED"} for row in chunks],
+            "supplementation": {"status": "MODEL_REVIEWED_PUBLISHED" if verified.get("auto_build") else "NOT_NEEDED",
+                                "candidate_ids": [verified["auto_build"]["candidate_id"]] if verified.get("auto_build", {}).get("candidate_id") else [],
+                                "reused": not bool(verified.get("auto_build"))}}

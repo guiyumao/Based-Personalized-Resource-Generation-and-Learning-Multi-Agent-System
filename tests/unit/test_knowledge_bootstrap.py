@@ -13,6 +13,18 @@ from services.agent_service.app.services.knowledge_bootstrap import build_person
 from services.agent_service.app.services.learning_path import LearningPathService
 
 
+@pytest.fixture(autouse=True)
+def public_model_stub(monkeypatch):
+    # These integration tests exercise publication, not a paid provider.
+    from services.agent_service.app.services import deepseek_search, public_knowledge
+    monkeypatch.setattr(deepseek_search, "search_sources", lambda *a, **k: [])
+    def invoke(template, data, **kwargs):
+        if template == "public_knowledge_review.md":
+            return '{"verdict":"PASS","reason":"controlled test review","issues":[]}'
+        return (str(data["knowledge_point"]) + "定义、原理、案例与边界说明。") * 60
+    monkeypatch.setattr(public_knowledge, "_invoke_public_model", invoke)
+
+
 @pytest.fixture
 def boot_db(monkeypatch):
     # Never touch a real Chroma collection from unit tests.
@@ -254,6 +266,8 @@ def test_promote_draft_rolls_back_when_publication_fails(boot_db, monkeypatch):
     """
     from services.agent_service.app.services import (
         knowledge_bootstrap as kb,
+    )
+    from services.agent_service.app.services import (
         knowledge_candidates,
     )
 
@@ -286,3 +300,24 @@ def test_promote_draft_rolls_back_when_publication_fails(boot_db, monkeypatch):
     assert not leftovers
     # The draft itself is still available for personal-mode generation.
     assert kb.build_personal_draft(db, 1, "数据结构", "链表")["outline"]["name"] == "数据结构"
+
+
+def test_model_reviewed_publication_reused_by_another_learner(boot_db, monkeypatch):
+    import json
+
+    from common.models.learning import KnowledgeCandidate
+    from services.agent_service.app.services import public_knowledge
+    db = boot_db
+    db.add(User(id=2, username="public-reader", password_hash="unused"))
+    db.commit()
+    first = public_knowledge.ensure_public_knowledge(db, 1, "共享知识学科", "共享链表", allow_web=False)
+    candidate = db.get(KnowledgeCandidate, first["auto_build"]["candidate_id"])
+    evidence = json.loads(candidate.review_notes)
+    assert evidence["type"] == "public_model_review"
+    assert evidence["review"]["method"] == "llm"
+    assert evidence["review"]["content_sha256"] == candidate.content_hash
+    assert candidate.license_evidence_url == f"urn:sha256:{candidate.content_hash}"
+    monkeypatch.setattr(public_knowledge, "_invoke_public_model", lambda *a, **k: pytest.fail("public content must be reused"))
+    second = public_knowledge.ensure_public_knowledge(db, 2, "共享知识学科", "共享链表", allow_web=False)
+    assert first["published_versions"] == second["published_versions"]
+    assert all(chunk["metadata"].get("scope") != "personal_draft" for chunk in second["usable_chunks"])

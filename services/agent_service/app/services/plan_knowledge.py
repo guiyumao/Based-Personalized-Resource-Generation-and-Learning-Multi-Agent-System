@@ -134,11 +134,11 @@ def plan_preflight(
                 result["retrieval_error"] = type(exc).__name__
     result["ready"], result["reason"] = reason == "READY", reason
     messages = {
-        "SUBJECT_MISSING": "学科尚未建立，已记录管理员待处理请求。",
+        "SUBJECT_MISSING": "公共学科尚未建立，生成时将自动建设并由模型审核。",
         "POINT_MISSING": "学科存在，但目标知识点尚未建立。",
         "PUBLISHED_CONTENT_MISSING": "知识点尚无有效的已审核发布资料。",
         "INDEX_UNAVAILABLE": "检索服务当前不可用，未调用模型。",
-        "INDEX_STALE_OR_MISSING": "当前版本尚未检索命中，请管理员检查索引。",
+        "INDEX_STALE_OR_MISSING": "当前公共版本尚未检索命中，请稍后重试；不会使用个人草稿。",
         "READY": "已验证知识点、正式发布资料和当前检索版本。",
     }
     result["message"] = messages[reason]
@@ -187,24 +187,15 @@ def require_plan_knowledge(db: Session, user_id: int, subject: str, knowledge_po
 
 
 def assess_plan_knowledge(db: Session, user_id: int, subject: str, knowledge_point: str) -> dict:
-    """Assess public knowledge for plan generation WITHOUT hard-blocking.
-
-    This is the constructive gate (P0-1): a missing subject / knowledge point /
-    published content / index no longer terminates the student's request.  The
-    caller backfills the knowledge base with an auto-built draft (see
-    ``knowledge_bootstrap.promote_draft_to_knowledge_base``) so the next request
-    is served from the knowledge base directly; if that backfill cannot
-    complete, the request downgrades to a personal AI-draft mode.
-
-    Returns ``mode`` in {"public", "personal_draft"} plus the preflight facts.
-    """
+    """Read-only model-construction preflight; generation performs the build."""
     result = plan_preflight(db, user_id, subject, knowledge_point)
-    result["mode"] = "public" if result["ready"] else "personal_draft"
+    result["mode"] = "public" if result["ready"] else "public_build_pending"
+    if result["reason"] in {"INDEX_UNAVAILABLE", "INDEX_STALE_OR_MISSING"}:
+        result["mode"] = "public_unavailable"
+        return result
     if not result["ready"]:
-        # The gap is still recorded above, but the learner is no longer told to
-        # "wait for an admin" — a personal AI draft is generated instead.
         result["message"] = (
-            "公共知识库暂未收录完整资料，将自动构建学习知识并直接补充进知识库，"
-            "本次生成后再次检索即可命中，无需等待管理员处理。"
+            "公共知识尚未就绪；生成时自动建设，经模型审核、发布及检索验证通过后再使用。"
+            "审核或发布失败会明确报错，不使用个人临时草稿。"
         )
     return result

@@ -25,6 +25,18 @@ from services.agent_service.app.services import plan_knowledge as service
 from services.agent_service.app.services.learning_path import LearningPathService
 
 
+@pytest.fixture(autouse=True)
+def public_model_stub(monkeypatch):
+    # These integration tests exercise publication, not a paid provider.
+    from services.agent_service.app.services import deepseek_search, public_knowledge
+    monkeypatch.setattr(deepseek_search, "search_sources", lambda *a, **k: [])
+    def invoke(template, data, **kwargs):
+        if template == "public_knowledge_review.md":
+            return '{"verdict":"PASS","reason":"controlled test review","issues":[]}'
+        return (str(data["knowledge_point"]) + "定义、原理、案例与边界说明。") * 60
+    monkeypatch.setattr(public_knowledge, "_invoke_public_model", invoke)
+
+
 @pytest.fixture
 def coverage(db_session, test_user, tmp_path, monkeypatch):
     subject = SystemSubject(
@@ -154,7 +166,7 @@ def test_unknown_subject_gap_deduplicates_and_backfills_knowledge_base(coverage,
     first = client.post("/paths/preflight", json=body)
     assert first.status_code == 200, first.text
     assert first.json()["reason"] == "SUBJECT_MISSING"
-    assert first.json()["mode"] == "personal_draft"
+    assert first.json()["mode"] == "public_build_pending"
     assert client.post("/paths/preflight", json=body).json()["gap_id"] == first.json()["gap_id"]
     assert ctx.db.query(LearningKnowledgeGap).filter_by(user_id=ctx.user.id, subject=body["subject"], knowledge_point=body["knowledge_point"]).count() == 1
     # The coverage fixture isolates preflight's corpus root to tmp_path, but

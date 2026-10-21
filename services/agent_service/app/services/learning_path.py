@@ -96,79 +96,17 @@ class LearningPathService:
         teacher_scope = self._extract_teacher_scope(request.learner_profile)
         knowledge = None
         if self.db is not None:
-            from services.agent_service.app.services.plan_knowledge import (
-                assess_plan_knowledge,
-                require_plan_knowledge,
-            )
-            # Constructive gate: prefer reviewed public knowledge, but a missing
-            # subject/point/content/index downgrades to a personal AI draft instead
-            # of terminating the learner's request.
-            personal_draft = None
-            backfill_reason = None
+            from services.agent_service.app.services.plan_knowledge import require_plan_knowledge
+            from services.agent_service.app.services.public_knowledge import ensure_public_knowledge
             try:
-                knowledge = dict(require_plan_knowledge(
-                    self.db, request.user_id, request.subject, request.knowledge_point))
-                knowledge["mode"] = "public"
+                knowledge = {**require_plan_knowledge(
+                    self.db, request.user_id, request.subject, request.knowledge_point), "mode": "public"}
             except HTTPException:
-                knowledge = assess_plan_knowledge(
+                knowledge = ensure_public_knowledge(
                     self.db, request.user_id, request.subject, request.knowledge_point)
-            if knowledge.get("mode") == "personal_draft":
-                # Prefer the REAL catalog curriculum when the subject already exists;
-                # fall back to an AI/personal draft only when it does not.
-                from services.agent_service.app.services.knowledge_bootstrap import (
-                    _chunks_from_outline,
-                    build_personal_draft,
-                    build_subject_outline,
-                    promote_draft_to_knowledge_base,
-                )
-                real_outline = (
-                    build_subject_outline(self.db, knowledge["subject_id"])
-                    if knowledge.get("subject_id") else None
-                )
-                if real_outline is not None:
-                    personal_draft = {
-                        "outline": real_outline,
-                        "chunks": _chunks_from_outline(real_outline, request.subject),
-                        "task_id": None,
-                        "sources": [],
-                    }
-                else:
-                    personal_draft = build_personal_draft(
-                        self.db, request.user_id, request.subject, request.knowledge_point)
-                # Directly backfill the knowledge base with the generated draft:
-                # create the catalog subject/point when missing and publish an
-                # indexed version, so the NEXT request is served from the
-                # knowledge base instead of regenerating.  When promotion
-                # succeeds, upgrade this request to public mode immediately.
-                promoted = promote_draft_to_knowledge_base(
-                    self.db, request.user_id, request.subject, request.knowledge_point,
-                    personal_draft["outline"], personal_draft["chunks"],
-                    task_id=personal_draft.get("task_id"),
-                ) or {}
-                if promoted.get("ok"):
-                    try:
-                        knowledge = dict(require_plan_knowledge(
-                            self.db, request.user_id, request.subject, request.knowledge_point))
-                        knowledge["mode"] = "public"
-                        personal_draft = None
-                    except HTTPException:
-                        # Published but not yet retrievable through preflight:
-                        # still honest, fall back to the draft for THIS request.
-                        pass
-                if knowledge.get("mode") != "public":
-                    # Never pretend public knowledge exists when the backfill
-                    # failed; record why so the learner sees the real state.
-                    backfill_reason = promoted.get("reason") or "BACKFILL_UNAVAILABLE"
-                if knowledge.get("mode") == "public":
-                    request = request.model_copy(update={"knowledge_point": knowledge["knowledge_point"],
-                        "retrieval_context": {"retrieved_chunks": knowledge["usable_chunks"]}})
-                else:
-                    request = request.model_copy(update={
-                        "retrieval_context": {"retrieved_chunks": personal_draft["chunks"],
-                                              "personal_outline": personal_draft["outline"]}})
-            else:
-                request = request.model_copy(update={"knowledge_point": knowledge["knowledge_point"],
-                    "retrieval_context": {"retrieved_chunks": knowledge["usable_chunks"]}})
+            request = request.model_copy(update={
+                "knowledge_point": knowledge["knowledge_point"],
+                "retrieval_context": {"retrieved_chunks": knowledge["usable_chunks"]}})
         payload = self._generate_path_with_llm(request, teacher_scope)
         if knowledge:
             mode = knowledge.get("mode", "public")
@@ -190,22 +128,6 @@ class LearningPathService:
                 for task in self._ordered_tasks(payload):
                     task["knowledge_point"] = knowledge["knowledge_point"]
                     task["knowledge_point_id"] = knowledge["point_id"]
-            else:
-                # Personal AI-draft mode: never claim public provenance.  Preserve the
-                # gap reason/id so the plan traces back to the auto-construction gap.
-                payload["knowledge_gap_reason"] = knowledge.get("reason")
-                payload["knowledge_gap_id"] = knowledge.get("gap_id")
-                if backfill_reason:
-                    payload["knowledge_backfill_reason"] = backfill_reason
-                if personal_draft:
-                    payload["knowledge_draft"] = personal_draft["outline"]
-                    payload["knowledge_draft_task_id"] = personal_draft.get("task_id")
-                    payload["knowledge_sources"] = personal_draft.get("sources") or []
-                if knowledge.get("subject_id"):
-                    # The subject exists in the real catalog: anchor generated tasks
-                    # on its real knowledge points so the workspace resolves them.
-                    payload["subject_id"] = knowledge["subject_id"]
-                    self._snap_tasks_to_real_points(payload, knowledge["subject_id"])
         payload["generation_source"] = "llm"
         if source_analysis_id is not None:
             payload["source_transcript_analysis_id"] = source_analysis_id
