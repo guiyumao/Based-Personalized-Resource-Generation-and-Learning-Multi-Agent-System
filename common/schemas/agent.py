@@ -230,11 +230,19 @@ class GraphQueryRequest(BaseModel):
 
 
 class GraphNode(BaseModel):
-    """One visual graph node."""
+    """One visual graph node.
+
+    The url field is filled for resource nodes that trace back to a public
+    reference (knowledge-base source or learning link) so the UI can render the
+    resource list as real hyperlinks instead of plain labels.
+    """
 
     id: str
     label: str
     category: Literal["current", "prerequisite", "recommended", "resource"]
+    url: str = ""
+    provider: str = ""
+    kind: str = ""
 
 
 class GraphEdge(BaseModel):
@@ -323,7 +331,8 @@ class ExerciseGenerationRequest(BaseModel):
     knowledge_point: str
     resource_style: Literal["concise", "case", "interactive"] = "interactive"
     learner_profile: dict[str, Any] = Field(default_factory=dict)
-    exercise_count: int = Field(default=5, ge=3, le=10)
+    # Dynamic exercise count: the learner picks 1-25 questions on the practice page.
+    exercise_count: int = Field(default=10, ge=1, le=25)
     question_type_counts: dict[str, int] = Field(default_factory=dict)
     generation_mode: Literal["practice", "self_test", "remedial"] = "practice"
     courseware_content: str = ""

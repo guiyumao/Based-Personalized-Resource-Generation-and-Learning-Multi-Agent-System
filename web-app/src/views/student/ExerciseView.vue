@@ -19,9 +19,22 @@ const route = useRoute()
 const user = authStore.user!
 const MISTAKE_NOTEBOOK_STORAGE_KEY = 'student-workspace-mistakes'
 const PRACTICE_SESSION_STORAGE_KEY = buildPracticeSessionStorageKey(user.userId)
-const REQUIRED_EXERCISE_COUNT = 10
-const REQUIRED_QUESTION_TYPE_COUNTS = { choice: 5, judge: 3, blank: 2 } as const
+const DEFAULT_EXERCISE_COUNT = 10
+const MIN_EXERCISE_COUNT = 1
+const MAX_EXERCISE_COUNT = 25
+const EXERCISE_COUNT_STORAGE_KEY = `student-exercise-count:${user.userId}`
 const EXERCISE_GENERATION_TIMEOUT_MS = 120000
+
+function clampExerciseCount(value: unknown) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return DEFAULT_EXERCISE_COUNT
+  return Math.min(MAX_EXERCISE_COUNT, Math.max(MIN_EXERCISE_COUNT, Math.round(parsed)))
+}
+
+function readStoredExerciseCount() {
+  if (typeof window === 'undefined') return DEFAULT_EXERCISE_COUNT
+  return clampExerciseCount(window.localStorage.getItem(EXERCISE_COUNT_STORAGE_KEY) ?? DEFAULT_EXERCISE_COUNT)
+}
 
 type StoredCoursewareSnapshot = {
   subject?: string
@@ -69,8 +82,7 @@ type StoredMistakeSnapshot = {
 
 const exerciseForm = reactive<ExerciseGenerationPayload>({
   user_id: user.userId, knowledge_point: '', resource_style: 'interactive',
-  learner_profile: {}, exercise_count: REQUIRED_EXERCISE_COUNT,
-  question_type_counts: { ...REQUIRED_QUESTION_TYPE_COUNTS },
+  learner_profile: {}, exercise_count: readStoredExerciseCount(),
   generation_mode: 'self_test', courseware_content: '',
 })
 
@@ -124,17 +136,30 @@ function hasDistinctExercisePromptsV2(set: ExerciseGenerationResponse) {
   return new Set(prompts).size === prompts.length
 }
 
-function matchesRequiredExerciseMix(set: ExerciseGenerationResponse) {
-  if (set.exercises.length !== REQUIRED_EXERCISE_COUNT) {
-    return false
-  }
-  const counts = set.exercises.reduce<Record<string, number>>((acc, item) => {
-    acc[item.question_type] = (acc[item.question_type] ?? 0) + 1
-    return acc
-  }, {})
-  return Object.entries(REQUIRED_QUESTION_TYPE_COUNTS).every(
-    ([type, count]) => counts[type] === count,
-  )
+function matchesRequestedExerciseCount(set: ExerciseGenerationResponse) {
+  // The learner chooses the size (1-25); the type mix is a ratio that the backend
+  // scales to that size, so only the total is enforced here.
+  return set.exercises.length === clampExerciseCount(exerciseForm.exercise_count)
+}
+
+function isValidStoredExerciseCount(set: ExerciseGenerationResponse) {
+  const count = set.exercises.length
+  return count >= MIN_EXERCISE_COUNT && count <= MAX_EXERCISE_COUNT
+}
+
+function stepExerciseCount(delta: number) {
+  exerciseForm.exercise_count = clampExerciseCount(exerciseForm.exercise_count + delta)
+  persistExerciseCount()
+}
+
+function normalizeExerciseCount() {
+  exerciseForm.exercise_count = clampExerciseCount(exerciseForm.exercise_count)
+  persistExerciseCount()
+}
+
+function persistExerciseCount() {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(EXERCISE_COUNT_STORAGE_KEY, String(exerciseForm.exercise_count))
 }
 
 function clearStoredExerciseSnapshots() {
@@ -176,13 +201,14 @@ function loadStoredPracticeSession() {
       clearStoredExerciseSnapshots()
       return false
     }
-    if (!hasDistinctExercisePromptsV2(stored.exerciseSet) || (stored.knowledgeSource !== '小智生成的练习' && !matchesRequiredExerciseMix(stored.exerciseSet))) {
+    if (!hasDistinctExercisePromptsV2(stored.exerciseSet) || (stored.knowledgeSource !== '小智生成的练习' && !isValidStoredExerciseCount(stored.exerciseSet))) {
       clearStoredExerciseSnapshots()
       return false
     }
 
     exerciseSet.value = stored.exerciseSet
     exerciseForm.knowledge_point = stored.exerciseSet.knowledge_point
+    exerciseForm.exercise_count = clampExerciseCount(stored.exerciseSet.exercises.length)
     currentIdx.value = Math.min(Math.max(stored.currentIdx ?? 0, 0), stored.exerciseSet.exercises.length - 1)
     Object.assign(answerDrafts, stored.answerDrafts ?? {})
     Object.assign(submissionRequestIds, stored.submissionRequestIds ?? {})
@@ -213,10 +239,11 @@ function loadStoredExerciseSet() {
       stored.exerciseSet?.exercises?.length
       && (stored.source === 'assistant' || !workspaceContext || sameWorkspaceTopic(stored.exerciseSet.knowledge_point, workspaceContext.topic))
       && hasDistinctExercisePromptsV2(stored.exerciseSet)
-      && (stored.source === 'assistant' || matchesRequiredExerciseMix(stored.exerciseSet))
+      && (stored.source === 'assistant' || isValidStoredExerciseCount(stored.exerciseSet))
     ) {
       window.localStorage.removeItem(PRACTICE_SESSION_STORAGE_KEY)
       exerciseSet.value = stored.exerciseSet
+      exerciseForm.exercise_count = clampExerciseCount(stored.exerciseSet.exercises.length)
       exerciseForm.knowledge_point = stored.exerciseSet.knowledge_point
       knowledgeSource.value = stored.source === 'assistant' ? '小智生成的练习' : '协同智能体生成的练习'
       persistPracticeSession()
@@ -297,6 +324,8 @@ async function generateExercises() {
     await loadExistingKnowledgePoint()
   }
   if (!exerciseForm.knowledge_point.trim()) { ElMessage.warning('请先在学习路径生成知识点'); return }
+  exerciseForm.exercise_count = clampExerciseCount(exerciseForm.exercise_count)
+  persistExerciseCount()
   loading.value.exercises = true; genError.value = ''; exerciseSet.value = null
   clearStoredExerciseSnapshots()
   try {
@@ -316,8 +345,8 @@ async function generateExercises() {
       ElMessage.error(genError.value)
       return
     }
-    if (!matchesRequiredExerciseMix(data)) {
-      genError.value = '生成结果题型配比不符合要求，请重新生成'
+    if (!matchesRequestedExerciseCount(data)) {
+      genError.value = `生成结果题量不符合要求（需要 ${exerciseForm.exercise_count} 道），请重新生成`
       ElMessage.error(genError.value)
       return
     }
@@ -523,6 +552,36 @@ function prevQuestion() {
         </div>
         <span v-if="knowledgeSource" class="agent-tag">{{ knowledgeSource }}</span>
       </div>
+      <div class="exercise-count" role="group" aria-label="练习题数量（1-25 道）">
+        <span class="exercise-count-label">题量</span>
+        <button
+          type="button"
+          class="exercise-count-step"
+          :disabled="loading.exercises || exerciseForm.exercise_count <= MIN_EXERCISE_COUNT"
+          aria-label="减少题量"
+          @click="stepExerciseCount(-1)"
+        >−</button>
+        <input
+          v-model.number="exerciseForm.exercise_count"
+          class="exercise-count-input"
+          type="number"
+          inputmode="numeric"
+          :min="MIN_EXERCISE_COUNT"
+          :max="MAX_EXERCISE_COUNT"
+          :disabled="loading.exercises"
+          aria-label="练习题数量，范围 1 到 25"
+          @blur="normalizeExerciseCount"
+          @keyup.enter="normalizeExerciseCount"
+        />
+        <button
+          type="button"
+          class="exercise-count-step"
+          :disabled="loading.exercises || exerciseForm.exercise_count >= MAX_EXERCISE_COUNT"
+          aria-label="增加题量"
+          @click="stepExerciseCount(1)"
+        >+</button>
+        <span class="exercise-count-unit">道</span>
+      </div>
       <button :disabled="loading.exercises" @click="generateExercises"
         style="padding:10px 20px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--accent),var(--accent-deep));color:#fff;cursor:pointer;font-weight:600;font-family:inherit;white-space:nowrap">
         {{ loading.exercises ? '生成中...' : '生成练习题' }}
@@ -642,4 +701,62 @@ function prevQuestion() {
 .exercise-markdown :deep(pre),
 .exercise-markdown :deep(.learning-math-block) { overflow-x: auto; }
 .exercise-markdown :deep(code) { font-size: .92em; }
+/* 题量选择器：只用主题变量，自动适配 6 套主题（默认/深海/暖金/暗夜/极简/森林） */
+.exercise-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  white-space: nowrap;
+}
+.exercise-count-label { font-size: 12px; color: var(--muted); }
+.exercise-count-step {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease, color .18s ease;
+}
+.exercise-count-step:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.exercise-count-step:disabled { opacity: .45; cursor: not-allowed; }
+.exercise-count-input {
+  width: 52px;
+  padding: 4px 6px;
+  text-align: center;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  -moz-appearance: textfield;
+}
+.exercise-count-input::-webkit-outer-spin-button,
+.exercise-count-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.exercise-count-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.exercise-count-input:disabled { opacity: .6; }
+.exercise-count-unit { font-size: 12px; color: var(--muted); }
 </style>

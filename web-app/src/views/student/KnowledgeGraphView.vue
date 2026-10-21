@@ -56,6 +56,11 @@ const categoryStats = computed(() => {
   return stats
 })
 
+function safeResourceUrl(url?: string) {
+  const value = (url ?? '').trim()
+  return /^https?:\/\//i.test(value) ? value : ''
+}
+
 const groupedNodes = computed(() => {
   const groups: Record<string, any[]> = {
     prerequisite: [],
@@ -397,13 +402,21 @@ function renderGraph() {
         <section v-if="groupedNodes.resource.length">
           <div style="font-size:12px;color:var(--muted);margin-bottom:10px">图谱资源</div>
           <div style="display:flex;flex-direction:column;gap:7px">
-            <span
+            <component
+              :is="safeResourceUrl(node.url) ? 'a' : 'span'"
               v-for="node in groupedNodes.resource"
               :key="node.id"
-              style="padding:7px 10px;border-radius:10px;background:rgba(255,255,255,.03);border:1px solid var(--line);font-size:12px;color:var(--text)"
+              :href="safeResourceUrl(node.url) || undefined"
+              :target="safeResourceUrl(node.url) ? '_blank' : undefined"
+              :rel="safeResourceUrl(node.url) ? 'noopener noreferrer' : undefined"
+              class="graph-resource-item"
+              :class="{ 'graph-resource-item--link': Boolean(safeResourceUrl(node.url)) }"
+              :title="safeResourceUrl(node.url) ? node.label + '（' + (node.provider || '外部资料') + '，新窗口打开）' : node.label"
             >
-              {{ node.label }}
-            </span>
+              <span class="graph-resource-label">{{ node.label }}</span>
+              <span v-if="node.provider" class="graph-resource-provider">{{ node.provider }}</span>
+              <span v-if="safeResourceUrl(node.url)" class="graph-resource-open" aria-hidden="true">↗</span>
+            </component>
           </div>
         </section>
       </div>
@@ -492,4 +505,46 @@ function renderGraph() {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+/* 图谱资源：有来源时渲染为可点击链接，颜色/边框全部取自主题变量 */
+.graph-resource-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  font-size: 12px;
+  color: var(--text);
+  text-decoration: none;
+  transition: border-color .18s ease, background .18s ease, color .18s ease;
+}
+.graph-resource-item--link {
+  cursor: pointer;
+  color: var(--accent);
+}
+.graph-resource-item--link:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.graph-resource-item--link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.graph-resource-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.graph-resource-provider {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 10px;
+}
+.graph-resource-item--link:hover .graph-resource-provider {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.graph-resource-open { flex: 0 0 auto; font-size: 12px; opacity: .85; }
 </style>

@@ -1147,7 +1147,12 @@ class ReportService:
 
             exercise = self._upsert_exercise(session, prepared)
             profile = self._get_or_create_profile(session, prepared.user_id_int)
-            answered_at = datetime.now(UTC)
+            # The column is a naive "timestamp without time zone" that every reader
+            # (learning analytics, reports) interprets as UTC. Storing an aware
+            # datetime here makes PostgreSQL convert it to the session time zone
+            # (Asia/Shanghai), which silently shifted records 8 hours into the
+            # future and hid today's answers from analytics.
+            answered_at = datetime.now(UTC).replace(tzinfo=None)
             answer_record = AnswerRecord(
                 user_id=prepared.user_id_int,
                 exercise_id=exercise.id,

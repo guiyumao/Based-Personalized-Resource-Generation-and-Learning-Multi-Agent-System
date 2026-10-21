@@ -522,6 +522,10 @@ export type GraphNode = {
   id: string
   label: string
   category: 'current' | 'prerequisite' | 'recommended' | 'resource'
+  /** Public reference link for resource nodes; empty when no source is known. */
+  url?: string
+  provider?: string
+  kind?: string
 }
 
 export type GraphEdge = {

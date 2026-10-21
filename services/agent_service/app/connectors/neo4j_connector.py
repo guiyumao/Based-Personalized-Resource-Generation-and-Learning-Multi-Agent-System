@@ -706,8 +706,11 @@ class KnowledgeGraphRepository:
         for r in self._derive_recommendations(kp, article, allow_llm=allow_llm):
             nodes.append({"id": r, "label": r, "category": "recommended"})
             edges.append({"source": kp, "target": r, "label": "后续模块"})
+        resource_links = self._resource_links(article)
         for r in self._derive_resource_nodes(kp, article):
-            nodes.append({"id": r, "label": r, "category": "resource"})
+            node = {"id": r, "label": r, "category": "resource"}
+            node.update(self._match_resource_link(r, resource_links))
+            nodes.append(node)
             edges.append({"source": kp, "target": r, "label": "关联资源"})
         g = self._merge_graphs([{"nodes": nodes, "edges": edges}])
         return {"nodes": [], "edges": []} if len(g["nodes"]) <= 1 or not g["edges"] else g
@@ -913,6 +916,54 @@ class KnowledgeGraphRepository:
         labels.extend(self._resource_titles_from_sql(kp))
         return self._finalize_labels(kp, labels, limit=6)
 
+    def _resource_links(self, article) -> list[dict[str, str]]:
+        """Return public reference links that can be attached to resource nodes."""
+
+        if article is None:
+            return []
+        links: list[dict[str, str]] = []
+        try:
+            payload = self.knowledge_base.article_to_dict(article)
+        except Exception:
+            return []
+        for item in payload.get("external_resources", [])[:8]:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url:
+                continue
+            links.append(
+                {
+                    "title": str(item.get("title") or "").strip(),
+                    "url": url,
+                    "provider": str(item.get("provider") or "").strip(),
+                    "kind": str(item.get("kind") or "").strip(),
+                }
+            )
+        return links
+
+    def _match_resource_link(self, label, links) -> dict[str, str]:
+        """Match a finalized node label back to a reference link, tolerating cleanup."""
+
+        key = " ".join(str(label or "").split()).casefold()
+        if not key:
+            return {}
+        for link in links:
+            title = " ".join(link["title"].split()).casefold()
+            if not title:
+                continue
+            # Exact match always wins; fuzzy containment only for labels long
+            # enough to be meaningful, so a short label cannot capture an
+            # unrelated reference.
+            fuzzy = min(len(key), len(title)) >= 4 and (key in title or title in key)
+            if title == key or fuzzy:
+                return {
+                    "url": link["url"],
+                    "provider": link["provider"],
+                    "kind": link["kind"],
+                }
+        return {}
+
     def _is_meaningful_label(self, label: str, kp: str) -> bool:
         """Reject labels that are too short, too generic, or identical to the current KP."""
         if not label or len(label) < 3:
@@ -1069,11 +1120,17 @@ class KnowledgeGraphRepository:
             for n in g.get("nodes", []):
                 nid = str(n.get("id") or "").strip()
                 if nid:
-                    nb[nid] = {
+                    merged_node = {
                         "id": nid,
                         "label": str(n.get("label") or nid),
                         "category": str(n.get("category") or "resource"),
                     }
+                    previous = nb.get(nid) or {}
+                    for key in ("url", "provider", "kind"):
+                        value = str(n.get(key) or previous.get(key) or "").strip()
+                        if value:
+                            merged_node[key] = value
+                    nb[nid] = merged_node
             for e in g.get("edges", []):
                 src = str(e.get("source") or "").strip()
                 tgt = str(e.get("target") or "").strip()

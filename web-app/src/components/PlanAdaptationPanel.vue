@@ -19,10 +19,18 @@ const proposal = ref<Proposal | null>(null)
 const visible = ref(false)
 async function preview() {
   error.value = ''; loading.value = true
+  // A previous proposal may still be on screen: close it first, otherwise a
+  // "no_change" response (which carries no before/after) would be rendered by
+  // the still-open dialog and crash on proposal.before.task_count.
+  visible.value = false
   try {
-    proposal.value = (await agentApi.post('/paths/adaptation/preview', { daily_minutes: dailyMinutes.value })).data
-    if (proposal.value?.status === 'no_change') ElMessage.info(proposal.value.message)
-    else visible.value = true
+    const data = (await agentApi.post('/paths/adaptation/preview', { daily_minutes: dailyMinutes.value })).data as Proposal
+    proposal.value = data
+    if (data?.status !== 'proposed' || !data.before || !data.after) {
+      ElMessage.info(data?.message || '当前没有需要调整的内容')
+      return
+    }
+    visible.value = true
   } catch (reason: any) { error.value = String(reason?.response?.data?.detail ?? reason?.message ?? '调整预览失败') }
   finally { loading.value = false }
 }
@@ -49,9 +57,9 @@ async function confirm() {
       <template v-if="proposal">
         <p>{{ proposal.message }}</p>
         <table class="adaptation-comparison"><thead><tr><th>项目</th><th>当前</th><th>确认后</th></tr></thead><tbody>
-          <tr><td>任务总数</td><td>{{ proposal.before.task_count }}</td><td>{{ proposal.after.task_count }}</td></tr>
-          <tr><td>每天学习分钟</td><td>{{ proposal.before.daily_minutes ?? '未记录' }}</td><td>{{ proposal.after.daily_minutes }}</td></tr>
-          <tr><td>预计剩余天数</td><td>原计划估计 {{ proposal.before.estimated_days }}</td><td>{{ proposal.after.estimated_days }}</td></tr>
+          <tr><td>任务总数</td><td>{{ proposal.before?.task_count ?? '—' }}</td><td>{{ proposal.after?.task_count ?? '—' }}</td></tr>
+          <tr><td>每天学习分钟</td><td>{{ proposal.before?.daily_minutes ?? '未记录' }}</td><td>{{ proposal.after?.daily_minutes ?? '—' }}</td></tr>
+          <tr><td>预计剩余天数</td><td>原计划估计 {{ proposal.before?.estimated_days ?? '—' }}</td><td>{{ proposal.after?.estimated_days ?? '—' }}</td></tr>
         </tbody></table>
         <ul><li v-for="evidence in proposal.evidence" :key="evidence.name">{{ evidence.name }}：{{ evidence.graded_answers }} 次判分，正确率 {{ evidence.accuracy_percent }}%（练习证据，不能代表整体能力）。</li></ul>
         <ul><li v-for="task in proposal.added_tasks" :key="task.task_id">{{ task.title }}</li></ul>

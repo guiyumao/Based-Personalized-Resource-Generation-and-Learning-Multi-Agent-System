@@ -13,7 +13,7 @@ Auth classification:
 - POST /homework/{id}/review              : PROTECTED (teacher only)
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from common.dependencies import get_current_user, require_role
 from common.models.learning import User
@@ -110,13 +110,16 @@ def get_class_insights(
 async def get_student_learning_detail(
     class_id: int,
     user_id: int,
+    request: Request,
     current_user: User = Depends(require_role("teacher", "admin")),
 ) -> ApiResponse[StudentLearningDetail]:
     """Get one student's detailed mistake notebook and learning reports. (teacher, admin)"""
 
     _enforce_class_access(class_id, current_user)
     try:
-        detail = await manager.get_student_learning_detail(class_id, user_id)
+        detail = await manager.get_student_learning_detail(
+            class_id, user_id, auth_header=request.headers.get("authorization")
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -362,6 +362,11 @@ class ExerciseGenerationService:
                         "generation_mode": request.generation_mode,
                         "exercise_count": request.exercise_count,
                         "grounding_text": grounding,
+                        # The shared system prompt also references these two
+                        # placeholders; a missing key raises before the request is
+                        # sent, which silently disabled the whole retry path.
+                        "previous_question_signatures": "[]",
+                        "agent_plan": "{}",
                     }, stage="retry")
                     ensure_execution_active()
                     parsed = self._extract_json(raw)
@@ -613,6 +618,8 @@ class ExerciseGenerationService:
         return (
             f"{self.prompt_template}\n\n"
             "额外硬性要求：\n"
+            "0. 本次请求题量为 {exercise_count} 道（允许 1-25 道）。必须严格按该数量输出，不得固定为 10 道；\n"
+            "   题量变化时按比例调整题型与难度分布，题量少时保留核心考点，题量多时扩展变式与迁移。\n"
             "1. 只在可信同主题作答证据存在时针对错点命题；其他情况按当前主题的通用教学目标命题。\n"
             "2. 不强制个性化：未知掌握度、未验证画像和旧课件学情段落不能用来推断学生薄弱点、学习速度或风格。\n"
             "3. 不得生成与近期已生成题目签名相同或仅替换题号的题目。\n"
@@ -833,7 +840,9 @@ class ExerciseGenerationService:
             for key, value in raw.items()
             if key in allowed and isinstance(value, (int, float))
         }
-        if not counts and request.exercise_count == 10:
+        # The default mix is a ratio, not a fixed 10-question template: it is
+        # scaled to whatever count the learner asked for (1-25).
+        if not counts:
             counts = dict(DEFAULT_QUESTION_TYPE_COUNTS)
         if not counts:
             return {}

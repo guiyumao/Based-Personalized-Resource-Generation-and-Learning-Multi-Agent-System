@@ -47,7 +47,7 @@ class AssistantChatInput(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     action: str | None = None
     knowledge_point: str = Field(default="", max_length=120)
-    exercise_count: int = Field(default=5, ge=3, le=20)
+    exercise_count: int = Field(default=5, ge=1, le=25)
     teaching_mode: Literal["basic", "standard", "deep", "socratic", "exam"] = "standard"
     use_learning_context: bool = False
     allow_web_knowledge: bool = True
@@ -204,8 +204,8 @@ def assistant_chat(
             raise HTTPException(422, "Create new plans outside the current workspace")
     topic = payload.knowledge_point.strip() or infer_topic(payload.message)
     exercise_count = infer_exercise_count(payload.message, payload.exercise_count) if action in {"exercise", "combined"} else payload.exercise_count
-    if not 3 <= exercise_count <= 20:
-        raise HTTPException(status_code=422, detail="练习题数量应为 3 到 20 道")
+    if not 1 <= exercise_count <= 25:
+        raise HTTPException(status_code=422, detail="练习题数量应为 1 到 25 道")
     existing = db.query(AssistantTask).filter(
         AssistantTask.user_id == current_user.id,
         AssistantTask.client_request_id == payload.client_request_id,
@@ -556,7 +556,7 @@ def confirm_learning_path(
 def capabilities(current_user: User = Depends(get_current_user)) -> dict:
     return {
         "actions": ["qa", "search"] if current_user.role == "teacher" else ["qa", "profile", "search", "courseware", "exercise", "plan", "recommend", "combined"],
-        "max_exercise_count": 20,
+        "max_exercise_count": 25,
         "teaching_modes": ["basic", "standard", "deep", "socratic", "exam"],
         "supports_file_upload": True,
         "supported_attachment_formats": ["txt", "md", "pdf", "docx"],

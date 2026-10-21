@@ -51,3 +51,19 @@ storage/
 
 # Frontend deployment build flags (non-secret env files).
 web-app/.env.sakurafrp
+
+# --- 本地密钥/环境变体：只保留模板，其余一律不入库 ---
+.env.*
+!.env.example
+!**/.env.example
+
+# --- 生成型运行产物（课件导出、插图、音视频），单次生成可达数十 MB ---
+/resource_artifacts/
+
+# --- 运行期缓存与写锁（knowledge-write.lock 每次知识写入都会变） ---
+/.cache/
+
+# --- 前端测试/构建产物（vitest 覆盖率、增量编译信息） ---
+web-app/coverage
+.vitest
+*.tsbuildinfo
