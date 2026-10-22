@@ -61,6 +61,12 @@ async function checkKnowledge() {
   return Boolean(data.ready)
 }
 const coordination = ref<CoordinationResponse | null>(null)
+const generationTaskId = ref(0)
+const historyItems = ref<PathHistoryItem[]>([])
+const historyLoading = ref(false)
+const historyError = ref('')
+const loadingHistoryId = ref(0)
+const activeHistoryId = ref(0)
 const teachingScopes = ref<TeachingScopeItem[]>([])
 const scopeLoading = ref(false)
 const knowledgeSubjects = ref<KnowledgeSubjectOption[]>([])
@@ -179,12 +185,14 @@ function syncTeacherScopeFromPath(path: LearningPathResponse) {
   if (!path.teacher_scope) {
     return
   }
+  // Only register the scope so it stays visible in "教师学习范围". Applying it
+  // is now an explicit action: auto-apply used to overwrite the subject/knowledge
+  // point inputs (and push the teacher courseware snapshot) whenever a generated
+  // or historical path happened to carry a teacher_scope.
   const exists = teachingScopes.value.some((scope) => scope.id === path.teacher_scope!.id)
   if (!exists) {
     teachingScopes.value.unshift(path.teacher_scope)
   }
-  applyTeachingScope(path.teacher_scope)
-  persistTeacherScopeCourseware(path.teacher_scope, path)
 }
 
 function persistTeacherScopeCourseware(scope: TeachingScopeItem, path: LearningPathResponse) {
@@ -224,6 +232,7 @@ function persistTeacherScopeCourseware(scope: TeachingScopeItem, path: LearningP
 }
 
 onMounted(async () => {
+  void fetchHistory()
   await Promise.all([fetchTeachingScopes(), fetchKnowledgeSubjects()])
   try {
     const { data } = await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)
@@ -323,9 +332,21 @@ async function generateLearningPath() {
   }
 }
 
+async function waitForCoordination(taskId: number): Promise<CoordinationResponse> {
+  const deadline = Date.now() + 6 * 60 * 1000
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    if (pageDisposed) throw new Error('页面已离开，任务仍在后台生成，可在「历史生成」中查看')
+    const { data } = await agentApi.get<any>(`/agents/coordinate/tasks/${taskId}`)
+    if (data.status === 'SUCCEEDED') return data.result as CoordinationResponse
+    if (data.status === 'FAILED') throw new Error(String(data.error_message || data.error_code || '学习路径生成失败'))
+  }
+  throw new Error('生成超时，请稍后在「历史生成」中查看结果')
+}
+
 async function requestCoordination(): Promise<void> {
   const teacherScope = selectedTeachingScope.value
-  const { data } = await agentApi.post<CoordinationResponse>('/agents/coordinate', {
+  const body = {
     user_id: user.userId,
     intent: generateCompanionResources.value
       ? `Generate a personalized learning path, courseware, and exercises for ${pathForm.subject || 'the current subject'}: ${pathForm.knowledge_point}`
@@ -350,19 +371,95 @@ async function requestCoordination(): Promise<void> {
       courseware_content: teacherScope?.courseware_content ?? undefined,
       teacher_scope: teacherScope ?? undefined,
     },
-  })
-  const pending = (data as any)?.detail
-  if (pending?.code === 'PUBLIC_KNOWLEDGE_PROCESSING') {
-    knowledgeCheck.value = { ready: false, mode: 'public_build_pending', reason: 'PROCESSING', message: pending.message }
-    while (!pageDisposed) {
-      await new Promise(resolve => setTimeout(resolve, 3000))
-      if (pageDisposed) return
-      const check = await agentApi.post('/paths/preflight', { subject: pathForm.subject, knowledge_point: pathForm.knowledge_point })
-      if (check.data.ready) return requestCoordination()
-    }
-    return
   }
-  coordination.value = (data as any).data ?? data
+  try {
+    // Async: the route enqueues on RabbitMQ and returns a task id immediately,
+    // so the 60s model workflow survives navigation and never blocks the tab.
+    const { data } = await agentApi.post<{ task_id: number }>('/agents/coordinate/async', body)
+    generationTaskId.value = data.task_id
+    coordination.value = await waitForCoordination(data.task_id)
+    await fetchHistory()
+  } catch (error: any) {
+    const message = String(error?.response?.data?.detail ?? error?.message ?? '')
+    if (message.includes('PUBLIC_KNOWLEDGE_PROCESSING')) {
+      knowledgeCheck.value = { ready: false, mode: 'public_build_pending', reason: 'PROCESSING', message: '公共知识正在建设中，完成后会自动继续生成。' }
+      while (!pageDisposed) {
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+        if (pageDisposed) return
+        const check = await agentApi.post('/paths/preflight', { subject: pathForm.subject, knowledge_point: pathForm.knowledge_point })
+        if (check.data.ready) return requestCoordination()
+      }
+      return
+    }
+    throw error
+  }
+}
+
+type PathHistoryItem = {
+  id: number
+  status: string
+  created_at: string | null
+  subject: string
+  knowledge_point: string
+  overview: string
+  estimated_days?: number | null
+  stage_count: number
+  task_count: number
+  teacher_scope_title: string
+}
+
+async function fetchHistory() {
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const { data } = await agentApi.get<{ items: PathHistoryItem[] }>(`/paths/history/${user.userId}`, {
+      params: { limit: 8 },
+    })
+    historyItems.value = data.items ?? []
+  } catch {
+    historyError.value = '历史生成加载失败'
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function loadHistoryItem(item: PathHistoryItem) {
+  if (loadingHistoryId.value) return
+  loadingHistoryId.value = item.id
+  try {
+    // Full stage/task JSON is fetched only for the clicked record; the list
+    // endpoint returns summaries so a long history stays cheap.
+    const { data } = await agentApi.get<LearningPathResponse>(`/paths/history/item/${item.id}`)
+    if (!data?.stages?.length) {
+      ElMessage.warning('该历史记录暂无可用内容')
+      return
+    }
+    learningPath.value = data
+    activeHistoryId.value = item.id
+    pathForm.subject = data.subject
+    pathForm.knowledge_point = data.knowledge_point
+    syncTeacherScopeFromPath(data)
+    persistWorkspaceContext(data)
+    knowledgeCheck.value = {
+      ready: true,
+      mode: 'history',
+      reason: 'READY',
+      message: '正在查看历史生成的学习路径（不影响当前进度）',
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  } catch {
+    ElMessage.error('加载历史路径失败')
+  } finally {
+    loadingHistoryId.value = 0
+  }
+}
+
+function formatHistoryTime(value: string | null) {
+  if (!value) return '时间未知'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '时间未知'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 function hasAgentPayload(output: Record<string, unknown> | undefined, key: string) {
@@ -660,6 +757,36 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
             </article>
           </div>
           <p v-else>暂无教师投放的学习范围。</p>
+        </section>
+
+        <section class="side-panel history-panel">
+          <div class="history-head">
+            <h3>历史生成</h3>
+            <button type="button" class="history-refresh" :disabled="historyLoading" @click="fetchHistory">
+              {{ historyLoading ? '加载中' : '刷新' }}
+            </button>
+          </div>
+          <p v-if="historyLoading && !historyItems.length">正在读取历史记录...</p>
+          <p v-else-if="historyError" class="warning-text">{{ historyError }}</p>
+          <div v-else-if="historyItems.length" class="history-list">
+            <button
+              v-for="item in historyItems"
+              :key="item.id"
+              type="button"
+              class="history-item"
+              :class="{ active: activeHistoryId === item.id }"
+              :disabled="loadingHistoryId === item.id"
+              @click="loadHistoryItem(item)"
+            >
+              <strong>{{ item.subject || '未命名学科' }}</strong>
+              <span class="history-topic">{{ item.knowledge_point || '未标注知识点' }}</span>
+              <small>
+                {{ formatHistoryTime(item.created_at) }} · {{ item.stage_count }} 阶段 / {{ item.task_count }} 任务
+              </small>
+              <span v-if="loadingHistoryId === item.id" class="history-loading">加载中...</span>
+            </button>
+          </div>
+          <p v-else>暂无历史生成记录，生成一次后会出现在这里。</p>
         </section>
 
         <section class="side-panel">
@@ -1077,4 +1204,42 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
     grid-template-columns: 1fr;
   }
 }
+/* 历史生成：只用主题变量，六套主题（默认/深海/暖金/暗夜/极简/森林）自动适配 */
+.history-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.history-refresh {
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color .18s ease, color .18s ease, background .18s ease;
+}
+.history-refresh:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.history-refresh:disabled { opacity: .55; cursor: not-allowed; }
+.history-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  text-align: left;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--text);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+.history-item:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.history-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.history-item.active { border-color: var(--accent); background: var(--accent-soft); }
+.history-item:disabled { opacity: .65; cursor: progress; }
+.history-item strong { font-size: 13px; font-weight: 600; color: var(--text); }
+.history-item .history-topic { font-size: 12px; color: var(--accent); }
+.history-item small { font-size: 11px; color: var(--muted); }
+.history-item small em { font-style: normal; color: var(--accent); }
+.history-loading { font-size: 11px; color: var(--accent); }
 </style>

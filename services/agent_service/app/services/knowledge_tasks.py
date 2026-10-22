@@ -35,6 +35,9 @@ SUPPORTED_OPERATIONS = frozenset({"KNOWLEDGE_HEALTH_CHECK", "INDEX_REPAIR", "SEA
 LOGGER = logging.getLogger(__name__)
 LEASE_SECONDS = 45
 MAX_ATTEMPTS = 3
+#: Public builds are allowed more retries than recovery operations, but not
+#: unbounded retries: each round costs one full generation plus one review.
+PUBLIC_ATTEMPT_LIMIT = 8
 SAFE_RECOVERY_OPERATIONS = {"KNOWLEDGE_HEALTH_CHECK", "SEARCH_SOURCES", "FETCH_SOURCE", "BUILD_POINT", "PUBLISH_CANDIDATE", "RECONCILE_PUBLICATIONS"}
 
 
@@ -364,6 +367,17 @@ def execute_task(task_id: int) -> bool:
                 result = advance_public_build(db, task, public_guard)
                 if not result.get("ready"):
                     db.rollback()
+                    if attempt >= PUBLIC_ATTEMPT_LIMIT:
+                        # A public build used to requeue unconditionally, so a
+                        # document the model could never finish (output cap,
+                        # repeated review rejection) burned tokens forever.
+                        # Fail closed: the learner keeps the personal draft and
+                        # an administrator can retry from the knowledge console.
+                        _finish(task_id, worker_id, attempt, result_json=result, status="FAILED",
+                                next_attempt_at=None,
+                                current_step="公共知识自动建设达到重试上限，已停止；可稍后由管理员重试",
+                                error_code="PUBLIC_BUILD_RETRY_EXHAUSTED")
+                        return True
                     _finish(task_id, worker_id, attempt, result_json=result, status="QUEUED",
                             next_attempt_at=datetime.utcnow() + timedelta(seconds=min(300, 15 * max(1, attempt))),
                             current_step="模型自动修改与融入中，无需人工审核", error_code="")

@@ -62,6 +62,40 @@ async function join(item: PlazaClassItem) {
   }
 }
 
+const inviteDialog = ref(false)
+const inviteCode = ref('')
+const inviteBusy = ref(false)
+const inviteError = ref('')
+
+function openInviteDialog(prefill = '') {
+  inviteCode.value = (prefill || query.value).trim()
+  inviteError.value = ''
+  inviteDialog.value = true
+}
+
+async function submitInvite() {
+  const code = inviteCode.value.trim()
+  if (!code) { inviteError.value = '请输入教师提供的邀请码'; return }
+  inviteBusy.value = true
+  inviteError.value = ''
+  try {
+    // The invite code is submitted to the backend join endpoint; the backend
+    // resolves it to a classroom and checks capacity/status there.
+    const { data } = await teacherApi.post<ApiEnvelope<{ name: string }>>(
+      '/teacher/students/me/classes/join',
+      { invite_code: code },
+    )
+    ElMessage.success(`已加入「${data.data.name}」，可在我的课堂和课程表中查看`)
+    inviteDialog.value = false
+    inviteCode.value = ''
+    await refresh()
+  } catch (error: any) {
+    inviteError.value = errorText(error, '邀请码加入失败')
+  } finally {
+    inviteBusy.value = false
+  }
+}
+
 function goClassroom() {
   router.push('/student/classroom')
 }
@@ -91,6 +125,7 @@ onMounted(refresh)
           <el-option v-for="name in subjects" :key="name" :label="name" :value="name" />
         </el-select>
         <el-button type="primary" @click="refresh">搜索</el-button>
+        <el-button @click="openInviteDialog()">邀请码加入</el-button>
         <el-button @click="goClassroom">我的课堂</el-button>
       </div>
       <el-alert v-if="loadError" :title="loadError" type="error" :closable="false">
@@ -123,13 +158,28 @@ onMounted(refresh)
             <el-button v-else-if="item.invite_matched && (!item.capacity || item.student_count < item.capacity)" type="primary" :loading="joining === item.id" @click="join(item)">使用邀请码加入</el-button>
             <el-button v-else-if="item.join_mode === 'open' && (!item.capacity || item.student_count < item.capacity)" type="primary" :loading="joining === item.id" @click="join(item)">加入课堂</el-button>
             <el-button v-else-if="item.capacity && item.student_count >= item.capacity" disabled>人数已满</el-button>
-            <el-button v-else disabled>输入邀请码搜索后可加入</el-button>
+            <el-button v-else @click="openInviteDialog()">输入邀请码加入</el-button>
           </div>
         </article>
       </div>
       <el-empty v-else-if="!loading && !loadError" :description="resultQuery ? '未找到对应课堂，请检查课程名称或完整邀请码；停用、已更换的邀请码无法使用' : '暂无可选课堂，可向教师获取邀请码后搜索加入'" />
       <p class="hint">邀请码需完整匹配，支持大小写；非公开课堂仅在持有正确邀请码时出现在搜索结果中。加入后自动同步到我的课堂和课程表。</p>
     </article>
+
+    <el-dialog v-model="inviteDialog" title="使用邀请码加入课堂" width="min(440px, 92vw)">
+      <p class="hint invite-hint">向任课教师获取完整邀请码，输入后由系统校验班级状态与容量。</p>
+      <el-input
+        v-model="inviteCode"
+        placeholder="请输入课堂邀请码"
+        clearable
+        @keyup.enter="submitInvite"
+      />
+      <p v-if="inviteError" class="invite-error">{{ inviteError }}</p>
+      <template #footer>
+        <el-button @click="inviteDialog = false">取消</el-button>
+        <el-button type="primary" :loading="inviteBusy" @click="submitInvite">加入课堂</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -160,4 +210,6 @@ h1{font-size:30px;margin:5px 0 8px}
 .card-actions{display:flex;justify-content:flex-end}
 .hint{font-size:12px;color:var(--muted);line-height:1.7}
 @media (max-width:640px){.plaza-stats{width:100%}.plaza-stats article{flex:1}.plaza-grid{grid-template-columns:minmax(0,1fr)}.plaza-card{min-width:0;overflow-wrap:anywhere}.card-head{flex-wrap:wrap}}
+.invite-hint{margin:0 0 12px}
+.invite-error{margin:8px 0 0;color:var(--red);font-size:12px}
 </style>

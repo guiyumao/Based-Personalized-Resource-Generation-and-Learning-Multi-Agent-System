@@ -27,7 +27,14 @@ class KnowledgeReview(BaseModel):
     issues: list[StrictStr]
 
 
-def _invoke_public_model(template: str, data: dict, *, stage: str) -> str:
+def _invoke_public_model(template: str, data: dict, *, stage: str) -> tuple[str, str]:
+    """Return the model text and its finish reason ("stop" / "length" / ...).
+
+    The provider caps output at 8192 tokens. A long knowledge document can hit
+    that cap, producing a body that ends mid-sentence; the caller must see
+    "length" so it can ask for a shorter rewrite instead of publishing (and
+    re-reviewing) a truncated document forever.
+    """
     from langchain_core.messages import HumanMessage, SystemMessage
 
     ensure_execution_active()
@@ -37,15 +44,17 @@ def _invoke_public_model(template: str, data: dict, *, stage: str) -> str:
         HumanMessage(content=json.dumps(data, ensure_ascii=False)),
     ], stage=stage)
     content = getattr(result, "content", result)
+    metadata = getattr(result, "response_metadata", None) or {}
+    finish_reason = str(metadata.get("finish_reason") or "").lower()
     if not isinstance(content, str) or not content.strip():
         raise ValueError("Public knowledge model returned no text")
-    return content.strip()
+    return content.strip(), finish_reason
 
 
 def review_public_content(subject: str, topic: str, content: str) -> dict:
     """No rule-only approval, fallback PASS, or truncation of the reviewed body."""
     try:
-        raw = _invoke_public_model("public_knowledge_review.md", {
+        raw, _ = _invoke_public_model("public_knowledge_review.md", {
             "subject": subject, "knowledge_point": topic, "content": content,
         }, stage="audit")
         review = KnowledgeReview.model_validate_json(raw)
@@ -108,7 +117,7 @@ def advance_public_build(db, task, guard=None) -> dict:
         if not state.get("public_body") or state.get("revision_issues"):
             state["rounds"] = int(state.get("rounds", 0)) + 1
             checkpoint("模型正在建设或修改公共知识")
-            body = _invoke_public_model("public_knowledge_build.md", {
+            body, finish_reason = _invoke_public_model("public_knowledge_build.md", {
                 "subject": subject, "knowledge_point": topic,
                 "previous_content": state.get("public_body", ""),
                 "revision_issues": state.get("revision_issues", []),
@@ -116,6 +125,21 @@ def advance_public_build(db, task, guard=None) -> dict:
             }, stage="generation")
             state["public_body"] = body
             state["revision_issues"] = []
+            if finish_reason == "length":
+                # Do not review or publish a document that the provider cut off.
+                # Publishing it would loop: review rejects it as incomplete,
+                # the rewrite overflows the same cap, and the task retries
+                # forever (observed: 11 attempts, ~190k wasted tokens).
+                state["truncations"] = int(state.get("truncations", 0)) + 1
+                budget = max(1800, int(6000 / max(1, state["truncations"])))
+                state["revision_issues"] = [
+                    "上一轮输出达到模型长度上限被截断，正文不完整，无法入库。"
+                    f"请把全文压缩到 {budget} 汉字以内（约 {budget * 2 // 3} tokens），"
+                    "保留定义、原理、关键步骤、一个可验算案例、边界与常见错误，"
+                    "删除重复段落与冗长推导，必须完整收尾。"
+                ]
+                checkpoint("正文超过模型输出上限被截断，已要求压缩重写")
+                return {**state, "ready": False, "retry_reason": "OUTPUT_TRUNCATED"}
             checkpoint("公共正文已入数据库，模型正在审核")
         body = state["public_body"]
         if len(body) < 400 or len(body) > 28000:
@@ -134,7 +158,16 @@ def advance_public_build(db, task, guard=None) -> dict:
         review = result.get("review", {})
         state["review"] = review
         if result.get("reason") == "MODEL_REVIEW_REJECTED":
-            state["revision_issues"] = review.get("issues") or [review.get("reason") or "请检查并修改内容，完成知识库融入。"]
+            issues = review.get("issues") or [review.get("reason") or "请检查并修改内容，完成知识库融入。"]
+            # Hand-computed bit/number tables (CRC division is the usual offender)
+            # are where the model keeps producing self-contradictory arithmetic;
+            # asking it to "redo the same calculation" loops forever. Require a
+            # different, arithmetic-free example instead.
+            state["revision_issues"] = [
+                "若审核意见涉及逐位或数值演算（例如 CRC 手算表、商位与余数），不要再次重算同一个示例："
+                "直接删除该演算示例及相关余数/商位/自相矛盾的句子，改用一个不依赖复杂算术的案例"
+                "（如帧封装流程、状态迁移表、字段含义对比），并保证全文只保留一份结果。"
+            ] + list(issues)
         checkpoint("内容已入数据库，模型自动修改后继续融入知识库")
         return {**state, "ready": False, "retry_reason": result.get("reason", "PUBLICATION_RETRY")}
     except Exception:

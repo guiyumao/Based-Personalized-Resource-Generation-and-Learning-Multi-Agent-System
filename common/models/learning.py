@@ -195,6 +195,28 @@ class LearningPath(TimestampMixin, Base):
     tasks: Mapped[list[LearningTask]] = relationship(back_populates="path")
 
 
+class CoordinationTask(TimestampMixin, Base):
+    """Async coordination request (RabbitMQ-backed) for long agent workflows.
+
+    The browser submits the request once, polls this row, and may navigate away
+    while the worker keeps running; the result is stored here so a reload can
+    still pick it up.
+    """
+
+    __tablename__ = "coordination_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(20), default="QUEUED", index=True)
+    request_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    error_code: Mapped[str] = mapped_column(String(80), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    worker_id: Mapped[str] = mapped_column(String(80), default="")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class LearningTask(Base):
     """Task item within a learning path."""
 

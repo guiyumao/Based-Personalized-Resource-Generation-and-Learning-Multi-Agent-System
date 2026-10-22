@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from common.config import get_settings
 from common.db.session import get_db
 from common.dependencies import get_current_user, require_role, require_self_or_admin
-from common.models.learning import User
+from common.models.learning import LearningPath, User
 from common.performance import set_trace_context
 from common.schemas.agent import (
     CoordinationRequest,
@@ -177,6 +177,67 @@ def generate_learning_path(
     if not isinstance(learning_path, dict):
         raise HTTPException(status_code=503, detail="Path planning agent did not return a learning path")
     return LearningPathResponse(**learning_path)
+
+
+@router.get("/paths/history/{user_id}")
+def list_path_history(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """Lightweight history for the "历史生成" panel.
+
+    Only summary fields are computed and the page size is bounded; the full
+    stage/task JSON is fetched per item on demand by /paths/history/item/{id}.
+    """
+
+    require_self_or_admin(user_id, current_user)
+    query = (
+        db.query(LearningPath)
+        .filter(LearningPath.user_id == user_id)
+        .order_by(LearningPath.id.desc())
+    )
+    total = query.count()
+    rows = query.offset(offset).limit(limit).all()
+    items = []
+    for row in rows:
+        data = row.path_data_json if isinstance(row.path_data_json, dict) else {}
+        stages = data.get("stages") if isinstance(data.get("stages"), list) else []
+        teacher_scope = data.get("teacher_scope") if isinstance(data.get("teacher_scope"), dict) else {}
+        items.append(
+            {
+                "id": row.id,
+                "status": row.status,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "subject": str(data.get("subject") or ""),
+                "knowledge_point": str(data.get("knowledge_point") or ""),
+                "overview": str(data.get("overview") or "")[:120],
+                "estimated_days": data.get("estimated_days"),
+                "stage_count": len(stages),
+                "task_count": sum(
+                    len(stage.get("tasks") or []) for stage in stages if isinstance(stage, dict)
+                ),
+                "teacher_scope_title": str(teacher_scope.get("courseware_title") or ""),
+            }
+        )
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/paths/history/item/{path_id}")
+def get_path_history_item(
+    path_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return one stored learning path (full stage/task payload)."""
+
+    row = db.get(LearningPath, path_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="学习路径不存在")
+    require_self_or_admin(row.user_id, current_user)
+    return row.path_data_json or {}
 
 
 @router.get("/paths/{user_id}", response_model=LearningPathResponse)

@@ -328,7 +328,7 @@ class ClassroomMembership:
                 class_id=class_id, student_user_id=student_id
             ).delete()
             for path in db.query(LearningPath).filter_by(user_id=student_id, status="active").all():
-                scope = (path.path_data_json or {}).get("teacher_scope", {})
+                scope = (path.path_data_json or {}).get("teacher_scope") or {}
                 if scope.get("class_id") == class_id:
                     path.status = "archived"
             db.commit()
@@ -354,7 +354,11 @@ class ClassroomMembership:
                     .filter_by(user_id=student_id, status="active")
                     .all()
                 ):
-                    scope = (path.path_data_json or {}).get("teacher_scope", {})
+                    # teacher_scope is frequently null (the key exists, the value
+                    # does not); .get(key, {}) returns None in that case and the
+                    # following scope.get() raised AttributeError -> HTTP 500 when
+                    # a student left a class while holding a non-scoped path.
+                    scope = (path.path_data_json or {}).get("teacher_scope") or {}
                     if scope.get("class_id") == class_id:
                         path.status = "archived"
                 emit(

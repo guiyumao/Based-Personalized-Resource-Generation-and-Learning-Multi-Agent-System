@@ -147,6 +147,20 @@ elseif ($workerProcesses.Count -gt 0) {
     Write-Host "An assistant or knowledge worker is already running; skip knowledge-worker."
 }
 
+# Async coordinator worker: consumes the RabbitMQ path_generation queue and
+# also sweeps queued rows when the broker is unavailable.
+$pathWorkerProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction SilentlyContinue | Where-Object {
+    $_.CommandLine -match 'services\.agent_service\.app\.services\.path_worker'
+})
+if ($pathWorkerProcesses.Count -eq 0 -and $env:PATH_WORKER_ENABLED -ne "false") {
+    Write-Host "Starting path-worker for async learning-path generation..."
+    Start-Process python -ArgumentList @("-m", "services.agent_service.app.services.path_worker") `
+        -WorkingDirectory $root `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $serviceLogRoot "path-worker.stdout.log") `
+        -RedirectStandardError (Join-Path $serviceLogRoot "path-worker.stderr.log")
+}
+
 if (-not (Test-PortListening -Port $frontendPort)) {
     Write-Host "Starting web-app on http://$($frontendHost):$($frontendPort) ..."
     $webRoot = Join-Path $root "web-app"
