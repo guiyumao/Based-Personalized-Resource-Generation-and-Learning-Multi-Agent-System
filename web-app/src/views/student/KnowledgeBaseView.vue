@@ -9,6 +9,7 @@ import {
   type KnowledgeBaseListResponse,
   type KnowledgeBaseSearchResponse,
 } from '../../api'
+import LearningContent from '../../components/LearningContent.vue'
 
 const loading = ref(false)
 const searchText = ref('')
@@ -172,7 +173,7 @@ async function importResource(resource: KnowledgeBaseArticle['external_resources
             <span>{{ article.level }}</span>
           </div>
           <h3>{{ article.title }}</h3>
-          <p>{{ article.summary }}</p>
+          <LearningContent class="kb-card-summary" :content="article.summary" :clamp-lines="3" />
         </article>
         <div v-if="!loading && !filteredArticles.length" class="empty-state">
           暂无匹配的大学知识库内容。
@@ -187,7 +188,7 @@ async function importResource(resource: KnowledgeBaseArticle['external_resources
               <span>{{ selectedArticle.level }}</span>
             </div>
             <h2>{{ selectedArticle.title }}</h2>
-            <p>{{ selectedArticle.summary }}</p>
+            <LearningContent class="kb-detail-summary" :content="selectedArticle.summary" />
           </div>
           <button @click="applyToGraph(selectedArticle)">设为图谱知识点</button>
         </div>
@@ -210,7 +211,7 @@ async function importResource(resource: KnowledgeBaseArticle['external_resources
                 <span>{{ resource.kind }}</span>
               </div>
               <h4>{{ resource.title }}</h4>
-              <p>{{ resource.notes }}</p>
+              <LearningContent class="kb-resource-notes" :content="resource.notes" />
               <div class="kb-resource-actions">
                 <a :href="resource.url" target="_blank" rel="noreferrer">打开原站</a>
                 <button
@@ -403,7 +404,10 @@ async function importResource(resource: KnowledgeBaseArticle['external_resources
 .kb-card p,
 .kb-detail p,
 .kb-section li,
-.kb-resource-card p {
+.kb-resource-card p,
+.kb-card .kb-card-summary,
+.kb-detail .kb-detail-summary,
+.kb-resource-card .kb-resource-notes {
   color: var(--muted);
   line-height: 1.75;
 }

@@ -1,8 +1,10 @@
 """Deterministic local PPTX/SVG/WAV production inside the existing assistant worker."""
 import hashlib
 import io
+import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import wave
@@ -15,17 +17,21 @@ from fastapi import HTTPException
 from common.knowledge_paths import KNOWLEDGE_ROOT, PROJECT_ROOT
 from common.learning_context import validate_context
 from common.models.media import ResourceArtifact
-from services.agent_service.app.services.assistant_execution import ensure_execution_active, ensure_write_allowed
+from services.agent_service.app.services.assistant_execution import (
+    ensure_execution_active,
+    ensure_write_allowed,
+)
 
 FORMATS = {"pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"),
            "animation": ("image/svg+xml", "svg"), "audio": ("audio/wav", "wav"),
            "video": ("video/webm", "webm")}
 ARTIFACT_ROOT = KNOWLEDGE_ROOT / "resource_artifacts"
+VIDEO_RENDER_VERSION = "math-v2"
 
 
 def resource_video_path(resource):
     from common.resource_version import resource_version
-    return ARTIFACT_ROOT / str(resource.generated_for_user_id or 'public') / f"resource-{resource.id}-{resource_version(resource)}.webm"
+    return ARTIFACT_ROOT / str(resource.generated_for_user_id or 'public') / f"resource-{resource.id}-{resource_version(resource)}-{VIDEO_RENDER_VERSION}.webm"
 
 
 def ensure_resource_video(resource):
@@ -101,7 +107,7 @@ def render_audio(content):
 
 
 def render_video(title, content):
-    """A real local caption video from source paragraphs; no model or remote media."""
+    """Typeset source Markdown/math offline, then encode a silent local video."""
     import cv2
     import numpy as np
     from PIL import Image, ImageDraw, ImageFont
@@ -114,19 +120,22 @@ def render_video(title, content):
         raise ValueError("视频生成需要可用的中文字体")
     font = ImageFont.truetype(str(font_path), 27)
     heading_font = ImageFont.truetype(str(font_path), 32)
-    clean = re.sub(r"```.*?```", "", content, flags=re.S)
-    lines = [re.sub(r"^[#>*\-\s]+", "", line).strip() for line in clean.splitlines() if line.strip()]
-    pages, page = [], []
-    for line in lines:
-        for offset in range(0, len(line), 30):
-            page.append(line[offset:offset+30])
-            if len(page) == 9:
-                pages.append(page); page = []
-    if page:
-        pages.append(page)
-    if not pages:
+    if not content.strip():
         raise ValueError("视频课件正文为空")
     with tempfile.TemporaryDirectory(prefix="learning-video-") as directory:
+        source = Path(directory) / "source.json"
+        frames = Path(directory) / "frames"
+        source.write_text(json.dumps({"title": title, "content": content}, ensure_ascii=False), encoding="utf-8")
+        node = shutil.which("node")
+        if not node:
+            raise ValueError("视频公式排版需要本机 Node.js 和 Chromium")
+        result = subprocess.run([node, str(PROJECT_ROOT / "scripts/render_courseware_frames.mjs"), str(source), str(frames)],
+            capture_output=True, timeout=180, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        if result.returncode:
+            raise ValueError("视频公式排版失败：" + result.stderr.decode("utf-8", errors="replace")[-1800:])
+        pages = sorted(frames.glob("frame-*.png"))
+        if not pages:
+            raise ValueError("视频排版没有产生画面")
         target = str(Path(directory)/"lesson.webm")
         writer = cv2.VideoWriter(target, cv2.VideoWriter_fourcc(*"VP80"), 1, (960, 600))
         if not writer.isOpened():
@@ -154,15 +163,12 @@ def render_video(title, content):
                             draw.text((42, 550), "大于右邻时交换，每轮将最大值移至未排序区末尾 · 无声", font=font, fill="#52688a")
                             encoded = cv2.cvtColor(np.asarray(frame), cv2.COLOR_RGB2BGR)
                             for _ in range(2):
-                                writer.write(encoded); extra_frames += 1
-            for number, paragraphs in enumerate(pages):
+                                writer.write(encoded)
+                                extra_frames += 1
+            for paragraphs in pages:
                 ensure_execution_active()
-                frame = Image.new("RGB", (960, 600), "#f5f8ff")
-                draw = ImageDraw.Draw(frame)
-                draw.text((42, 26), str(title or "学习课件")[:26], font=heading_font, fill="#152342")
-                for index, line in enumerate(paragraphs):
-                    draw.text((42, 100+index*43), line, font=font, fill="#26344d")
-                draw.text((42, 550), f"字幕课件 · 无声 · {number+1}/{len(pages)}", font=font, fill="#52688a")
+                with Image.open(paragraphs) as image:
+                    frame = image.convert("RGB")
                 encoded = cv2.cvtColor(np.asarray(frame), cv2.COLOR_RGB2BGR)
                 for _ in range(12):
                     writer.write(encoded)

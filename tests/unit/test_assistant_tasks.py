@@ -104,6 +104,9 @@ def test_teacher_capabilities_expose_only_supported_assistant_tasks(assistant_cl
     assert response.status_code == 200
     task_id = response.json()["task"]["id"]
     assert client.get(f"/assistant/tasks/{task_id}", headers=headers).json()["status"] == "SUCCEEDED"
+    from common.models.learning import Notification
+    with assistant_tasks.SessionLocal() as db:
+        assert db.query(Notification).filter_by(user_id=teacher_id, related_type="task", related_id=task_id).count() == 1
 
 
 def test_assistant_splits_large_exercise_request_into_existing_service_batches(monkeypatch):

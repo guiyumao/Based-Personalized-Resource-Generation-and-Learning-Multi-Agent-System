@@ -21,6 +21,7 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import or_
 
@@ -926,11 +927,18 @@ class KnowledgeGraphRepository:
             payload = self.knowledge_base.article_to_dict(article)
         except Exception:
             return []
-        for item in payload.get("external_resources", [])[:8]:
+        references = payload.get("external_resources")
+        if not isinstance(references, list):
+            return []
+        for item in references[:8]:
             if not isinstance(item, dict):
                 continue
             url = str(item.get("url") or "").strip()
-            if not url:
+            try:
+                parsed = urlsplit(url)
+                if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or any(ord(char) < 33 for char in url):
+                    continue
+            except ValueError:
                 continue
             links.append(
                 {
@@ -948,21 +956,11 @@ class KnowledgeGraphRepository:
         key = " ".join(str(label or "").split()).casefold()
         if not key:
             return {}
-        for link in links:
-            title = " ".join(link["title"].split()).casefold()
-            if not title:
-                continue
-            # Exact match always wins; fuzzy containment only for labels long
-            # enough to be meaningful, so a short label cannot capture an
-            # unrelated reference.
-            fuzzy = min(len(key), len(title)) >= 4 and (key in title or title in key)
-            if title == key or fuzzy:
-                return {
-                    "url": link["url"],
-                    "provider": link["provider"],
-                    "kind": link["kind"],
-                }
-        return {}
+        exact = next((link for link in links if " ".join(link["title"].split()).casefold() == key), None)
+        if exact is None:
+            exact = next((link for link in links if (title := " ".join(link["title"].split()).casefold())
+                and min(len(key), len(title)) >= 4 and (key in title or title in key)), None)
+        return {name: exact[name] for name in ("url", "provider", "kind")} if exact else {}
 
     def _is_meaningful_label(self, label: str, kp: str) -> bool:
         """Reject labels that are too short, too generic, or identical to the current KP."""

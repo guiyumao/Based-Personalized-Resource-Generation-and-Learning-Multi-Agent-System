@@ -51,6 +51,7 @@ const router = createRouter({
       meta: { requiresAuth: true, roles: ['student'] },
       children: [
         { path: '', redirect: '/student/dashboard' },
+        {path:'notifications',name:'student-notifications',component:()=>import('./views/NotificationCenter.vue')},
         {
           path: 'dashboard',
           name: 'student-dashboard',
@@ -71,6 +72,21 @@ const router = createRouter({
           path: 'classroom',
           name: 'student-classroom',
           component: () => import('./views/student/ClassroomView.vue'),
+        },
+        {
+          path: 'classroom-plaza',
+          name: 'student-classroom-plaza',
+          component: () => import('./views/student/ClassroomPlazaView.vue'),
+        },
+        {
+          path: 'timetable',
+          name: 'student-timetable',
+          component: () => import('./views/student/TimetableView.vue'),
+        },
+        {
+          path: 'checkin',
+          name: 'student-checkin',
+          component: () => import('./views/student/CheckinCenterView.vue'),
         },
         {
           path: 'knowledge-base',
@@ -139,6 +155,7 @@ const router = createRouter({
       meta: { requiresAuth: true, roles: ['teacher'] },
       children: [
         { path: '', redirect: '/teacher/overview' },
+        {path:'notifications',name:'teacher-notifications',component:()=>import('./views/NotificationCenter.vue')},
         {
           path: 'overview',
           name: 'teacher-overview',
@@ -178,6 +195,16 @@ const router = createRouter({
           path: 'homework',
           name: 'teacher-homework',
           component: TeacherView,
+        },
+        {
+          path: 'checkin',
+          name: 'teacher-checkin',
+          component: () => import('./views/teacher/CheckinManageView.vue'),
+        },
+        {
+          path: 'schedule',
+          name: 'teacher-schedule',
+          component: () => import('./views/teacher/ClassScheduleView.vue'),
         },
       ],
     },
@@ -229,8 +256,9 @@ router.beforeEach(async (to) => {
   // storage is a UI cache; the API validates this token against the current user.
   if (allowedRoles?.includes('admin')) {
     try {
+      const token = authStore.token
       const { data } = await userApi.get<{ id: number; username: string; role: 'student' | 'teacher' | 'admin' }>('/users/me')
-      authStore.setAuth({ token: authStore.token, user: { userId: data.id, username: data.username, role: data.role } })
+      authStore.verifyIdentity(token, { userId: data.id, username: data.username, role: data.role })
       if (data.role !== 'admin') return authStore.homeRoute
     } catch {
       authStore.clear()

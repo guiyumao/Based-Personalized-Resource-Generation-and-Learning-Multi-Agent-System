@@ -33,7 +33,11 @@ watch(navigationOpen, async (open, previous) => {
         <header v-if="page?.roles.includes('admin') && route.name !== 'admin'" class="admin-page-heading"><span>LEARNING OS · 管理后台</span><h1>{{ page.label }}</h1><p>{{ page.description }}</p></header>
         <router-view v-slot="{ Component, route }">
           <transition name="page" mode="out-in">
-            <component :is="Component" :key="route.fullPath" />
+            <!-- Animate a real element: routed pages may contain dialogs and
+                 drawers as sibling roots, which cannot be transitioned. -->
+            <div :key="route.fullPath" class="route-page">
+              <component :is="Component" />
+            </div>
           </transition>
         </router-view>
       </div>

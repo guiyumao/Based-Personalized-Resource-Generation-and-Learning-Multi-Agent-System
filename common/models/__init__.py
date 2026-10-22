@@ -1,16 +1,24 @@
 """ORM model exports."""
 
-from common.models.operations import ModelCall, TaskAttempt, WorkerInstance
-from common.models.media import ResourceArtifact, ResourceRevision
-from common.models.study import CardKnowledgeBinding, CardReviewReceipt, NoteRevision
-
+from common.models.checkin import (
+    AttendanceRecord,
+    AttendanceSession,
+    CheckinAuditLog,
+    CheckinSubmissionRevision,
+    CheckinTask,
+    CheckinTaskSubmission,
+    ClassScheduleException,
+    ClassSession,
+    PersonalSchedule,
+    PlatformDailyCheckin,
+)
 from common.models.learning import (
     AnswerRecord,
     Assignment,
     AssignmentSubmission,
     AuditLog,
-    ClassEnrollment,
     CardReviewEvent,
+    ClassEnrollment,
     Classroom,
     Course,
     DiscussionReply,
@@ -35,11 +43,32 @@ from common.models.learning import (
     User,
     UserProfile,
 )
+from common.models.media import ResourceArtifact, ResourceRevision
+from common.models.operations import ModelCall, TaskAttempt, WorkerInstance
+from common.models.study import CardKnowledgeBinding, CardReviewReceipt, NoteRevision
+from common.models.teacher_support import (
+    CourseResourceDelivery,
+    ReinforcementAttempt,
+    ReinforcementDraft,
+)
 
 __all__ = [
+    "ReinforcementAttempt",
+    "CourseResourceDelivery",
+    "ReinforcementDraft",
+    "PersonalSchedule",
+    "AttendanceRecord",
+    "AttendanceSession",
     "CardKnowledgeBinding",
     "CardReviewReceipt",
+    "CheckinAuditLog",
+    "CheckinSubmissionRevision",
+    "CheckinTask",
+    "CheckinTaskSubmission",
+    "ClassScheduleException",
+    "ClassSession",
     "NoteRevision",
+    "PlatformDailyCheckin",
     "ModelCall",
     "TaskAttempt",
     "ResourceArtifact",

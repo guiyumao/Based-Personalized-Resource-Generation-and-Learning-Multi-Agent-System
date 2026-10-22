@@ -365,8 +365,8 @@ class ExerciseGenerationService:
                         # The shared system prompt also references these two
                         # placeholders; a missing key raises before the request is
                         # sent, which silently disabled the whole retry path.
-                        "previous_question_signatures": "[]",
-                        "agent_plan": "{}",
+                        "previous_question_signatures": json.dumps(sorted(previous_signatures)[:40], ensure_ascii=False),
+                        "agent_plan": json.dumps(agent_plan or {}, ensure_ascii=False),
                     }, stage="retry")
                     ensure_execution_active()
                     parsed = self._extract_json(raw)

@@ -414,6 +414,12 @@ class LearningPathService:
         if result.rowcount != 1:
             self.db.rollback()
             raise LearningPathRevisionConflict("学习计划已发生变化，请刷新后重新预览。")
+        old_feedback = (record.path_data_json or {}).get("applied_feedback", [])
+        if updated.get("applied_feedback", []) != old_feedback:
+            from common.notifications import emit
+            emit(self.db, user_id=record.user_id, event_key=f"plan:{record.id}:{revision + 1}",
+                title="学习计划已调整", content="你确认的计划反馈已应用，可以查看最新学习安排。",
+                type="plan", related_type="plan", related_id=record.id)
         self.db.commit()
         self.db.refresh(record)
 

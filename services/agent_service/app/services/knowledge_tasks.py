@@ -278,6 +278,18 @@ def guard_write(db: Session, task_id: int, worker_id: str, attempt: int) -> None
         raise KnowledgeLeaseLost()
 
 
+def _notify_terminal(db: Session, task: KnowledgeBuildTask) -> None:
+    if task.status in {"COMPLETED", "FAILED"}:
+        from common.notifications import emit
+        emit(db, user_id=task.actor_user_id, event_key=f"knowledge:{task.id}:{task.execution_attempt}:{task.status}",
+            title="知识库任务处理结果", content=f"{task.subject}：{task.current_step}。任务完成不代表内容已审核发布，请查看实际审核状态。",
+            type="task", related_type="knowledge_task", related_id=task.id)
+        from common.models.learning import LearningKnowledgeGap
+        for gap in db.query(LearningKnowledgeGap).filter_by(knowledge_task_id=task.id):
+            emit(db, user_id=gap.user_id, event_key=f"gap:{gap.id}:task:{task.id}:{task.execution_attempt}:{task.status}",
+                title="知识内容请求处理进度", content=f"{gap.subject} / {gap.knowledge_point} 建设任务：{task.current_step}。当前请求状态：{gap.status}；建设完成不等于内容已审核发布。", type="knowledge")
+
+
 def _finish(task_id: int, worker_id: str, attempt: int, **values: Any) -> bool:
     with SessionLocal() as db:
         queued = values.get("status") == "QUEUED"
@@ -293,6 +305,10 @@ def _finish(task_id: int, worker_id: str, attempt: int, **values: Any) -> bool:
         result = db.execute(update(KnowledgeBuildTask).where(*_owned(task_id, worker_id, attempt)).values(
             **values, completed_at=case((cancelled, datetime.utcnow()), else_=None if queued else datetime.utcnow()), lease_expires_at=None,
         ))
+        if result.rowcount == 1:
+            task = db.get(KnowledgeBuildTask, task_id)
+            db.refresh(task)
+            _notify_terminal(db, task)
         db.commit()
         return result.rowcount == 1
 
@@ -510,5 +526,8 @@ def expire_interrupted_tasks() -> int:
                      current_step="等待安全恢复" if retry else "执行中断", error_code="WORKER_INTERRUPTED",
                      completed_at=None if retry else now))
             changed += result.rowcount
+            if result.rowcount == 1 and state == "FAILED":
+                db.refresh(task)
+                _notify_terminal(db, task)
         db.commit()
         return changed

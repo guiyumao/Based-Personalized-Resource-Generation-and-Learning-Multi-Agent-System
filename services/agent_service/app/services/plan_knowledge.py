@@ -150,6 +150,9 @@ def plan_preflight(
         if result["ready"]:
             if gap and gap.status != "RESOLVED":
                 gap.status = "RESOLVED"
+                from common.notifications import emit
+                emit(db, user_id=user_id, event_key=f"gap:{gap.id}:RESOLVED", title="知识内容请求已处理",
+                    content=f"{gap.subject} / {gap.knowledge_point} 已通过当前可用性检查，可以继续制定学习计划。", type="knowledge")
                 db.commit()
             return result
         if not gap:

@@ -101,6 +101,10 @@ def test_preview_persists_proposal_without_applying_and_confirm_applies_once(fee
     assert result["path"]["stages"][0]["tasks"][0]["difficulty"] == "intermediate"
     assert "feedback_proposal" not in result["path"]
     assert service.confirm(1, proposal["proposal_id"])["status"] == "already_applied"
+    from common.models.learning import Notification
+    notices = db.query(Notification).filter_by(user_id=1, related_type="plan").all()
+    assert len(notices) == 1
+    assert notices[0].related_id == path_id
 
 
 def test_no_change_feedback_returns_no_change(feedback_db, monkeypatch):

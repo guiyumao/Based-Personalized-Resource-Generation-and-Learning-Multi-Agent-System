@@ -1,4 +1,5 @@
 import { agentApi, serviceEndpoints } from './http'
+import { useAuthStore } from '../stores/auth'
 
 export type AssistantAction = 'qa' | 'profile' | 'search' | 'courseware' | 'exercise' | 'plan' | 'recommend' | 'combined'
 export type AssistantTaskStatus = 'PENDING' | 'RUNNING' | 'CANCEL_REQUESTED' | 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT' | 'CANCELLED'
@@ -87,8 +88,7 @@ export async function streamAssistantMessage(
   onEvent: (event: AssistantStreamEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  const rawAuth = localStorage.getItem('learning-system-auth')
-  const token = rawAuth ? (JSON.parse(rawAuth) as { token?: string }).token : ''
+  const token = useAuthStore().token
   const response = await fetch(`${serviceEndpoints.agent}/assistant/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },

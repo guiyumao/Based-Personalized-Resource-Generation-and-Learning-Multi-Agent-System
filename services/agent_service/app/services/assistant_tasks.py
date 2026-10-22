@@ -114,12 +114,12 @@ def infer_topic(message: str) -> str:
 
 def infer_exercise_count(message: str, default: int = 5) -> int:
     """Read an explicitly requested exercise count without changing unrelated numbers."""
-    match = re.search(r"(?:(\d{1,2})|([一二三四五六七八九]?十[一二三四五六七八九]?|[三四五六七八九]))\s*道[^。！？\n]{0,40}?(?:练习|习题|题)", message)
+    match = re.search(r"(?:(\d+)|([一二三四五六七八九]?十[一二三四五六七八九]?|[一二两三四五六七八九]))\s*道[^。！？\n]{0,40}?(?:练习|习题|题)", message)
     if not match:
         return default
     if match.group(1):
         return int(match.group(1))
-    digits = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    digits = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
     value = match.group(2)
     if "十" not in value:
         return digits[value]
@@ -430,7 +430,7 @@ def _coordinated_result(db: Session, task: AssistantTask) -> tuple[dict[str, Any
     if workspace_context_id:
         from common.learning_context import context_reference
         reference_materials = context_reference(db, task.user_id, workspace_context_id) + "\n" + reference_materials
-    first_count = min(10, requested_count - 3) if requested_count > 10 else requested_count
+    first_count = min(10, requested_count)
     context = {
         "execute": True,
         "force_agents": (
@@ -458,15 +458,18 @@ def _coordinated_result(db: Session, task: AssistantTask) -> tuple[dict[str, Any
         knowledge_point=topic,
         payload=context,
     ))
-    if wants_exercises and requested_count > 10 and raw.get("status") != "cancelled":
-        task.current_step = f"首批练习已生成，正在生成剩余 {requested_count - first_count} 道"
+    remaining = requested_count - first_count
+    batch_index = 1
+    while wants_exercises and remaining > 0 and raw.get("status") == "success":
+        batch_count = min(10, remaining)
+        task.current_step = f"首批练习已生成，正在生成剩余 {remaining} 道"
         db.commit()
         extra = _run_task_workflow(db, task, CoordinationRequest(
             user_id=task.user_id,
             intent=message,
             knowledge_point=topic,
-            payload={**context, "exercise_count": requested_count - first_count,
-                     "force_agents": ["exercise_generation_agent"], "assistant_exercise_batch": 1},
+            payload={**context, "exercise_count": batch_count,
+                     "force_agents": ["exercise_generation_agent"], "assistant_exercise_batch": batch_index},
         ))
         first_output = (raw.get("outputs") or {}).get("exercise_generation_agent") or {}
         extra_output = (extra.get("outputs") or {}).get("exercise_generation_agent") or {}
@@ -481,6 +484,8 @@ def _coordinated_result(db: Session, task: AssistantTask) -> tuple[dict[str, Any
             raw["status"] = "cancelled"
         elif extra.get("status") != "success" or not isinstance(extra_set, dict):
             raw["status"] = "partial"
+        remaining -= batch_count
+        batch_index += 1
     if action == "combined" and "plan" in generation_actions and raw.get("status") != "cancelled":
         task.current_step = "资料检索与资源生成已执行，正在制定学习路径"
         db.commit()
@@ -721,6 +726,11 @@ def execute_task(task_id: int) -> None:
             task.current_step = "任务已取消" if task.status == "CANCELLED" else "任务完成"
             task.result_json = result
             task.completed_at = datetime.utcnow()
+            if task.status == "SUCCEEDED":
+                from common.notifications import emit
+                emit(db, user_id=task.user_id, event_key=f"assistant:{task.id}:SUCCEEDED",
+                    title="学习任务已完成", content="持久任务已完成，请查看已保存的学习成果。",
+                    type="task", related_type="task", related_id=task.id)
             db.add(ChatMessage(
                 session_id=task.session_id,
                 role="assistant",
@@ -749,6 +759,11 @@ def execute_task(task_id: int) -> None:
                 task.error_code = "" if cancelled else "ASSISTANT_TASK_FAILED"
                 task.result_json = {"content": "任务已取消，后续步骤已停止；当前步骤可能已保存部分成果，请查看资源库和练习。" if cancelled else str(exc) if isinstance(exc, ValueError) else "任务暂时未完成，请稍后重试。"}
                 task.completed_at = datetime.utcnow()
+                if not cancelled:
+                    from common.notifications import emit
+                    emit(db, user_id=task.user_id, event_key=f"assistant:{task.id}:FAILED",
+                        title="学习任务未完成", content="任务未完成，请查看助手任务详情后重试。",
+                        type="task", related_type="task", related_id=task.id)
                 db.commit()
                 LOGGER.info("assistant_task_final task_id=%s worker_id=%s attempt=%s final_status=%s", task_id, worker_id, attempt, task.status)
         finally:
@@ -814,6 +829,10 @@ def expire_stale_tasks(db: Session, user_id: int | None = None, *, task_id: int 
             AssistantTask.completed_at: now, AssistantTask.updated_at: now,
         }, synchronize_session=False)
         expired += changed
+        if changed and status == "TIMED_OUT":
+            from common.notifications import emit
+            emit(db, user_id=task.user_id, event_key=f"assistant:{task.id}:TIMED_OUT",
+                title="学习任务执行中断", content=content, type="task", related_type="task", related_id=task.id)
         if changed:
             LOGGER.warning("assistant_task_recovered task_id=%s worker_id=%s attempt=%s final_status=%s reason=%s", task.id, task.worker_id, task.execution_attempt, status, code or "cancel_wait")
     if expired:

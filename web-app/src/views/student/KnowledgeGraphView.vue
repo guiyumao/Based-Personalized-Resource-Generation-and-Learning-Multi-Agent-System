@@ -58,7 +58,9 @@ const categoryStats = computed(() => {
 
 function safeResourceUrl(url?: string) {
   const value = (url ?? '').trim()
-  return /^https?:\/\//i.test(value) ? value : ''
+  if (!/^https?:\/\//i.test(value) || /[\u0000-\u0020]/.test(value)) return ''
+  try { const parsed = new URL(value); return parsed.hostname && !parsed.username && !parsed.password ? parsed.href : '' }
+  catch { return '' }
 }
 
 const groupedNodes = computed(() => {

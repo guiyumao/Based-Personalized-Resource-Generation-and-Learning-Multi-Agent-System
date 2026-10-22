@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { agentApi } from '../api/http'
 import type { LearningPathResponse } from '../api'
+import LearningContent from './LearningContent.vue'
 
 const FEEDBACK_OPTIONS = [
   { value: 'too_hard', label: '太难' },
@@ -65,7 +66,7 @@ async function confirm() {
   <el-alert v-if="error && !visible" :title="error" type="error" :closable="false" />
   <el-dialog v-model="visible" title="任务反馈方案预览" width="min(560px, 94vw)" :close-on-click-modal="false">
     <template v-if="proposal">
-      <p>{{ proposal.message }}</p>
+      <LearningContent class="feedback-message" :content="proposal.message" />
       <div v-if="proposal.diff.added_tasks.length"><h4>新增任务</h4><ul><li v-for="t in proposal.diff.added_tasks" :key="t.task_id">{{ t.title }}</li></ul></div>
       <div v-if="proposal.diff.removed_tasks.length"><h4>移除任务</h4><ul><li v-for="t in proposal.diff.removed_tasks" :key="t.task_id">{{ t.title }}</li></ul></div>
       <div v-if="proposal.diff.difficulty_changes.length"><h4>难度调整</h4><ul><li v-for="c in proposal.diff.difficulty_changes" :key="c.task_id">{{ c.title }}：{{ difficultyLabel(c.before) }} → {{ difficultyLabel(c.after) }}</li></ul></div>

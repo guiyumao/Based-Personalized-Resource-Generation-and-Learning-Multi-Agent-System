@@ -17,6 +17,7 @@ import { useRouter } from 'vue-router'
 import { evaluationApi, resourceApi, serviceEndpoints, userApi, type ApiEnvelope, type LearnerProfileDashboard, type ReportDetail, type ResourceRecommendationItem, type UserProfileRead } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import LearningAtmosphere from '../../components/LearningAtmosphere.vue'
+import LearningContent from '../../components/LearningContent.vue'
 import LearningOverviewPanel from '../../components/LearningOverviewPanel.vue'
 
 type ServiceStatus = { label: string; baseUrl: string; online: boolean; checking: boolean }
@@ -216,7 +217,7 @@ onMounted(() => void refreshDashboard())
           <div class="profile-completion"><div><span>补充资料：已自述 {{ filledProfileDimensions }}/{{ profileDimensionKeys.length }} 维</span><button class="text-link" type="button" @click="router.push('/profile-setup')">{{ filledProfileDimensions ? '继续完善' : '补充资料' }}<el-icon><ArrowRight /></el-icon></button></div><div class="thin-progress"><i :style="{ width: `${profileCompletionPercent}%` }"></i></div></div>
           <div class="profile-dimension-grid">
             <button v-for="item in profileDimensionItems" :key="item.key" type="button" :class="{ filled: item.value }" @click="router.push('/profile-setup')">
-              <span><b>{{ item.label }}</b><em>{{ item.value ? '已记录' : '待完善' }}</em></span><p>{{ item.value || '继续对话后将自动补充' }}</p>
+              <span><b>{{ item.label }}</b><em>{{ item.value ? '已记录' : '待完善' }}</em></span><p><LearningContent :content="item.value" inline empty="继续对话后将自动补充" /></p>
             </button>
           </div>
         </article>
@@ -237,7 +238,7 @@ onMounted(() => void refreshDashboard())
 
         <article class="dashboard-panel suggestion-panel">
           <header><div><span class="section-kicker">AI 建议</span><h2>下一步学什么</h2></div><span class="panel-badge">{{ suggestions.length }} 条</span></header>
-          <ol v-if="suggestions.length"><li v-for="(suggestion, index) in suggestions" :key="suggestion"><span>{{ String(index + 1).padStart(2, '0') }}</span><p>{{ suggestion }}</p></li></ol>
+          <ol v-if="suggestions.length"><li v-for="(suggestion, index) in suggestions" :key="suggestion"><span>{{ String(index + 1).padStart(2, '0') }}</span><LearningContent class="suggestion-text" :content="suggestion" /></li></ol>
           <div v-else class="panel-empty compact"><MagicStick /><strong>暂无个性化建议</strong><span>产生更多学习记录后系统会更新</span></div>
         </article>
 
@@ -249,7 +250,7 @@ onMounted(() => void refreshDashboard())
 
         <article class="dashboard-panel resources-panel">
           <header><div><span class="section-kicker">学习资源</span><h2>为你推荐</h2></div><button class="text-link" type="button" @click="router.push('/student/resources')">全部资源<el-icon><ArrowRight /></el-icon></button></header>
-          <div v-if="resources.length" class="resource-list"><button v-for="resource in resources" :key="resource.id" type="button" @click="openRecommendedResource(resource)"><span><Collection /></span><div><strong>{{ resource.title }}</strong><p>{{ resource.recommendation_reason }} · {{ resource.view_count }} 次查看</p></div><ArrowRight /></button></div>
+          <div v-if="resources.length" class="resource-list"><button v-for="resource in resources" :key="resource.id" type="button" @click="openRecommendedResource(resource)"><span><Collection /></span><div><strong>{{ resource.title }}</strong><p><LearningContent :content="resource.recommendation_reason" inline empty="推荐池正在积累" /> · {{ resource.view_count }} 次查看</p></div><ArrowRight /></button></div>
           <div v-else class="panel-empty compact"><Collection /><strong>推荐池正在积累</strong><span>保存或生成资源后会结合学习行为自动排序</span></div>
         </article>
       </section>
@@ -299,7 +300,7 @@ onMounted(() => void refreshDashboard())
 .data-source,.panel-badge { padding:5px 8px; border-radius:7px; color:var(--accent); background:var(--accent-soft); font-size:10px; font-weight:700; }
 .capability-bars { display:grid; gap:15px; }.capability-row > div:first-child { display:flex; justify-content:space-between; gap:10px; font-size:12px; }.capability-row span { color:var(--muted); }.capability-row b { color:var(--text); font-variant-numeric:tabular-nums; }
 .activity-list { display:grid; }.activity-list > div { display:grid; grid-template-columns:10px 1fr; gap:12px; padding:13px 0; border-bottom:1px solid var(--line); }.activity-list > div:last-child { border-bottom:0; }.activity-list i { width:9px; height:9px; margin-top:5px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 4px var(--accent-soft); }.activity-list [data-tone='success'] i { background:var(--green); box-shadow:0 0 0 4px color-mix(in srgb,var(--green) 10%,transparent); }.activity-list strong { font-size:13px; }.activity-list p { margin:3px 0 0; color:var(--muted); font-size:11px; line-height:1.5; }
-.suggestion-panel ol { display:grid; gap:10px; margin:0; padding:0; list-style:none; }.suggestion-panel li { display:grid; grid-template-columns:28px 1fr; gap:10px; align-items:start; padding:11px; border-radius:11px; background:var(--surface-soft); }.suggestion-panel li span { color:var(--accent); font-size:11px; font-weight:800; }.suggestion-panel li p { margin:0; color:var(--text); font-size:12px; line-height:1.6; }
+.suggestion-panel ol { display:grid; gap:10px; margin:0; padding:0; list-style:none; }.suggestion-panel li { display:grid; grid-template-columns:28px 1fr; gap:10px; align-items:start; padding:11px; border-radius:11px; background:var(--surface-soft); }.suggestion-panel li span { color:var(--accent); font-size:11px; font-weight:800; }.suggestion-panel li p { margin:0; color:var(--text); font-size:12px; line-height:1.7; }.suggestion-panel li .suggestion-text { min-width:0; color:var(--text); font-size:12px; line-height:1.7; }
 .mistake-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }.mistake-grid > div { padding:14px; border-radius:11px; background:var(--surface-soft); }.mistake-grid span { display:block; color:var(--muted); font-size:11px; }.mistake-grid strong { display:block; margin-top:5px; color:var(--text); font-size:25px; }.mistake-grid [data-tone='danger'] strong { color:var(--red); }.mistake-grid [data-tone='success'] strong { color:var(--green); }.mistake-grid [data-tone='warning'] strong { color:var(--warning); }
 .resource-list { display:grid; gap:8px; }.resource-list button { display:grid; grid-template-columns:34px 1fr 15px; gap:10px; align-items:center; padding:10px; border:1px solid transparent; border-radius:11px; color:var(--text); background:var(--surface-soft); text-align:left; cursor:pointer; }.resource-list button:hover { border-color:var(--line); background:var(--accent-soft); }.resource-list button > span { width:34px; height:34px; display:grid; place-items:center; border-radius:9px; color:var(--accent); background:var(--panel); }.resource-list strong { display:block; overflow:hidden; font-size:12px; text-overflow:ellipsis; white-space:nowrap; }.resource-list p { margin:2px 0 0; color:var(--muted); font-size:10px; }
 .panel-empty { min-height:210px; display:grid; place-items:center; align-content:center; gap:6px; color:var(--muted); text-align:center; }.panel-empty > svg { width:30px; color:var(--accent); }.panel-empty strong { color:var(--text); font-size:13px; }.panel-empty span { font-size:11px; }.panel-empty.compact { min-height:130px; }

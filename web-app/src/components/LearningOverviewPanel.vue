@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { evaluationApi } from '../api/http'
+import LearningContent from './LearningContent.vue'
 
 type Task = { task_id: string; title: string; knowledge_point: string; task_type: string }
 type Plan = { path_id: number; subject: string; knowledge_point: string; completed_tasks: number; total_tasks: number; completion_percent: number | null; pending_tasks: Task[] }
@@ -69,7 +70,7 @@ onMounted(refresh)
           <h3>需要加强的知识点</h3>
           <div v-if="!overview.weak_points.length" class="overview-empty">暂无薄弱项证据，完成练习后更新。</div>
           <div v-for="point in overview.weak_points" :key="point.knowledge_point_id" class="overview-weak"><strong>{{ point.name }}</strong><span>{{ point.accuracy_percent }}% · {{ point.graded_answers }} 次判分{{ point.confidence === 'low' ? ' · 样本不足' : '' }}</span><el-button size="small" @click="router.push({ path: '/student/exercise', query: { topic: point.name } })">补强练习</el-button></div>
-          <ul class="overview-suggestions"><li v-for="suggestion in overview.suggestions" :key="suggestion">{{ suggestion }}</li></ul>
+          <ul class="overview-suggestions"><li v-for="suggestion in overview.suggestions" :key="suggestion"><LearningContent :content="suggestion" /></li></ul>
           <nav aria-label="学习快捷入口"><el-button @click="router.push('/student/report')">学情报告</el-button><el-button @click="router.push('/student/mistakes')">错题本</el-button><el-button @click="router.push('/student/knowledge-graph')">知识图谱</el-button></nav>
         </article>
       </div>

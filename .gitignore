@@ -67,3 +67,12 @@ web-app/.env.sakurafrp
 web-app/coverage
 .vitest
 *.tsbuildinfo
+/data/homework-files/
+
+# --- Codex 远程会话附件（本机临时投递物，非源码） ---
+/.codex-remote-attachments/
+
+# Local agent notes and generated delivery/runtime files.
+/.workbuddy/memory/
+/output/
+/knowledge_base/corpus/auto_*/

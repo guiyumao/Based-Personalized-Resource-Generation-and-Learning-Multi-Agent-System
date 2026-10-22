@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { evaluationApi, type ApiEnvelope, type ExerciseFavoriteItem, type ExerciseFavoriteNotebook } from '../../api'
+import LearningContent from '../../components/LearningContent.vue'
 import { useAuthStore } from '../../stores/auth'
 
 const authStore = useAuthStore()
@@ -90,9 +91,9 @@ onMounted(() => { void loadFavorites() })
           </div>
           <time>{{ formatDate(item.created_at) }}</time>
         </div>
-        <h3>{{ item.prompt }}</h3>
+        <LearningContent class="favorite-prompt" :content="item.prompt" empty="(无题干内容)" />
         <div v-if="item.options.length" class="option-list">
-          <div v-for="option in item.options" :key="option" class="option-item">{{ option }}</div>
+          <div v-for="option in item.options" :key="option" class="option-item"><LearningContent :content="option" inline /></div>
         </div>
         <div class="card-actions">
           <button type="button" class="answer-button" @click="toggleAnswer(item.exercise_id)">
@@ -103,8 +104,8 @@ onMounted(() => { void loadFavorites() })
           </button>
         </div>
         <div v-if="revealedIds.has(item.exercise_id)" class="answer-panel">
-          <div><strong>参考答案</strong><p>{{ item.answer || '暂无答案' }}</p></div>
-          <div><strong>题目解析</strong><p>{{ item.analysis || '暂无解析' }}</p></div>
+          <div><strong>参考答案</strong><LearningContent class="answer-text" :content="item.answer" empty="暂无答案" /></div>
+          <div><strong>题目解析</strong><LearningContent class="answer-text" :content="item.analysis" empty="暂无解析" /></div>
         </div>
       </article>
     </section>
@@ -129,7 +130,7 @@ h2 { margin:0; color:var(--text); font-size:30px; letter-spacing:-.04em; }
 .tag-list { display:flex; flex-wrap:wrap; gap:6px; min-width:0; }
 .tag-list span { padding:4px 8px; border-radius:999px; color:var(--muted); background:var(--surface-soft); font-size:11px; }
 time { margin-left:auto; color:var(--muted); font-size:11px; white-space:nowrap; }
-h3 { margin:18px 0 14px; color:var(--text); font-size:17px; line-height:1.7; }
+h3, .favorite-prompt { margin:18px 0 14px; color:var(--text); font-size:17px; line-height:1.7; }
 .option-list { display:grid; gap:8px; }
 .option-item { padding:10px 12px; border:1px solid var(--line); border-radius:11px; color:var(--text); background:var(--bg); font-size:13px; }
 .card-actions { display:flex; align-items:center; gap:10px; margin-top:18px; }
@@ -139,7 +140,7 @@ h3 { margin:18px 0 14px; color:var(--text); font-size:17px; line-height:1.7; }
 .remove-button:hover { color:var(--red); border-color:color-mix(in srgb,var(--red) 42%,var(--line)); }
 .answer-panel { display:grid; gap:10px; margin-top:16px; padding:14px; border-radius:14px; background:var(--surface-soft); }
 .answer-panel strong { color:var(--text); font-size:12px; }
-.answer-panel p { margin:5px 0 0; color:var(--muted); font-size:13px; line-height:1.65; white-space:pre-wrap; }
+.answer-panel p, .answer-panel .answer-text { margin:5px 0 0; color:var(--muted); font-size:13px; line-height:1.65; }
 .state-card { padding:64px 24px; text-align:center; color:var(--muted); }
 .empty-card strong { display:block; margin-top:12px; color:var(--text); font-size:17px; }
 .empty-card p { margin:8px 0 0; font-size:13px; }

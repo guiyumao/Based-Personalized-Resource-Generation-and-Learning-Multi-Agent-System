@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import LearningContent from '../../components/LearningContent.vue'
 import { useAuthStore } from '../../stores/auth'
 import {
   evaluationApi,
@@ -362,7 +363,7 @@ onMounted(() => { refreshPage() })
             <div style="text-align:center"><div style="font-size:28px;font-weight:700;color:var(--accent)">{{ stageReport.evidence.accuracy }}%</div><div style="font-size:11px;color:var(--muted)">正确率</div></div>
             <div style="text-align:center"><div style="font-size:28px;font-weight:700;color:var(--accent)">{{ stageReport.evidence.total_answers }}</div><div style="font-size:11px;color:var(--muted)">总题数</div></div>
           </div>
-          <p style="font-size:14px;color:var(--muted);line-height:1.7;margin-bottom:12px">{{ stageReport.summary }}</p>
+          <p style="font-size:14px;color:var(--muted);line-height:1.7;margin-bottom:12px"><LearningContent :content="stageReport.summary" /></p>
           <div v-if="stageReport.strengths?.length"><span v-for="s in stageReport.strengths" :key="s" style="display:inline-block;padding:4px 10px;margin:2px;border-radius:999px;font-size:11px;background:color-mix(in srgb,var(--green) 8%,transparent);color:var(--green)">{{ s }}</span></div>
           <div v-if="stageReport.weaknesses?.length" style="margin-top:8px"><span v-for="w in stageReport.weaknesses" :key="w" style="display:inline-block;padding:4px 10px;margin:2px;border-radius:999px;font-size:11px;background:color-mix(in srgb,var(--red) 8%,transparent);color:var(--red)">{{ w }}</span></div>
           <div style="margin-top:18px;font-size:12px;color:var(--accent);font-weight:700;text-align:left">点击查看阶段报告详情</div>
@@ -383,7 +384,7 @@ onMounted(() => { refreshPage() })
             <div style="text-align:center"><div style="font-size:28px;font-weight:700;color:var(--accent)">{{ comprehensiveReport.evidence.accuracy }}%</div><div style="font-size:11px;color:var(--muted)">综合正确率</div></div>
             <div style="text-align:center"><div style="font-size:28px;font-weight:700;color:var(--red)">{{ comprehensiveReport.evidence.mistake_count }}</div><div style="font-size:11px;color:var(--muted)">错题数</div></div>
           </div>
-          <p style="font-size:14px;color:var(--muted);line-height:1.7;margin-bottom:12px">{{ comprehensiveReport.summary }}</p>
+          <p style="font-size:14px;color:var(--muted);line-height:1.7;margin-bottom:12px"><LearningContent :content="comprehensiveReport.summary" /></p>
           <div v-if="comprehensiveReport.next_actions?.length">
             <span v-for="a in comprehensiveReport.next_actions" :key="a" style="display:inline-block;padding:4px 10px;margin:2px;border-radius:999px;font-size:11px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent)">{{ a }}</span>
           </div>
@@ -425,7 +426,7 @@ onMounted(() => { refreshPage() })
         </div>
       </div>
 
-      <p class="report-modal-summary">{{ activeReport.summary }}</p>
+      <p class="report-modal-summary"><LearningContent :content="activeReport.summary" /></p>
 
       <h4 class="report-detail-title">{{ detailMetricTitle }}</h4>
       <section class="report-metrics">
@@ -487,7 +488,7 @@ onMounted(() => { refreshPage() })
           <div class="detail-stack">
             <div class="insight-summary">
               <strong>{{ personalizedSummaryTitle }}</strong>
-              <p>{{ personalizedSummary }}</p>
+              <p><LearningContent :content="personalizedSummary" /></p>
             </div>
 
             <div v-if="personalizedInsights.length" class="insight-grid">
@@ -498,7 +499,7 @@ onMounted(() => { refreshPage() })
                 :data-tone="item.tone"
               >
                 <span class="insight-title">{{ item.title }}</span>
-                <p>{{ item.text }}</p>
+                <p><LearningContent :content="item.text" /></p>
               </article>
             </div>
           </div>
@@ -522,7 +523,7 @@ onMounted(() => { refreshPage() })
                   <span>错题 {{ index + 1 }}</span>
                   <strong>{{ item.knowledge_point }}</strong>
                 </div>
-                <p class="mistake-prompt">{{ item.prompt || '题目内容暂无' }}</p>
+                <LearningContent class="mistake-prompt" :content="item.prompt" empty="题目内容暂无" />
                 <div class="mistake-answer-grid">
                   <div>
                     <span>题型</span>
@@ -530,15 +531,15 @@ onMounted(() => { refreshPage() })
                   </div>
                   <div>
                     <span>作答</span>
-                    <strong>{{ item.user_answer || '未作答' }}</strong>
+                    <strong><LearningContent :content="item.user_answer" empty="未作答" inline /></strong>
                   </div>
                   <div>
                     <span>正确答案</span>
-                    <strong>{{ item.correct_answer }}</strong>
+                    <strong><LearningContent :content="item.correct_answer" inline /></strong>
                   </div>
                 </div>
-                <p v-if="item.analysis" class="mistake-analysis">解析：{{ item.analysis }}</p>
-                <p v-if="item.suggested_action" class="mistake-analysis">建议：{{ item.suggested_action }}</p>
+                <div v-if="item.analysis" class="mistake-analysis"><span>解析：</span><LearningContent :content="item.analysis" /></div>
+                <div v-if="item.suggested_action" class="mistake-analysis"><span>建议：</span><LearningContent :content="item.suggested_action" /></div>
               </article>
             </div>
 
@@ -557,9 +558,9 @@ onMounted(() => { refreshPage() })
             <div v-if="activeReport.evidence.latest_mistake" class="mistake-box">
               <div><span>最近错题</span><strong>{{ activeReport.evidence.latest_mistake.knowledge_point }}</strong></div>
               <p>题型：{{ activeReport.evidence.latest_mistake.question_type }}</p>
-              <p>作答：{{ activeReport.evidence.latest_mistake.user_answer }}</p>
-              <p>正确：{{ activeReport.evidence.latest_mistake.correct_answer }}</p>
-              <p>解析：{{ activeReport.evidence.latest_mistake.analysis }}</p>
+              <p>作答：<LearningContent :content="activeReport.evidence.latest_mistake.user_answer" inline /></p>
+              <p>正确：<LearningContent :content="activeReport.evidence.latest_mistake.correct_answer" inline /></p>
+              <div class="mistake-box-line"><span>解析：</span><LearningContent :content="activeReport.evidence.latest_mistake.analysis" /></div>
             </div>
           </div>
         </section>
@@ -805,7 +806,8 @@ onMounted(() => { refreshPage() })
 .report-metrics span,
 .detail-row span,
 .empty-line,
-.mistake-box p {
+.mistake-box p,
+.mistake-box .mistake-box-line {
   color: var(--muted);
 }
 

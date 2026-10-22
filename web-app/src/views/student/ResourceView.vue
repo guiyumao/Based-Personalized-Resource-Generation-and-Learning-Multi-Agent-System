@@ -29,6 +29,7 @@ import {
 } from '../../api'
 import CoursewareReader from '../../components/CoursewareReader.vue'
 import MindmapEditor from '../../components/MindmapEditor.vue'
+import LearningContent from '../../components/LearningContent.vue'
 import LearningAtmosphere from '../../components/LearningAtmosphere.vue'
 import { useAuthStore } from '../../stores/auth'
 import { renderLearningMarkdown } from '../../utils/renderLearningMarkdown'
@@ -1081,7 +1082,7 @@ async function deleteAllImportedResources() {
               <span>{{ article.level }}</span>
             </span>
             <strong>{{ article.title }}</strong>
-            <span class="article-summary">{{ article.summary }}</span>
+            <LearningContent class="article-summary" tag="span" :content="article.summary" :clamp-lines="2" />
             <span class="article-cta">查看课件 <ArrowRight aria-hidden="true" /></span>
           </button>
           <div v-if="!articles.length" class="empty-state">暂无匹配的大学知识库内容。</div>
@@ -1097,7 +1098,7 @@ async function deleteAllImportedResources() {
                 <span>{{ selectedArticle.level }}</span>
               </div>
               <h2>{{ selectedArticle.title }}</h2>
-              <p>{{ selectedArticle.summary }}</p>
+              <p><LearningContent :content="selectedArticle.summary" /></p>
             </div>
             <span class="resource-count">{{ selectedArticle.external_resources.length }} 项关联资源</span>
           </div>
@@ -1116,7 +1117,7 @@ async function deleteAllImportedResources() {
                   <span>{{ kindLabel[resource.kind] ?? resource.kind }}</span>
                 </div>
                 <h4>{{ resource.title }}</h4>
-                <p>{{ resource.notes }}</p>
+                <p><LearningContent :content="resource.notes" /></p>
                 <div class="download-actions">
                   <a :href="resource.url" target="_blank" rel="noreferrer"><Link aria-hidden="true" />打开原站</a>
                   <button type="button" :disabled="importingUrl === resource.url" @click="importResource(resource)">
@@ -1187,7 +1188,7 @@ async function deleteAllImportedResources() {
         >
           <span class="recommendation-index">{{ String(index + 1).padStart(2, '0') }}</span>
           <span class="recommendation-copy">
-            <small>{{ item.recommendation_reason }} · {{ recommendationStrategyLabel[item.recommendation_strategy] || '个性化排序' }}</small>
+            <small><LearningContent :content="item.recommendation_reason" inline /> · {{ recommendationStrategyLabel[item.recommendation_strategy] || '个性化排序' }}</small>
             <strong>{{ item.title }}</strong>
             <span>{{ displayKnowledgePoint(item) }} · {{ item.format }}</span>
           </span>
@@ -1280,7 +1281,7 @@ async function deleteAllImportedResources() {
           <div v-if="selectedResource.source_kind">资源类型：{{ kindLabel[selectedResource.source_kind] ?? selectedResource.source_kind }}</div>
           <div v-if="selectedResource.file_name">文件名：{{ selectedResource.file_name }}</div>
           <a v-if="selectedResource.external_url" :href="selectedResource.external_url" target="_blank" rel="noreferrer" @click="recordResourceInteraction(selectedResource, 'open_source')">查看原始来源</a>
-          <div v-if="selectedResource.notes">{{ selectedResource.notes }}</div>
+          <div v-if="selectedResource.notes"><LearningContent :content="selectedResource.notes" /></div>
         </div>
 
         <section
@@ -1343,7 +1344,7 @@ async function deleteAllImportedResources() {
                   :style="{ marginLeft: `${Math.min(node.depth, 6) * 16}px` }"
                 >
                   <strong>{{ node.label }}</strong>
-                  <span v-if="node.detail" class="mind-map-detail">{{ node.detail }}</span>
+                  <span v-if="node.detail" class="mind-map-detail"><LearningContent :content="node.detail" inline /></span>
                 </li>
               </ol>
               <p v-else class="structured-empty">思维导图没有可用节点。</p>
@@ -1354,7 +1355,7 @@ async function deleteAllImportedResources() {
             <div v-else-if="selectedResource.type === 'code_case'" class="structured-body" data-testid="structured-code-case">
               <dl class="structured-fields">
                 <template v-if="codeCase?.language"><dt>语言</dt><dd>{{ codeCase.language }}</dd></template>
-                <template v-if="codeCase?.objective"><dt>目标</dt><dd>{{ codeCase.objective }}</dd></template>
+                <template v-if="codeCase?.objective"><dt>目标</dt><dd><LearningContent :content="codeCase.objective" /></dd></template>
                 <template v-if="codeCase?.prerequisites?.length"><dt>前置知识</dt><dd>{{ codeCase.prerequisites.join('、') }}</dd></template>
               </dl>
               <div v-if="codeCase?.example_code" class="code-block">
@@ -1387,7 +1388,7 @@ async function deleteAllImportedResources() {
                     <strong>{{ chapter.title || `第 ${index + 1} 章` }}</strong>
                     <span>{{ formatSeconds(Number(chapter.duration_seconds ?? 0)) }}</span>
                   </div>
-                  <p class="chapter-narration">{{ chapter.narration }}</p>
+                  <p class="chapter-narration"><LearningContent :content="chapter.narration" /></p>
                   <p v-if="chapter.visual" class="chapter-meta">画面：{{ chapter.visual }}</p>
                   <p v-if="chapter.on_screen_text" class="chapter-meta">屏幕文字：{{ chapter.on_screen_text }}</p>
                 </li>

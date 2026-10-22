@@ -767,18 +767,142 @@ export type TranscriptAnalysis = {
 export type TranscriptHistoryItem = { id: number; import_id: number; file_name: string; scope: string; status: string; data_quality: string; created_at: string; summary: string }
 
 export type TeacherClassItem = {
+  invite_code?: string | null
+  status: string
+  assignment_count: number
   id: number
   name: string
   subject: string
   teacher_name: string
   course_id?: number | null
   student_count: number
+  join_mode: 'invite' | 'open'
+  description: string
+  objective: string
+  syllabus: string
+  semester: string
+  is_public: boolean
+  capacity: number
 }
 
 export type TeacherClassCreatePayload = {
   name: string
   subject: string
   teacher_name: string
+  join_mode?: 'invite' | 'open'
+  description?: string
+  objective?: string
+  syllabus?: string
+  semester?: string
+  is_public?: boolean
+  capacity?: number
+}
+
+export type PlazaClassItem = {
+  invite_matched?: boolean
+  id: number
+  name: string
+  subject: string
+  teacher_name: string
+  course_title: string
+  course_description: string
+  description: string
+  objective: string
+  syllabus: string
+  semester: string
+  student_count: number
+  capacity: number
+  is_public: boolean
+  status: string
+  join_mode: 'invite' | 'open'
+  joined: boolean
+  open_task_count: number
+  latest_scope_title: string
+}
+
+export type ClassSessionItem = {
+  id: number
+  class_id: number
+  class_name: string
+  teacher_name: string
+  topic: string
+  weekday: number
+  start_time: string
+  end_time: string
+  week_start: string
+  week_end: string
+  location: string
+  mode: 'offline' | 'online'
+  status: string
+  created_at: string
+}
+
+export type ClassSessionPayload = {
+  topic: string
+  weekday: number
+  start_time: string
+  end_time: string
+  week_start: string
+  week_end: string
+  location: string
+  mode: 'offline' | 'online'
+}
+
+export type ScheduleExceptionItem = {
+  id: number
+  session_id: number
+  class_id: number
+  class_name: string
+  date: string
+  kind: 'cancel' | 'reschedule' | 'makeup'
+  new_date: string | null
+  new_start_time: string | null
+  new_end_time: string | null
+  location: string | null
+  reason: string
+  created_at: string
+}
+
+export type TeacherSchedule = {
+  class_id: number
+  class_name: string
+  sessions: ClassSessionItem[]
+  exceptions: ScheduleExceptionItem[]
+}
+
+export type StudentScheduleEntry = {
+  date: string
+  weekday: number
+  start_time: string
+  end_time: string
+  topic: string
+  location: string
+  mode: 'offline' | 'online'
+  class_id: number
+  class_name: string
+  teacher_name: string
+  status: string
+  session_id: number
+  personal_id?: number | null
+  source?: 'classroom' | 'personal'
+  source_date?: string | null
+}
+
+export type PersonalSchedule = ClassSessionPayload & {
+  id?: number
+  class_id: number | null
+  source_session_id: number | null
+  source_date: string | null
+  hidden: boolean
+}
+
+export type StudentSchedule = {
+  week_start: string
+  week_end: string
+  today: string
+  entries: StudentScheduleEntry[]
+  classrooms: { class_id: number; class_name: string; teacher_name: string; scheduled: boolean }[]
+  personal: PersonalSchedule[]
 }
 
 export type HomeworkAssignPayload = {
@@ -788,14 +912,54 @@ export type HomeworkAssignPayload = {
   due_at?: string | null
 }
 
+export type HomeworkFileItem = {
+  id: number
+  file_name: string
+  content_type: string
+  size_bytes: number
+  is_pending?: boolean
+}
+
 export type AssignmentItem = HomeworkAssignPayload & {
+  target_student_id?: number | null
+  practice_questions?: ReinforcementQuestion[]
+  class_name: string
+  student_count: number
+  pending_count: number
+  reviewed_count: number
+  my_submission?: AssignmentSubmissionItem | null
+  pending_attachments?: HomeworkFileItem[]
   id: number
   status: string
   created_at: string
   submission_count: number
 }
 
+export type ReinforcementQuestion = {
+  knowledge_point: string
+  question_type: 'choice' | 'short_answer'
+  prompt: string
+  options: string[]
+  answer?: string
+  analysis?: string
+  evidence_ids?: number[]
+}
+
+export type CourseResourceDelivery = {
+  id: number
+  class_id: number
+  student_user_id: number | null
+  title: string
+  content: string
+  knowledge_points: string[]
+  resource_id: number | null
+  created_at: string
+}
+
 export type AssignmentSubmissionItem = {
+  practice_result?: ReinforcementAttempt | null
+  attachments?: HomeworkFileItem[]
+  history?: { attachments?: HomeworkFileItem[]; content: string; status: string; score: number | null; teacher_comment: string; recorded_at: string }[]
   id: number
   assignment_id: number
   student_user_id: number
@@ -807,6 +971,19 @@ export type AssignmentSubmissionItem = {
   score?: number | null
   teacher_comment: string
   reviewed_at?: string | null
+}
+
+export type ReinforcementAttempt = {
+  id: number
+  draft_id: number
+  submission_id: number
+  student_user_id: number
+  status: string
+  analysis: string
+  recommendations: string[]
+  model_name: string
+  error: string
+  results: { question_index: number; knowledge_point: string; prompt: string; student_answer: string; reference_answer: string; analysis: string; is_correct: boolean | null; score: number | null; status: string; comment?: string }[]
 }
 
 export type DiscussionReplyItem = {
@@ -867,6 +1044,9 @@ export type KnowledgePointMistakeStat = {
 }
 
 export type TeacherTeachingAnalytics = {
+  homework_submissions: number
+  homework_reviewed: number
+  homework_average_score: number | null
   class_id: number
   student_count: number
   answered_students: number
@@ -880,7 +1060,7 @@ export type TeacherTeachingAnalytics = {
 export type StudentInsight = {
   user_id: number
   student_name: string
-  mastery: number
+  mastery: number | null
   recent_focus: string
   mistake_count: number
   report_summary: string
@@ -909,7 +1089,7 @@ export type TeacherReportDetail = {
 export type StudentLearningDetail = {
   user_id: number
   student_name: string
-  mastery: number
+  mastery: number | null
   recent_focus: string
   mistake_count: number
   report_summary: string
@@ -1010,4 +1190,254 @@ export type AuditLogItem = {
   level: string
   event: string
   message: string
+}
+
+// ── 平台学习打卡、课堂任务与课堂签到 ──
+export type DailyCheckinItem = {
+  id: number
+  checkin_date: string
+  checkin_at: string
+  goal: string
+  reflection: string
+}
+
+export type PlatformCheckinStatus = {
+  today: string
+  checked_in: boolean
+  today_checkin: DailyCheckinItem | null
+  current_streak: number
+  total_days: number
+  week_days: number
+  week_goal: number
+  month_days: number
+}
+
+export type PlatformCalendarDay = {
+  date: string
+  checked_in: boolean
+  goal: string
+  reflection: string
+}
+
+export type PlatformCheckinCalendar = {
+  month: string
+  days: PlatformCalendarDay[]
+  streak: number
+  total_days: number
+}
+
+export type CheckinPeriodItem = {
+  period_key: string
+  due_at: string
+  state: string
+}
+
+export type CheckinSubmissionItem = {
+  id: number
+  task_id: number
+  task_title: string
+  class_name: string
+  student_user_id: number
+  student_name: string
+  period_key: string
+  period_due_at: string
+  content: string
+  attachment_ids: number[]
+  status: 'submitted' | 'approved' | 'returned'
+  submitted_at: string
+  reviewed_at: string | null
+  review_comment: string
+  score: number | null
+  version: number
+  late: boolean
+  history: Array<Record<string, unknown>>
+}
+
+export type CheckinTaskItem = {
+  id: number
+  class_id: number
+  class_name: string
+  course_id: number | null
+  title: string
+  goal: string
+  description: string
+  frequency: 'once' | 'daily' | 'weekly'
+  weekly_days: number[]
+  start_at: string
+  end_at: string
+  due_time: string
+  allow_late: boolean
+  review_mode: 'auto' | 'manual'
+  require_attachment: boolean
+  knowledge_points: string[]
+  status: 'draft' | 'published' | 'closed' | 'cancelled'
+  created_at: string
+  published_at: string | null
+  closed_at: string | null
+  student_count: number
+  submitted_count: number
+  approved_count: number
+  pending_review_count: number
+  expected_count: number
+  completion_rate: number | null
+  today_period: string | null
+  my_state: string | null
+  can_submit: boolean
+  my_submission: CheckinSubmissionItem | null
+}
+
+export type CheckinTaskDetail = CheckinTaskItem & {
+  teacher_name: string
+  periods: CheckinPeriodItem[]
+}
+
+export type CheckinTaskCreatePayload = {
+  class_id: number
+  title: string
+  goal?: string
+  description?: string
+  frequency: 'once' | 'daily' | 'weekly'
+  weekly_days: number[]
+  start_at: string
+  end_at: string
+  due_time: string
+  allow_late: boolean
+  review_mode: 'auto' | 'manual'
+  require_attachment: boolean
+  knowledge_points: string[]
+}
+
+export type CheckinSubmitPayload = {
+  content: string
+  attachment_ids?: number[]
+  period_key?: string | null
+}
+
+export type CheckinReviewPayload = {
+  verdict: 'approve' | 'return'
+  comment?: string
+  score?: number | null
+}
+
+export type StudentTaskSummary = {
+  task_id: number
+  title: string
+  class_name: string
+  task_type: string
+  period_key: string | null
+  due_at: string | null
+  state: string
+  can_submit: boolean
+}
+
+export type AttendanceRecordBrief = {
+  id: number
+  status: string
+  checked_in_at: string | null
+  source: string
+  note: string
+}
+
+export type AttendanceSessionItem = {
+  id: number
+  class_id: number
+  class_name: string
+  title: string
+  start_at: string
+  end_at: string
+  late_after_at: string | null
+  status: 'open' | 'closed'
+  code: string | null
+  token: string | null
+  my_record: AttendanceRecordBrief | null
+  checked_in_count: number
+  late_count: number
+  leave_count: number
+  absent_count: number
+  missing_count: number
+  student_count: number
+}
+
+export type AttendanceLiveRow = {
+  student_user_id: number
+  student_name: string
+  status: string
+  checked_in_at: string | null
+  source: string
+  note: string
+  record_id: number | null
+}
+
+export type AttendanceLive = {
+  session: AttendanceSessionItem
+  rows: AttendanceLiveRow[]
+}
+
+export type CheckinHome = {
+  today: string
+  due_today: number
+  completed_today: number
+  current_streak: number
+  total_days: number
+  week_completion_rate: number | null
+  week_expected: number
+  week_approved: number
+  pending_tasks: StudentTaskSummary[]
+  upcoming_tasks: StudentTaskSummary[]
+  available_attendance: AttendanceSessionItem[]
+  latest_feedback: CheckinSubmissionItem[]
+  recent_checkins: DailyCheckinItem[]
+  today_checked_in: boolean
+}
+
+export type CheckinTaskCompletionRow = {
+  student_user_id: number
+  student_name: string
+  state: string
+  submitted_at: string | null
+  review_comment: string
+  score: number | null
+  submission_id: number | null
+  content: string
+  attachment_ids: number[]
+  version: number
+}
+
+export type CheckinTaskCompletion = {
+  task: CheckinTaskItem
+  period_key: string
+  periods: CheckinPeriodItem[]
+  rows: CheckinTaskCompletionRow[]
+}
+
+export type ClassCheckinStat = {
+  class_id: number
+  class_name: string
+  student_count: number
+  task_completion_rate: number | null
+  attendance_rate: number | null
+  pending_review: number
+  low_participation: number
+}
+
+export type TeacherCheckinOverview = {
+  class_count: number
+  active_task_count: number
+  pending_review_count: number
+  today_attendance_count: number
+  overdue_student_count: number
+  classes: ClassCheckinStat[]
+  trend: Array<{ date: string; approved: number; submitted: number; attendance: number }>
+  recent_tasks: CheckinTaskItem[]
+}
+
+export type AdminCheckinOverview = {
+  task_count: number
+  published_task_count: number
+  submission_count: number
+  pending_review_count: number
+  attendance_session_count: number
+  attendance_record_count: number
+  self_checkin_count: number
+  recent_audits: Array<Record<string, unknown>>
 }

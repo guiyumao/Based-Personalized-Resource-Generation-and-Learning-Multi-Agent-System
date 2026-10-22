@@ -6,6 +6,7 @@ import { useAuthStore } from '../../stores/auth'
 import { agentApi, evaluationApi, type ApiEnvelope, type ExerciseFavoriteNotebook, type ExerciseGenerationPayload, type ExerciseGenerationResponse, type ExerciseItem, type LearningPathResponse, type MistakeNotebook, type PracticeFeedback, type PracticeSubmissionPayload } from '../../api'
 import { postContentWithTimeout } from '../../utils/viewHelpers'
 import { renderLearningMarkdown } from '../../utils/renderLearningMarkdown'
+import LearningContent from '../../components/LearningContent.vue'
 import {
   buildPracticeSessionStorageKey,
   COURSEWARE_STORAGE_KEY,
@@ -208,7 +209,7 @@ function loadStoredPracticeSession() {
 
     exerciseSet.value = stored.exerciseSet
     exerciseForm.knowledge_point = stored.exerciseSet.knowledge_point
-    exerciseForm.exercise_count = clampExerciseCount(stored.exerciseSet.exercises.length)
+    if (window.localStorage.getItem(EXERCISE_COUNT_STORAGE_KEY) === null) exerciseForm.exercise_count = clampExerciseCount(stored.exerciseSet.exercises.length)
     currentIdx.value = Math.min(Math.max(stored.currentIdx ?? 0, 0), stored.exerciseSet.exercises.length - 1)
     Object.assign(answerDrafts, stored.answerDrafts ?? {})
     Object.assign(submissionRequestIds, stored.submissionRequestIds ?? {})
@@ -243,7 +244,7 @@ function loadStoredExerciseSet() {
     ) {
       window.localStorage.removeItem(PRACTICE_SESSION_STORAGE_KEY)
       exerciseSet.value = stored.exerciseSet
-      exerciseForm.exercise_count = clampExerciseCount(stored.exerciseSet.exercises.length)
+      if (window.localStorage.getItem(EXERCISE_COUNT_STORAGE_KEY) === null) exerciseForm.exercise_count = clampExerciseCount(stored.exerciseSet.exercises.length)
       exerciseForm.knowledge_point = stored.exerciseSet.knowledge_point
       knowledgeSource.value = stored.source === 'assistant' ? '小智生成的练习' : '协同智能体生成的练习'
       persistPracticeSession()
@@ -591,7 +592,7 @@ function prevQuestion() {
     <div v-if="genError" style="padding:16px;border-radius:12px;background:color-mix(in srgb,var(--red) 8%,transparent);color:var(--red);margin-bottom:16px;font-size:14px">{{ genError }}</div>
     <div v-if="submitError" style="padding:16px;border-radius:12px;background:color-mix(in srgb,var(--red) 8%,transparent);color:var(--red);margin-bottom:16px;font-size:14px">{{ submitError }}</div>
 
-    <div v-if="currentExercise" style="display:grid;grid-template-columns:1fr 280px;gap:20px">
+    <div v-if="currentExercise" class="practice-session-layout">
       <div style="padding:28px;border-radius:18px;background:var(--panel);border:1px solid var(--line)">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap">
           <div style="font-size:12px;letter-spacing:.08em;color:var(--accent)">第 {{ currentIdx + 1 }} 题 / 共 {{ totalExercises }} 题 · {{ currentExercise.question_type }} · {{ currentExercise.difficulty }}</div>
@@ -651,10 +652,10 @@ function prevQuestion() {
                 </span>
               </div>
               <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:6px">
-                {{ item.prompt }}
+                <LearningContent :content="item.prompt" empty="(无题干内容)" :clamp-lines="3" />
               </div>
               <div style="font-size:12px;line-height:1.6">
-                <div>你的答案：{{ item.user_answer }}</div>
+                <div>你的答案：<LearningContent :content="item.user_answer" inline empty="(未作答)" /></div>
                 <div v-if="!item.feedback.is_correct">正确答案：<span class="exercise-markdown" v-html="renderLearningMarkdown(item.correct_answer, true)"></span></div>
               </div>
             </article>
@@ -701,6 +702,9 @@ function prevQuestion() {
 .exercise-markdown :deep(pre),
 .exercise-markdown :deep(.learning-math-block) { overflow-x: auto; }
 .exercise-markdown :deep(code) { font-size: .92em; }
+.practice-session-layout { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:20px; }
+.practice-session-layout > div { min-width:0; }
+@media(max-width:900px){.practice-session-layout{grid-template-columns:minmax(0,1fr)}}
 /* 题量选择器：只用主题变量，自动适配 6 套主题（默认/深海/暖金/暗夜/极简/森林） */
 .exercise-count {
   display: inline-flex;

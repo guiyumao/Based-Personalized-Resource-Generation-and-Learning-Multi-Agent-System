@@ -556,17 +556,59 @@ select {
   line-height: 1.7;
 }
 
+/* 教师端空状态：给占位内容一个可见的容器（渐变底 + 虚线强调边 + 纯 CSS 文档图标），
+   避免无数据时整块面板只剩背景色、看起来像页面没渲染。 */
 .teacher-empty-guide {
+  position: relative;
   display: grid;
   gap: 6px;
+  padding: 20px 22px 20px 70px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 32%, var(--line));
+  border-radius: var(--radius-card);
+  background:
+    linear-gradient(135deg, var(--accent-soft), transparent 58%),
+    var(--surface-soft);
+}
+
+.teacher-empty-guide::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  top: 22px;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 48%, var(--line));
+  background-image:
+    linear-gradient(
+      color-mix(in srgb, var(--accent) 55%, transparent),
+      color-mix(in srgb, var(--accent) 55%, transparent)
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--accent) 30%, transparent),
+      color-mix(in srgb, var(--accent) 30%, transparent)
+    );
+  background-size: 14px 1.6px, 9px 1.6px;
+  background-position: center calc(50% - 4px), center calc(50% + 4px);
+  background-repeat: no-repeat;
 }
 
 .teacher-empty-guide strong {
   color: var(--text);
+  font-size: 15px;
 }
 
 .teacher-empty-guide span {
   color: var(--muted);
+}
+
+/* 知识库详情等窄容器里不预留图标位，只保留容器感 */
+.teacher-kb-detail.teacher-empty-guide {
+  padding: 22px;
+}
+
+.teacher-kb-detail.teacher-empty-guide::before {
+  display: none;
 }
 
 .teacher-kb-toolbar {
@@ -2448,3 +2490,145 @@ button:active:not(:disabled) { transform: translateY(1px); }
   .auth-feature-list { display:none; }
   .auth-stage .auth-card { padding:30px 24px; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   全局学习内容格式规范（Markdown + KaTeX）
+   唯一渲染入口：src/components/LearningContent.vue → utils/renderLearningMarkdown。
+   错题本 / 收藏本 / 练习测评 / 课件 / 资源 / 笔记 / 报告等学习正文共用这一套
+   规则，不再各页面各写一份，公式、表格、代码、列表的排版保持一致。
+   ──────────────────────────────────────────────────────────────────────────── */
+.learning-markdown {
+  min-width: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: 1.8;
+  text-align: left;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.learning-markdown > :first-child { margin-top: 0; }
+.learning-markdown > :last-child { margin-bottom: 0; }
+
+.learning-markdown p,
+.learning-markdown ul,
+.learning-markdown ol,
+.learning-markdown dl,
+.learning-markdown blockquote,
+.learning-markdown table,
+.learning-markdown pre,
+.learning-markdown .learning-math-block {
+  margin: 0 0 0.85em;
+}
+
+.learning-markdown ul,
+.learning-markdown ol { padding-left: 1.4em; }
+.learning-markdown li { margin: 0.25em 0; }
+.learning-markdown li > p { margin: 0; }
+
+.learning-markdown strong,
+.learning-markdown b { color: var(--text); font-weight: 700; }
+
+.learning-markdown h1,
+.learning-markdown h2,
+.learning-markdown h3,
+.learning-markdown h4,
+.learning-markdown h5,
+.learning-markdown h6 {
+  margin: 1.05em 0 0.5em;
+  color: var(--text);
+  line-height: 1.4;
+}
+.learning-markdown h1 { font-size: 1.34em; }
+.learning-markdown h2 { font-size: 1.22em; }
+.learning-markdown h3 { font-size: 1.12em; }
+.learning-markdown h4,
+.learning-markdown h5,
+.learning-markdown h6 { font-size: 1em; }
+
+.learning-markdown a {
+  color: var(--accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.learning-markdown a:hover { color: var(--accent); }
+
+.learning-markdown code {
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  font-size: 0.92em;
+}
+.learning-markdown pre {
+  padding: 14px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 6%, var(--panel));
+}
+.learning-markdown pre code {
+  padding: 0;
+  background: none;
+  font-size: 0.92em;
+}
+
+.learning-markdown blockquote {
+  padding: 0.15em 0 0.15em 1em;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--muted);
+}
+
+.learning-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.learning-markdown th,
+.learning-markdown td {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.learning-markdown th {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  font-weight: 700;
+}
+
+.learning-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+.learning-markdown hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* 公式：长公式统一横向滚动，避免撑破卡片或与正文重叠 */
+.learning-markdown .katex { font-size: 1.02em; }
+.learning-markdown .katex-display {
+  margin: 0.6em 0;
+  padding: 2px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.learning-markdown .learning-math-block { overflow-x: auto; }
+
+/* 行内用法（选项、答案、标签）：不产生块级留白 */
+.learning-content.is-inline { display: inline; }
+.learning-content.is-inline .katex-display,
+.learning-content.is-inline .learning-math-block {
+  display: inline-block;
+  margin: 0;
+}
+
+/* 列表预览折叠：按行数截断渲染结果，而不是截断原始公式源码 */
+.learning-content.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.learning-content-empty { color: var(--muted); }

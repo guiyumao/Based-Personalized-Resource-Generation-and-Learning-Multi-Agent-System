@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import NotificationCard from './notifications/NotificationCard.vue'
 import { ArrowDown, Brush, House, MagicStick, Menu, Search, SwitchButton } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { navigationForRole, navigationItemForRoute } from '../config/navigation'
@@ -89,6 +90,7 @@ async function handleLogout() {
         </div>
       </div>
 
+      <NotificationCard :key="authStore.user?.userId" />
       <div class="topbar-popover-wrap">
         <button class="icon-button" type="button" title="切换主题" @click="showThemePicker = !showThemePicker">
           <el-icon><Brush /></el-icon>
@@ -166,4 +168,8 @@ async function handleLogout() {
 
 @media (max-width:900px) { .app-topbar { min-height:68px; padding:10px 16px; } .mobile-menu-button { display:grid; } .topbar-heading p { display:none; } .global-search { width:42px; padding:0; justify-content:center; } .global-search input { position:absolute; width:1px; opacity:0; pointer-events:none; } .global-search.open { width:240px; padding:0 12px; justify-content:flex-start; } .global-search.open input { position:static; width:100%; opacity:1; pointer-events:auto; } .search-popover { width:min(360px,calc(100vw - 32px)); } .user-copy,.user-arrow { display:none; } }
 @media (max-width:560px) { .breadcrumb-line span,.breadcrumb-line b { display:none; } .topbar-actions { gap:6px; } .global-search.open { position:absolute; left:16px; right:16px; top:13px; width:auto; z-index:3; } }
+</style>
+
+<style scoped>
+@media(max-width:560px){.topbar-heading{flex:1}.breadcrumb-line{display:none}.global-search,.topbar-actions>.topbar-popover-wrap:has(.theme-popover),.topbar-actions>.topbar-popover-wrap:has(.icon-button){display:none}.app-topbar{gap:6px;padding-left:10px;padding-right:10px}}
 </style>

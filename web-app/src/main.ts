@@ -23,7 +23,9 @@ async function validateRestoredSession() {
   }
 
   try {
-    await userApi.get('/users/me', { timeout: 5000 })
+    const token = authStore.token
+    const { data } = await userApi.get<{ id: number; username: string; role: 'student' | 'teacher' | 'admin' }>('/users/me', { timeout: 5000 })
+    authStore.verifyIdentity(token, { userId: data.id, username: data.username, role: data.role })
   } catch (error: any) {
     const status = error?.response?.status
     if (status === 401 || status === 404) {

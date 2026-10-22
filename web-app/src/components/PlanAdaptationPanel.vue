@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { agentApi } from '../api/http'
 import type { LearningPathResponse } from '../api'
+import LearningContent from './LearningContent.vue'
 
 type Proposal = {
   status: string; message: string; proposal_id: string
@@ -55,7 +56,7 @@ async function confirm() {
     <el-alert v-if="error && !visible" :title="error" type="error" :closable="false" />
     <el-dialog v-model="visible" title="确认学习计划变化" width="min(620px, 94vw)" :close-on-click-modal="false">
       <template v-if="proposal">
-        <p>{{ proposal.message }}</p>
+        <LearningContent class="adaptation-message" :content="proposal.message" />
         <table class="adaptation-comparison"><thead><tr><th>项目</th><th>当前</th><th>确认后</th></tr></thead><tbody>
           <tr><td>任务总数</td><td>{{ proposal.before?.task_count ?? '—' }}</td><td>{{ proposal.after?.task_count ?? '—' }}</td></tr>
           <tr><td>每天学习分钟</td><td>{{ proposal.before?.daily_minutes ?? '未记录' }}</td><td>{{ proposal.after?.daily_minutes ?? '—' }}</td></tr>

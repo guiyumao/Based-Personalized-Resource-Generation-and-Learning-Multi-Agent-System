@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { renderLearningMarkdown } from '../utils/renderLearningMarkdown'
+import LearningContent from './LearningContent.vue'
 import { normalizeMermaidSource } from '../utils/normalizeMermaidSource'
 import { useAuthStore } from '../stores/auth'
 import { agentApi, evaluationApi } from '../api/http'
@@ -174,7 +175,7 @@ onMounted(restore)
       <button v-for="section in sections" :key="section.key" @click="open(section.key)">{{ completed.includes(section.key) ? '✓ ' : '' }}{{ section.title }}</button>
     </nav>
     <main>
-      <details v-if="resourceId" class="courseware-video" open><summary>课件视频 · 无声字幕</summary><video v-if="videoUrl" :src="videoUrl" controls preload="metadata" aria-label="当前课件视频（无声字幕）"/><p v-if="videoStatus">{{ videoStatus }}</p><button v-if="!videoUrl && version && !videoChecking" :disabled="videoBusy" @click="createVideo">{{ videoBusy ? '视频制作中' : '制作当前课件视频' }}</button></details>
+      <details v-if="resourceId" class="courseware-video" open><summary>课件视频 · 无声字幕</summary><p>来源：当前课件正文，由本机排版合成为无声字幕视频。</p><video v-if="videoUrl" :src="videoUrl" controls preload="metadata" aria-label="当前课件视频（无声字幕）"/><p v-if="videoStatus">{{ videoStatus }}</p><button v-if="!videoUrl && version && !videoChecking" :disabled="videoBusy" @click="createVideo">{{ videoBusy ? '视频制作中' : '制作当前课件视频' }}</button></details>
       <p v-if="metadata.schema !== 'teaching-v2'" role="status" class="legacy-notice">这是一份历史课件，正文不会随系统升级自动重写。旧版学情段落已停止展示，不能作为当前掌握度依据；请打开已生成的新版，或重新生成完整课件。</p>
       <p v-if="status" role="status">{{ status }}</p>
       <details v-for="(section, index) in sections" :key="section.key" :data-section="section.key" open>
@@ -197,7 +198,7 @@ onMounted(restore)
         <p v-if="metadata.knowledge_evidence?.supplementation?.candidate_ids?.length">{{ metadata.knowledge_evidence.supplementation.reused ? '复用已保存资料' : '补充资料已入库' }}：候选 #{{ metadata.knowledge_evidence.supplementation.candidate_ids.join('、#') }}，尚待审核发布。</p>
         <p v-else-if="metadata.knowledge_evidence?.supplementation">本次补充状态：{{ metadata.knowledge_evidence.supplementation.status }}，未新增候选资料。</p>
         <p>模型生成教学内容；结构检查不等同于学科事实核验。{{ metadata.sources?.length ? '参考资料如下。' : '暂无可回指的检索资料，建议结合教材核验。' }}</p>
-        <article v-for="(source, i) in metadata.sources || []" :key="i"><strong>{{ source.metadata?.title || source.metadata?.source || source.id }}</strong><p>{{ source.content }}</p></article>
+        <article v-for="(source, i) in metadata.sources || []" :key="i"><strong>{{ source.metadata?.title || source.metadata?.source || source.id }}</strong><LearningContent class="source-content" :content="source.content" /></article>
       </details>
     </main>
   </div></div>

@@ -11,142 +11,96 @@ from services.teacher_service.app.schemas.teacher import TeachingScopeCreate
 from services.teacher_service.app.services.teacher_manager import TeacherManager
 
 
-def test_teacher_manager_returns_student_insights() -> None:
-    """Teacher manager should expose student insight cards."""
+@pytest.fixture
+def enrolled_class(test_user):
+    """Use a real class membership rather than nonexistent class 1 and global users."""
+    from uuid import uuid4
 
+    from common.models.learning import User
+    from services.teacher_service.app.schemas.teacher import ClassCreate
+
+    with SessionLocal() as db:
+        teacher = User(
+            id=-int(uuid4().hex[:7], 16),
+            username="insight-teacher-" + uuid4().hex[:8],
+            password_hash="disabled",
+            role="teacher",
+            is_active=True,
+        )
+        db.add(teacher)
+        db.commit()
+        teacher_id = teacher.id
     manager = TeacherManager()
-    insights = manager.list_student_insights(1)
+    classroom = manager.create_class(ClassCreate(name="学情证据班", subject="Python"), teacher_id)
+    manager.enroll_student(classroom.id, test_user.id, teacher_id)
+    yield classroom
+    from common.models.learning import ClassEnrollment, Classroom, Course, Notification
 
-    assert insights
+    with SessionLocal() as db:
+        db.query(ClassEnrollment).filter_by(class_id=classroom.id).delete()
+        db.query(Classroom).filter_by(id=classroom.id).delete()
+        db.query(Course).filter_by(id=classroom.course_id).delete()
+        db.query(Notification).filter_by(sender_id=teacher_id).delete()
+        db.query(User).filter_by(id=teacher_id).delete()
+        db.commit()
+
+
+def test_teacher_manager_returns_student_insights(test_user, enrolled_class) -> None:
+    manager = TeacherManager()
+    insights = manager.list_student_insights(enrolled_class.id)
+    assert len(insights) == 1 and insights[0].user_id == test_user.id
     assert insights[0].student_name
     assert isinstance(insights[0].mistake_count, int)
+    assert manager.list_student_insights(987654321) == []
 
 
-def test_teacher_manager_returns_student_learning_detail_fallback() -> None:
-    """Teacher manager should aggregate a student detail payload even without remote services."""
-
+def test_teacher_manager_returns_student_learning_detail_fallback(
+    test_user, enrolled_class
+) -> None:
+    """Class details no longer need external student-global reports."""
     manager = TeacherManager()
-    # When EVALUATION_SERVICE_URL is empty (default), the teacher manager
-    # makes a request to an empty URL which httpx rejects.  The method
-    # should surface a clear error rather than silently returning partial
-    # data, so we assert the expected exception here.
     with patch(
         "services.teacher_service.app.services.teacher_manager.httpx.AsyncClient",
-        side_effect=RuntimeError("evaluation_service_url is not configured"),
+        side_effect=RuntimeError("must not read global reports"),
     ):
-        with pytest.raises(RuntimeError, match="evaluation_service_url"):
-            asyncio.run(manager.get_student_learning_detail(1, 1))
+        detail = asyncio.run(manager.get_student_learning_detail(enrolled_class.id, test_user.id))
+    assert detail.user_id == test_user.id
+    assert detail.mistake_notebook == []
+    assert detail.stage_report.report_type == "class"
 
 
-def test_teacher_manager_uses_teacher_mistake_detail_endpoint() -> None:
-    """Teacher detail should request the teacher-side mistake notebook endpoint."""
-
+def test_teacher_manager_uses_teacher_mistake_detail_endpoint(test_user, enrolled_class) -> None:
+    """Regression: a teacher must not receive another course's global mistake notebook."""
     manager = TeacherManager()
-
-    requested_urls: list[str] = []
-    forwarded_headers: list[dict] = []
-
-    class DummyResponse:
-        def __init__(self, payload):
-            self._payload = payload
-
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self):
-            return self._payload
-
-    class DummyClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def get(self, url: str, headers: dict | None = None):
-            requested_urls.append(url)
-            forwarded_headers.append(headers or {})
-            if url.endswith("/teacher-detail"):
-                return DummyResponse({"data": {"user_id": 1, "mistake_count": 0, "items": []}})
-            return DummyResponse(
-                {
-                    "data": {
-                        "report_type": "stage" if "/stage/" in url else "comprehensive",
-                        "user_id": 1,
-                        "title": "ok",
-                        "summary": "ok",
-                        "strengths": [],
-                        "weaknesses": [],
-                        "next_actions": [],
-                    }
-                }
-            )
-
-    with patch("services.teacher_service.app.services.teacher_manager.httpx.AsyncClient", return_value=DummyClient()):
-        detail = asyncio.run(manager.get_student_learning_detail(1, 1))
-
+    with patch("services.teacher_service.app.services.teacher_manager.httpx.AsyncClient") as remote:
+        detail = asyncio.run(manager.get_student_learning_detail(enrolled_class.id, test_user.id))
+    remote.assert_not_called()
     assert isinstance(detail.mistake_notebook, list)
-    assert any(url.endswith("/evaluation/mistakes/1/teacher-detail") for url in requested_urls)
+    assert detail.stage_report.title == "本班学习证据"
 
 
-def test_teacher_manager_forwards_caller_token_to_evaluation() -> None:
-    """Evaluation-service calls must carry the teacher's bearer token."""
-
+def test_teacher_manager_forwards_caller_token_to_evaluation(test_user, enrolled_class) -> None:
+    """No token is sent to a global report endpoint after scoping details to class evidence."""
     manager = TeacherManager()
-    forwarded: list[dict] = []
-
-    class DummyResponse:
-        def __init__(self, url: str) -> None:
-            self._url = url
-
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self):
-            if self._url.endswith("/teacher-detail"):
-                return {"data": {"user_id": 1, "mistake_count": 0, "items": []}}
-            return {
-                "data": {
-                    "report_type": "stage" if "/stage/" in self._url else "comprehensive",
-                    "user_id": 1,
-                    "title": "ok",
-                    "summary": "ok",
-                    "strengths": [],
-                    "weaknesses": [],
-                    "next_actions": [],
-                }
-            }
-
-    class DummyClient:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def get(self, url: str, headers: dict | None = None):
-            forwarded.append(headers or {})
-            return DummyResponse(url)
-
-    with patch(
-        "services.teacher_service.app.services.teacher_manager.httpx.AsyncClient",
-        return_value=DummyClient(),
-    ):
-        asyncio.run(
-            manager.get_student_learning_detail(1, 1, auth_header="Bearer teacher-token")
+    with patch("services.teacher_service.app.services.teacher_manager.httpx.AsyncClient") as remote:
+        detail = asyncio.run(
+            manager.get_student_learning_detail(
+                enrolled_class.id, test_user.id, auth_header="Bearer teacher-token"
+            )
         )
+    remote.assert_not_called()
+    assert detail.user_id == test_user.id
+    with pytest.raises(ValueError):
+        asyncio.run(manager.get_student_learning_detail(enrolled_class.id, 987654321))
 
-    assert forwarded, "no internal evaluation call was made"
-    assert all(h.get("Authorization") == "Bearer teacher-token" for h in forwarded)
 
-
-def test_teacher_scope_is_visible_to_target_student(test_user) -> None:
+def test_teacher_scope_is_visible_to_target_student(test_user, enrolled_class) -> None:
     """Teacher-created scopes should be persisted and readable by students."""
 
     manager = TeacherManager()
     created = manager.create_teaching_scope(
         TeachingScopeCreate(
-            class_id=1,
+            class_id=enrolled_class.id,
             student_user_id=test_user.id,
             knowledge_points=["Python loops"],
             learning_direction="Practice loop boundaries",
@@ -168,13 +122,13 @@ def test_teacher_scope_is_visible_to_target_student(test_user) -> None:
         db.commit()
 
 
-def test_teacher_scope_publishes_active_student_path(test_user) -> None:
+def test_teacher_scope_publishes_active_student_path(test_user, enrolled_class) -> None:
     """Creating a teaching scope should directly update the student's active path."""
 
     manager = TeacherManager()
     created = manager.create_teaching_scope(
         TeachingScopeCreate(
-            class_id=1,
+            class_id=enrolled_class.id,
             student_user_id=test_user.id,
             knowledge_points=["Functions"],
             learning_direction="Follow the teacher scope before practicing.",

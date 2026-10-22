@@ -1,6 +1,7 @@
 import type { Component } from 'vue'
 import {
   Aim,
+  Calendar,
   ChatDotRound,
   Collection,
   CollectionTag,
@@ -37,7 +38,10 @@ export const navigationItems: NavigationItem[] = [
   { key: 'learning-path', label: '学习路径', description: '规划阶段任务与学习顺序', icon: Guide, route: '/student/learning-path', routeName: 'student-learning-path', group: '学习工作台', roles: ['student'] },
   { key: 'workspace', label: '学习工作区', description: '目录、资源与助手共享学习上下文', icon: Reading, route: '/student/workspace', routeName: 'student-workspace', group: '学习工作台', roles: ['student'] },
   { key: 'courseware', label: '课件中心', description: '生成、阅读与管理个性化课件', icon: Reading, route: '/student/courseware', routeName: 'student-courseware', group: '学习工作台', roles: ['student'] },
-  { key: 'classroom', label: '班级空间', description: '课程作业、讨论与教学通知', icon: School, route: '/student/classroom', routeName: 'student-classroom', group: '学习工作台', roles: ['student'] },
+  { key: 'classroom', label: '我的课堂', description: '已加入课堂的课程、作业与讨论', icon: School, route: '/student/classroom', routeName: 'student-classroom', group: '学习工作台', roles: ['student'] },
+  { key: 'classroom-plaza', label: '课堂广场', description: '自主浏览并加入公开课堂，查看课程安排', icon: Collection, route: '/student/classroom-plaza', routeName: 'student-classroom-plaza', group: '学习工作台', roles: ['student'] },
+  { key: 'timetable', label: '我的课程表', description: '已加入课堂的每周课程与调课通知', icon: Calendar, route: '/student/timetable', routeName: 'student-timetable', group: '学习工作台', roles: ['student'] },
+  { key: 'checkin', label: '学习打卡', description: '每日平台学习打卡，独立于课堂考勤', icon: Calendar, route: '/student/checkin', routeName: 'student-checkin', group: '学习工作台', roles: ['student'] },
   { key: 'exercise', label: '练习测评', description: '分层练习、提交与反馈', icon: EditPen, route: '/student/exercise', routeName: 'student-exercise', group: '练习与诊断', roles: ['student'] },
   { key: 'mistakes', label: '错题本', description: '错因分析与针对性重练', icon: Notebook, route: '/student/mistakes', routeName: 'student-mistakes', group: '练习与诊断', roles: ['student'] },
   { key: 'favorites', label: '收藏本', description: '收藏题目与重点解析', icon: CollectionTag, route: '/student/favorites', routeName: 'student-favorites', group: '练习与诊断', roles: ['student'] },
@@ -57,6 +61,8 @@ export const navigationItems: NavigationItem[] = [
   { key: 'teacher-analytics', label: '教学分析', description: '班级统计、薄弱知识点与建议', icon: Histogram, route: '/teacher/analytics', routeName: 'teacher-analytics', group: '分析与任务', roles: ['teacher'] },
   { key: 'teacher-transcripts', label: '成绩单分析', description: '批量导入班级成绩并生成分层教学建议', icon: DocumentChecked, route: '/teacher/transcripts', routeName: 'teacher-transcripts', group: '分析与任务', roles: ['teacher'] },
   { key: 'teacher-homework', label: '作业管理', description: '布置教学任务并提交批改结果', icon: DocumentChecked, route: '/teacher/homework', routeName: 'teacher-homework', group: '分析与任务', roles: ['teacher'] },
+  { key: 'teacher-checkin', label: '打卡与签到', description: '发布学习打卡任务、审核成果与课堂签到', icon: Calendar, route: '/teacher/checkin', routeName: 'teacher-checkin', group: '分析与任务', roles: ['teacher'] },
+  { key: 'teacher-schedule', label: '课程安排', description: '为课堂排课、调课、停课与补课', icon: Calendar, route: '/teacher/schedule', routeName: 'teacher-schedule', group: '分析与任务', roles: ['teacher'] },
   ...adminNavigation,
 ]
 

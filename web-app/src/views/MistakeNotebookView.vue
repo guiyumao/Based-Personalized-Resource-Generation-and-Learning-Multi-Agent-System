@@ -1,8 +1,9 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, Promotion } from '@element-plus/icons-vue'
+import LearningContent from '../components/LearningContent.vue'
 import { useAuthStore } from '../stores/auth'
 
 const selectedMistake = ref<any>(null)
@@ -763,7 +764,7 @@ onUnmounted(() => {
                     </div>
                     <span class="mistake-card-action">点击查看详情 →</span>
                   </div>
-                  <p class="mistake-card-preview">{{ (item.prompt || item.user_answer || '(无内容)').slice(0, 80) }}</p>
+                  <LearningContent class="mistake-card-preview" :content="item.prompt || item.user_answer" empty="(无内容)" :clamp-lines="2" />
                 </article>
               </section>
 
@@ -773,12 +774,12 @@ onUnmounted(() => {
                   <!-- 原题 -->
                   <div style="padding:14px 18px;border-radius:14px;background:color-mix(in srgb,var(--accent) 6%,transparent);border:1px solid var(--line);margin-bottom:16px">
                     <div style="font-size:12px;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">📝 原题</div>
-                    <div style="font-size:16px;line-height:1.8;white-space:pre-wrap;font-weight:550">{{ selectedMistake.prompt }}</div>
+                    <LearningContent :content="selectedMistake.prompt" empty="(无题干内容)" style="font-size:16px;font-weight:550" />
                     <!-- Options for choice questions -->
                     <div v-if="selectedMistake.question_type==='choice' && selectedMistake.options" style="margin-top:12px;display:grid;gap:8px">
                       <div v-for="opt in parseOptions(selectedMistake.options)" :key="opt" style="padding:10px 14px;border-radius:10px;border:1px solid var(--line);font-size:15px"
                         :style="opt.startsWith(selectedMistake.correct_answer) ? {background:'color-mix(in srgb,var(--green) 10%,transparent)',borderColor:'var(--green)'} : opt.startsWith(selectedMistake.user_answer) ? {background:'color-mix(in srgb,var(--red) 10%,transparent)',borderColor:'var(--red)'} : {}">
-                        {{ opt }}
+                        <LearningContent :content="opt" inline />
                       </div>
                     </div>
                   </div>
@@ -786,19 +787,19 @@ onUnmounted(() => {
                   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
                     <div style="padding:12px 16px;border-radius:12px;background:color-mix(in srgb,var(--red) 8%,transparent);border:1px solid var(--red)">
                       <div style="font-size:12px;color:var(--red);margin-bottom:4px">❌ 你的答案</div>
-                      <div style="font-size:16px;font-weight:550">{{ selectedMistake.user_answer || '(未作答)' }}</div>
+                      <div style="font-size:16px;font-weight:550"><LearningContent :content="selectedMistake.user_answer" empty="(未作答)" /></div>
                     </div>
                     <div style="padding:12px 16px;border-radius:12px;background:color-mix(in srgb,var(--green) 8%,transparent);border:1px solid var(--green)">
                       <div style="font-size:12px;color:var(--green);margin-bottom:4px">✅ 正确答案</div>
-                      <div style="font-size:16px;font-weight:550">{{ selectedMistake.correct_answer }}</div>
+                      <div style="font-size:16px;font-weight:550"><LearningContent :content="selectedMistake.correct_answer" empty="(暂无)" /></div>
                     </div>
                   </div>
                   <!-- AI 解析 -->
                   <div v-if="selectedMistake.analysis" style="padding:14px 18px;border-radius:12px;background:color-mix(in srgb,var(--accent) 5%,transparent);border:1px solid var(--line);margin-bottom:12px">
                     <div style="font-size:12px;letter-spacing:.06em;color:var(--accent);margin-bottom:6px">🤖 AI 解析</div>
-                    <div style="font-size:15px;color:var(--muted);line-height:1.8;white-space:pre-wrap">{{ selectedMistake.analysis }}</div>
+                    <LearningContent :content="selectedMistake.analysis" style="font-size:15px;color:var(--muted)" />
                   </div>
-                  <div v-if="selectedMistake.suggested_action" style="font-size:14px;color:var(--muted)">💡 {{ selectedMistake.suggested_action }}</div>
+                  <div v-if="selectedMistake.suggested_action" style="font-size:14px;color:var(--muted)">💡 <LearningContent :content="selectedMistake.suggested_action" inline /></div>
                 </template>
               </el-dialog>
             </div>
@@ -823,7 +824,7 @@ onUnmounted(() => {
                 <strong>{{ remedialExerciseSet.generated_from_mistakes }}</strong>
               </div>
             </div>
-            <p class="learning-line">{{ remedialExerciseSet.summary }}</p>
+            <LearningContent class="learning-line" :content="remedialExerciseSet.summary" />
             <p class="learning-line">这一区现在就是独立错题页内的变式答题区，先作答，提交后才会显示标准答案与解析。</p>
 
             <div v-if="currentRemedialExercise" class="learning-section remedial-practice-card">
@@ -832,7 +833,7 @@ onUnmounted(() => {
                 <span class="agent-tag">{{ currentRemedialExercise.knowledge_point }}</span>
                 <span class="agent-tag">{{ formatQuestionTypeLabel(currentRemedialExercise.question_type) }}</span>
               </div>
-              <h3>{{ currentRemedialExercise.prompt }}</h3>
+              <LearningContent class="remedial-prompt" tag="h3" :content="currentRemedialExercise.prompt" />
 
               <div v-if="currentRemedialExercise.options.length" class="option-list">
                 <label v-for="option in currentRemedialExercise.options" :key="option" class="option-item">
@@ -842,7 +843,7 @@ onUnmounted(() => {
                     :value="option.charAt(0)"
                     :disabled="Boolean(currentRemedialSubmission)"
                   />
-                  <span>{{ option }}</span>
+                  <LearningContent tag="span" :content="option" inline />
                 </label>
               </div>
               <el-input
@@ -886,9 +887,9 @@ onUnmounted(() => {
               >
                 <div class="insight-label">{{ currentRemedialSubmission.feedback.is_correct ? '作答结果' : '提交反馈' }}</div>
                 <div class="insight-value">{{ currentRemedialSubmission.feedback.is_correct ? '回答正确' : '需要复盘' }}</div>
-                <p class="panel-text"><strong>你的答案：</strong>{{ currentRemedialSubmission.userAnswer }}</p>
-                <p class="panel-text"><strong>标准答案：</strong>{{ currentRemedialSubmission.correctAnswer }}</p>
-                <p class="panel-text"><strong>解析：</strong>{{ currentRemedialSubmission.analysis }}</p>
+                <p class="panel-text"><strong>你的答案：</strong><LearningContent :content="currentRemedialSubmission.userAnswer" inline /></p>
+                <p class="panel-text"><strong>标准答案：</strong><LearningContent :content="currentRemedialSubmission.correctAnswer" inline /></p>
+                <p class="panel-text"><strong>解析：</strong><LearningContent :content="currentRemedialSubmission.analysis" /></p>
               </div>
             </div>
 
@@ -899,7 +900,7 @@ onUnmounted(() => {
                 class="reference-card"
               >
                 <strong>变式题 {{ index + 1 }} · {{ exercise.knowledge_point }} / {{ formatQuestionTypeLabel(exercise.question_type) }}</strong>
-                <p>{{ exercise.prompt }}</p>
+                <LearningContent class="reference-content" :content="exercise.prompt" />
               </article>
             </div>
           </article>
@@ -1326,9 +1327,8 @@ onUnmounted(() => {
 
 .mistake-card-preview {
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--mistake-muted);
+  font-size: 12px;
   line-height: 1.6;
 }
 
@@ -1339,6 +1339,11 @@ onUnmounted(() => {
 
 .reference-card strong {
   color: var(--mistake-ink);
+}
+
+.reference-card .reference-content {
+  margin-top: 6px;
+  color: var(--mistake-muted);
 }
 
 .report-evidence-grid {

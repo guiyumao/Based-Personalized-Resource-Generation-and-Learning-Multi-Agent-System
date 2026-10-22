@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { useAuthStore } from '../stores/auth'
 
 type ServiceKey = 'user' | 'agent' | 'resource' | 'evaluation' | 'teacher' | 'system'
 
@@ -36,18 +37,8 @@ function createHttpClient(baseURL: string) {
   })
 
   client.interceptors.request.use((config) => {
-    const raw = localStorage.getItem('learning-system-auth')
-    if (!raw) {
-      return config
-    }
-    try {
-      const parsed = JSON.parse(raw) as { token?: string }
-      if (parsed.token) {
-        config.headers.Authorization = `Bearer ${parsed.token}`
-      }
-    } catch {
-      // Ignore malformed localStorage payloads and proceed without token.
-    }
+    const token = useAuthStore().token
+    if (token) config.headers.Authorization = `Bearer ${token}`
     return config
   })
 
@@ -58,7 +49,12 @@ function createHttpClient(baseURL: string) {
       const requestUrl = String(error?.config?.url ?? '')
       const isAuthRequest = requestUrl.includes('/login') || requestUrl.includes('/register')
       if (status === 401 && !isAuthRequest && typeof window !== 'undefined') {
-        localStorage.removeItem('learning-system-auth')
+        const auth = useAuthStore()
+        // A request from the previous login can finish after account switching.
+        // Its failure must not log out the new account.
+        if (error?.config?.headers?.Authorization !== `Bearer ${auth.token}`)
+          return Promise.reject(error)
+        auth.clear()
         if (window.location.pathname !== '/login') {
           window.location.assign('/login?reason=session-expired')
         }

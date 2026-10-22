@@ -69,6 +69,10 @@ def test_admin_task_idempotency_and_worker_result(task_db, monkeypatch) -> None:
     with task_db() as db:
         completed = db.get(KnowledgeBuildTask, task_id)
         assert completed.status == "COMPLETED"
+        from common.models.learning import Notification
+        notices = db.query(Notification).filter_by(user_id=1, related_type="knowledge_task", related_id=task_id).all()
+        assert len(notices) == 1
+        assert "不代表内容已审核发布" in notices[0].content
         assert completed.result_json["subject_found"] is True
         assert completed.result_json["subjects"][0]["value"] == "python"
         assert any(

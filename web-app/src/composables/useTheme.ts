@@ -5,18 +5,26 @@ export type ThemeName = 'ocean' | 'warm' | 'cosmic' | 'minimal' | 'forest' | nul
 
 const THEME_LIST: ThemeName[] = ['ocean', 'warm', 'cosmic', 'minimal', 'forest']
 
-const currentTheme = ref<ThemeName>(null)
+/**
+ * First-visit default: the bare `:root` palette (靛蓝云台, light indigo SaaS).
+ * Only an explicit theme choice (stored in localStorage) overrides it.
+ */
+const DEFAULT_THEME: ThemeName = null
+
+const currentTheme = ref<ThemeName>(DEFAULT_THEME)
 
 export function useTheme() {
   function init() {
     const stored = localStorage.getItem(THEME_STORAGE_KEY) as ThemeName | null
     if (stored && THEME_LIST.includes(stored)) {
       applyTheme(stored)
+      return
     }
-    if (!stored) {
-      currentTheme.value = null
-      document.documentElement.removeAttribute('data-theme')
-    }
+    // First visit or legacy value: start on the default 靛蓝云台 palette.
+    document.documentElement.removeAttribute('data-theme')
+    document.body.style.background = ''
+    document.body.style.color = ''
+    currentTheme.value = null
   }
 
   function setTheme(theme: ThemeName) {

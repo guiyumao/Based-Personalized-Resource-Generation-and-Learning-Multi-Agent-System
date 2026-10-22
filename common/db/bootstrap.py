@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from common.config import get_settings
 from common.db.base import Base
 from common.db.session import engine
-from common.models import learning  # noqa: F401
+from common.models import checkin, learning  # noqa: F401
 from common.models.learning import User, UserProfile
 from common.security.auth import hash_password, verify_password
 

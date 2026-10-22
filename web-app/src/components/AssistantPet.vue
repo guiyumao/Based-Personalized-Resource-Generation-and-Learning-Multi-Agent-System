@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Close, CopyDocument, Expand, Fold, Promotion, Refresh, Setting, Tickets } from '@element-plus/icons-vue'
 import { getChatSession, listChatSessions, type ChatSessionSummary } from '../api/chat'
 import { cancelAssistantTask, requestAssistantTaskCancel, confirmAssistantPath, deleteAssistantAttachment, deleteAssistantMemory, getAssistantTask, listAssistantAttachments, listAssistantMemory, listAssistantTasks, retryAssistantTask, saveAssistantMemory, sendAssistantMessage, streamAssistantMessage, uploadAssistantAttachment, type AssistantAction, type AssistantAttachment, type AssistantCard, type AssistantMemory } from '../api/assistant'
@@ -787,6 +787,13 @@ onMounted(() => {
   removeRouteHook = router.afterEach(() => window.setTimeout(avoidInteractiveControls, 250))
   window.setTimeout(avoidInteractiveControls, 250)
 })
+
+watch(() => router.currentRoute.value.query.assistant_task, async value => {
+  const id = Number(value)
+  if (!Number.isInteger(id) || id <= 0 || authStore.user?.role !== 'student') return
+  try { const task = await getAssistantTask(id); await loadSession(task.conversation_id); openPanel() }
+  catch { ElMessage.error('任务已失效或当前没有访问权限') }
+}, { immediate: true })
 
 watch([useLearningContext, teachingMode, courseKey], () => {
   if (authStore.user) localStorage.setItem(`learning-assistant-preferences-${authStore.user.userId}`, JSON.stringify({

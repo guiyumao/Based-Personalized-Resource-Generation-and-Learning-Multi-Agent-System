@@ -1,0 +1,67 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import assert from 'node:assert/strict'
+import { loadPlaywright } from './lib/env.mjs'
+const root=process.argv[2], auth=JSON.parse(fs.readFileSync(path.join(root,'auth.json'),'utf8'))
+const { chromium }=loadPlaywright().module
+const browser=await chromium.launch({headless:true})
+const errors=[], checks=[]
+const api='http://127.0.0.1:18225/teacher-api'
+const contexts=[]
+async function account(id){const context=await browser.newContext({viewport:{width:1440,height:900}});contexts.push(context);await context.addInitScript(value=>localStorage.setItem('learning-system-auth',JSON.stringify(value)),auth[id]);const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));return page}
+async function request(page,id,method,url,data){const r=await page.request[method](api+url,{headers:{Authorization:`Bearer ${auth[id].token}`},data});assert.ok(r.ok(),`${url} ${r.status()} ${await r.text()}`);return (await r.json()).data}
+try{
+const admin=await account(901),student=await account(903),teacher=await account(902)
+await admin.goto('http://127.0.0.1:15195/admin/notifications')
+await admin.getByRole('heading',{name:'发布通知'}).waitFor()
+const selects=admin.locator('.publication .el-select')
+await selects.first().click();await admin.getByRole('option',{name:'全体学生',exact:true}).click()
+await admin.locator('.publication input[maxlength="160"]').fill('管理员真实公告')
+await admin.locator('.publication textarea').fill('来自真实后端与数据库的公告内容')
+await admin.getByRole('button',{name:'发布通知',exact:true}).click()
+await admin.getByRole('status').filter({hasText:'已发送给 2 位接收人'}).waitFor()
+checks.push('admin actual UI publication')
+await student.goto('http://127.0.0.1:15195/student/notifications')
+const card=student.locator('.notification-trigger')
+await card.waitFor();await student.locator('.notification-panel').waitFor({state:'detached'})
+await card.locator('b').waitFor();assert.equal(await card.locator('b').innerText(),'1')
+await card.click();await student.locator('.notification-panel .notification-item').first().waitFor()
+assert.equal(await card.getAttribute('aria-expanded'),'true')
+await card.click();await student.locator('.notification-panel').waitFor({state:'detached'})
+await card.click();await student.keyboard.press('Escape');await student.locator('.notification-panel').waitFor({state:'detached'})
+await card.click();await student.mouse.click(300,800);await student.locator('.notification-panel').waitFor({state:'detached'})
+assert.equal((await request(student,903,'get','/learning/notifications/unread-count')).unread_count,1)
+checks.push('collapsed toggle escape outside and close preserves unread')
+await card.click();await student.locator('.notification-panel .notification-item').first().click()
+await student.getByRole('dialog',{name:'消息详情'}).waitFor();assert.ok((await student.getByRole('dialog').innerText()).includes('来自真实后端与数据库'))
+await student.getByRole('dialog').getByRole('button',{name:'Close this dialog'}).click()
+await student.reload();await card.waitFor();await student.waitForTimeout(1000);assert.equal(await card.locator('b').count(),0)
+checks.push('detail read and refresh persistence')
+const cls=await request(teacher,902,'post','/teacher/classes',{name:'通知验收班',subject:'数学',teacher_name:'通知教师'})
+await request(teacher,902,'post',`/teacher/classes/${cls.id}/enrollments`,{student_user_id:903})
+const assignment=await request(teacher,902,'post','/teacher/homework/assign',{class_id:cls.id,title:'通知真实作业',description:'完成解答'})
+await request(student,903,'post',`/teacher/students/me/homework/${assignment.id}/submit`,{content:'已完成解答'})
+await teacher.goto('http://127.0.0.1:15195/teacher/notifications')
+await teacher.locator('.notification-trigger b').waitFor()
+await teacher.locator('.notification-trigger').click()
+await teacher.locator('.notification-panel .notification-item').filter({hasText:'学生提交作业'}).click()
+await teacher.getByRole('dialog').getByRole('button',{name:'前往关联业务'}).click()
+await teacher.waitForURL(`**/teacher/homework?assignment=${assignment.id}`)
+await teacher.getByText('已完成解答',{exact:true}).waitFor()
+checks.push('real submission teacher alert and exact review destination')
+await request(admin,901,'post','/learning/notifications/publish',{request_key:crypto.randomUUID(),scope:'teachers',title:'教师工作通知',content:'教师范围的真实公告'})
+await teacher.evaluate(()=>window.dispatchEvent(new Event('online')))
+await teacher.locator('.notification-trigger').click()
+await teacher.locator('.notification-panel .notification-item').filter({hasText:'教师工作通知'}).waitFor()
+checks.push('online recovery new teacher message')
+await teacher.goto('http://127.0.0.1:15195/teacher/notifications');await teacher.locator('.notification-trigger').click();await teacher.locator('.notification-panel').waitFor();await teacher.setViewportSize({width:390,height:844});await teacher.waitForTimeout(500)
+await teacher.screenshot({path:path.join(root,'teacher-mobile.png'),fullPage:true})
+assert.ok(await teacher.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth))
+const box=await teacher.locator('.notification-panel').boundingBox();assert.ok(box.x>=0&&box.x+box.width<=390)
+await student.setViewportSize({width:390,height:844});await student.locator('.notification-trigger').click();await student.screenshot({path:path.join(root,'student-mobile.png'),fullPage:true})
+await student.setViewportSize({width:1440,height:900});await student.waitForTimeout(500);await student.screenshot({path:path.join(root,'student-desktop.png'),fullPage:true})
+checks.push('unified desktop mobile 390px no overflow')
+assert.deepEqual(errors,[])
+fs.writeFileSync(path.join(root,'result.json'),JSON.stringify({checks,pageErrors:errors,api:'real isolated SQLite + JWT',mocked:false},null,2))
+console.log(JSON.stringify({checks,pageErrors:errors}))
+}finally{for(const c of contexts)await c.close();await browser.close()}

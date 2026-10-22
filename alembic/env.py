@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from alembic import context
 from common.config import get_settings
 from common.db.base import Base
-from common.models import learning  # noqa: F401
+from common.models import checkin, learning  # noqa: F401
 
 config = context.config
 settings = get_settings()

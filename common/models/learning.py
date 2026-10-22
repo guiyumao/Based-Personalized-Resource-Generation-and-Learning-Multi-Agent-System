@@ -452,6 +452,27 @@ class Classroom(TimestampMixin, Base):
     teacher_name: Mapped[str] = mapped_column(String(100), nullable=False)
     teacher_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     course_id: Mapped[int | None] = mapped_column(ForeignKey("courses.id"), nullable=True, index=True)
+    invite_code: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default="active", nullable=False)
+    # "invite" keeps the historical invitation-code flow; "open" lets students
+    # self-enroll from the classroom plaza without a code.
+    join_mode: Mapped[str] = mapped_column(
+        String(16), default="invite", server_default="invite", nullable=False
+    )
+    description: Mapped[str] = mapped_column(
+        Text, default="", server_default="", nullable=False
+    )
+    objective: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    syllabus: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
+    semester: Mapped[str] = mapped_column(
+        String(40), default="", server_default="", nullable=False
+    )
+    is_public: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="1", nullable=False
+    )
+    capacity: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
 
 
 class ClassEnrollment(TimestampMixin, Base):
@@ -498,6 +519,32 @@ class AssignmentSubmission(TimestampMixin, Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class SubmissionRevision(TimestampMixin, Base):
+    """Append-only snapshots of submission and grading changes."""
+
+    __tablename__ = "submission_revisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    submission_id: Mapped[int] = mapped_column(ForeignKey("assignment_submissions.id", ondelete="CASCADE"), index=True)
+    actor_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+
+class HomeworkAttachment(TimestampMixin, Base):
+    """Private original files bound to one assignment and their submitting student."""
+
+    __tablename__ = "homework_attachments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("assignments.id", ondelete="CASCADE"), index=True)
+    student_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    submission_id: Mapped[int | None] = mapped_column(ForeignKey("assignment_submissions.id", ondelete="CASCADE"), nullable=True, index=True)
+    file_name: Mapped[str] = mapped_column(String(255))
+    storage_key: Mapped[str] = mapped_column(String(100), unique=True)
+    content_type: Mapped[str] = mapped_column(String(150))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    is_current: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
 class DiscussionThread(TimestampMixin, Base):
     """Course/class discussion topic."""
 
@@ -528,6 +575,7 @@ class Notification(TimestampMixin, Base):
     """Persistent user notification produced by learning workflows."""
 
     __tablename__ = "notifications"
+    __table_args__ = (UniqueConstraint("user_id", "event_key", name="uq_notification_user_event"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -537,6 +585,21 @@ class Notification(TimestampMixin, Base):
     related_type: Mapped[str] = mapped_column(String(30), default="")
     related_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    sender_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    event_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class NotificationDispatch(TimestampMixin, Base):
+    """Idempotent, transactional publication receipt; bounded recipient fanout."""
+
+    __tablename__ = "notification_dispatches"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    request_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    recipient_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    __table_args__ = (UniqueConstraint("sender_id", "request_key", name="uq_dispatch_request"),)
 
 
 class SystemSubject(TimestampMixin, Base):

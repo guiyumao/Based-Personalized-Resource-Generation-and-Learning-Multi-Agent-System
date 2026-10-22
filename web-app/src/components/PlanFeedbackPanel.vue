@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { agentApi } from '../api/http'
+import LearningContent from './LearningContent.vue'
 import type { LearningPathResponse } from '../api'
 
 type TaskChange = { task_id: string; title: string; stage?: string }
@@ -76,7 +77,7 @@ async function confirm() {
 
     <el-dialog v-model="visible" title="计划修改方案预览" width="min(680px, 94vw)" :close-on-click-modal="false">
       <template v-if="proposal">
-        <p class="feedback-summary">{{ proposal.message }}</p>
+        <LearningContent class="feedback-summary" :content="proposal.message" />
         <table class="feedback-comparison"><thead><tr><th>项目</th><th>当前</th><th>确认后</th></tr></thead><tbody>
           <tr><td>任务总数</td><td>{{ proposal.diff.impact.total_tasks_before }}</td><td>{{ proposal.diff.impact.total_tasks_after }}</td></tr>
           <tr><td>每天学习分钟</td><td>{{ proposal.diff.impact.daily_minutes_before ?? '未记录' }}</td><td>{{ proposal.diff.impact.daily_minutes_after }}</td></tr>

@@ -1332,7 +1332,7 @@ class QAService:
         match = re.search(r"(\d+)\s*道", question)
         if match:
             value = int(match.group(1))
-            return max(3, min(value, 10))
+            return max(1, min(value, 25))
         return 5
 
     def _extract_learner_profile(self, learning_history: dict[str, Any]) -> dict[str, Any]:

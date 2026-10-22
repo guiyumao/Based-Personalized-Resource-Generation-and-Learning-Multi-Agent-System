@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import { userApi } from '../../api'
+import LearningContent from '../../components/LearningContent.vue'
 
 const authStore = useAuthStore()
 const userId = authStore.user!.userId
@@ -53,45 +54,7 @@ const initialRequestMade = ref(false)
 const progressPct = computed(() => Math.min(100, Math.max(0, progress.value)))
 const hasContent = computed(() => sections.value.length > 0)
 
-// ── Lightweight Markdown → HTML renderer ──
-function renderMarkdown(md: string): string {
-  let html = md
-    // Escape HTML first
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    // Code blocks ```...```
-    .replace(/```(\w*)\n([\s\S]*?)```/g,
-      '<pre style="background:var(--bg);padding:12px 16px;border-radius:10px;overflow-x:auto;font-size:13px;line-height:1.6;margin:10px 0"><code>$2</code></pre>')
-    // Inline code `...`
-    .replace(/`([^`]+)`/g,
-      '<code style="background:color-mix(in srgb,var(--accent) 10%,transparent);padding:1px 6px;border-radius:5px;font-size:0.92em">$1</code>')
-    // Bold **...** or __...__
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
-    // Italic *...* or _..._
-    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
-    .replace(/_([^_]+)_/g, '<em>$1</em>')
-    // ### headings
-    .replace(/^### (.+)$/gm,
-      '<h4 style="font-size:15px;font-weight:700;margin:16px 0 6px;color:var(--text)">$1</h4>')
-    // Unordered list items
-    .replace(/^- (.+)$/gm,
-      '<li style="margin-left:20px;margin-bottom:4px">$1</li>')
-    // Wrap consecutive <li> in <ul>
-  // Double newlines → paragraph break
-  html = html
-    .replace(/(<\/li>\n)(?!<li)/g, '$1</ul>')
-    .replace(/(?<!<\/ul>\n)(<li>)/g, '<ul style="margin:6px 0">$1')
-
-  // Single newline → <br> (but not after block elements)
-  html = html.replace(/\n/g, '<br>')
-
-  // Clean up: remove <br> before/after block elements
-  html = html
-    .replace(/<br>\s*(<h4|<pre|<ul)/g, '$1')
-    .replace(/(<\/h4>|<\/pre>|<\/ul>)\s*<br>/g, '$1')
-
-  return html
-}
+// 学习正文（含公式）统一由 components/LearningContent.vue 渲染，此处不再维护本地 Markdown 实现。
 
 async function startAnalysis() {
   sections.value = []
@@ -329,7 +292,7 @@ onUnmounted(() => stopPolling())
           v-if="profileHabitSummary"
           style="margin-top:12px;font-size:13px;color:var(--muted);line-height:1.6"
         >
-          {{ profileHabitSummary }}
+          <LearningContent :content="profileHabitSummary" />
         </div>
       </div>
 
@@ -439,8 +402,9 @@ onUnmounted(() => stopPolling())
           </h3>
           <div
             style="font-size:14px;line-height:1.85;color:var(--text)"
-            v-html="renderMarkdown(section.content)"
-          ></div>
+          >
+            <LearningContent :content="section.content" />
+          </div>
         </div>
       </div>
     </div>
