@@ -56,3 +56,11 @@
   学生 8001+8004（课表/范围/资料/提交/打卡/签到/通知/真实作答/错题本/画像）；每条动作都要断言对端接口能看到变化。
 - 演示管理员用 seed 创建独立的 `demo_admin`，**不复用/改动真实 `admin` 账号**。
 - 判定不要写死数值：用「非空 + 有梯度 + 优秀画像正确题数多于困难画像」三条，重跑数值会浮动。
+
+## 演示证据补足约定（2026-10-23）
+
+- 演示题库两类前缀：`demo-evidence-<源题id>`（克隆公共题，scripts/demo_learning_evidence.py）与 `demo-authored-<point_id>-<idx>`（自编客观题，scripts/demo_supplement_evidence.py）；补测/造题都幂等，可重复运行。
+- 证据充足标准：每生每知识点 ≥8 道不同题（summarize: contribution<3 无 mastery、<8 insufficient、≥8 sufficient）；补测默认每点 10 题。
+- 本机脚本走 HTTP 时必须绕过代理：`requests.Session(trust_env=False)` + proxies=None，否则 127.0.0.1 请求被代理劫持导致超时。
+- evaluation batch_submit 逐条触发画像重算，大批量补数据要并行（4 线程）+ client_request_id 幂等。
+- 数据库原理/Java/Python/软件工程 4 个演示班无教学范围且学科不在目录，不参与学情证据链；校验脚本只检查有 TeachingScope 的班。
