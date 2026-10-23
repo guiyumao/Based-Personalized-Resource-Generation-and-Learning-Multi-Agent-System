@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { renderLearningMarkdown } from '../utils/renderLearningMarkdown'
 import LearningContent from './LearningContent.vue'
+import GenerationProgress from './GenerationProgress.vue'
 import { normalizeMermaidSource } from '../utils/normalizeMermaidSource'
 import { useAuthStore } from '../stores/auth'
 import { agentApi, evaluationApi } from '../api/http'
@@ -12,6 +13,7 @@ const completed = ref<string[]>([]); const last = ref(''); const host = ref<HTML
 const status = ref(''); const busy = ref(false)
 
 const videoUrl = ref(''); const videoStatus = ref(''); const videoBusy = ref(false)
+const videoJob = ref<{id: number; status: string; current_step: string; created_at?: string; started_at?: string | null} | null>(null)
 const videoChecking = ref(true)
 let videoDisposed = false
 let videoSequence = 0
@@ -43,6 +45,7 @@ async function createVideo() {
       try {
         const task = (await agentApi.get(`/assistant/tasks/${data.id}`)).data
         if (videoDisposed || props.resourceId !== resourceId || props.version !== version) return
+        videoJob.value = task
         videoStatus.value = task.current_step
         if (['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(task.status)) {
           videoBusy.value = false
@@ -175,7 +178,7 @@ onMounted(restore)
       <button v-for="section in sections" :key="section.key" @click="open(section.key)">{{ completed.includes(section.key) ? '✓ ' : '' }}{{ section.title }}</button>
     </nav>
     <main>
-      <details v-if="resourceId" class="courseware-video" open><summary>课件视频 · 无声字幕</summary><p>来源：当前课件正文，由本机排版合成为无声字幕视频。</p><video v-if="videoUrl" :src="videoUrl" controls preload="metadata" aria-label="当前课件视频（无声字幕）"/><p v-if="videoStatus">{{ videoStatus }}</p><button v-if="!videoUrl && version && !videoChecking" :disabled="videoBusy" @click="createVideo">{{ videoBusy ? '视频制作中' : '制作当前课件视频' }}</button></details>
+      <details v-if="resourceId" class="courseware-video" open><summary>课件视频 · 无声字幕</summary><p>来源：当前课件正文，由本机排版合成为无声字幕视频。</p><video v-if="videoUrl" :src="videoUrl" controls preload="metadata" aria-label="当前课件视频（无声字幕）"/><GenerationProgress v-if="videoBusy" :job="videoJob" label="课件视频"/><p v-else-if="videoStatus">{{ videoStatus }}</p><button v-if="!videoUrl && version && !videoChecking" :disabled="videoBusy" @click="createVideo">{{ videoBusy ? '视频制作中' : '制作当前课件视频' }}</button></details>
       <p v-if="metadata.schema !== 'teaching-v2'" role="status" class="legacy-notice">这是一份历史课件，正文不会随系统升级自动重写。旧版学情段落已停止展示，不能作为当前掌握度依据；请打开已生成的新版，或重新生成完整课件。</p>
       <p v-if="status" role="status">{{ status }}</p>
       <details v-for="(section, index) in sections" :key="section.key" :data-section="section.key" open>

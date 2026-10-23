@@ -36,6 +36,7 @@ from services.agent_service.app.services.chat_service import ChatService
 from services.agent_service.app.services.assistant_attachments import MAX_FILE_BYTES, attachment_context, extract_document_text, safe_file_name
 from services.agent_service.app.services.learning_path import LearningPathRevisionConflict, LearningPathService
 from common.learning_context import context_reference, validate_context
+from common.models.learning import LearningContext
 
 router = APIRouter()
 LOGGER = logging.getLogger(__name__)
@@ -333,6 +334,7 @@ def stream_assistant_chat(
 @router.get("/tasks")
 def list_tasks(
     conversation_id: int | None = None,
+    learning_context_id: str | None = None,
     limit: int = 30,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -341,6 +343,13 @@ def list_tasks(
     query = db.query(AssistantTask).filter(AssistantTask.user_id == current_user.id)
     if conversation_id is not None:
         query = query.filter(AssistantTask.session_id == conversation_id)
+    if learning_context_id is not None:
+        context = db.query(LearningContext).filter_by(id=learning_context_id, user_id=current_user.id).first()
+        if context is None:
+            return []
+        siblings = db.query(LearningContext.id).filter_by(user_id=current_user.id, plan_id=context.plan_id,
+            module_id=context.module_id, task_key=context.task_key, knowledge_point_id=context.knowledge_point_id)
+        query = query.filter(AssistantTask.request_json["learning_context_id"].as_string().in_(siblings))
     return [task_to_dict(task) for task in query.order_by(AssistantTask.id.desc()).limit(min(max(limit, 1), 100)).all()]
 
 

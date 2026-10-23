@@ -352,28 +352,123 @@ def stage_candidate(db: Session, actor: int, doc_id: str) -> KnowledgeCandidate:
     return item
 
 
+def _usable(item: dict) -> bool:
+    """A document only counts once it is published, active and index-consistent."""
+    return (
+        item["status"] != "ARCHIVED"
+        and bool(item["active_version"])
+        and item["index_status"] == "INDEXED"
+    )
+
+
+def _subject_documents(items: list[dict], subject_id: int) -> list[dict]:
+    return [item for item in items if item["subject_id"] == subject_id]
+
+
+def _point_state(points: list[KnowledgePoint], documents: list[dict]) -> dict:
+    """Map point id -> linked documents, split by usable / still pending."""
+    known = {point.id for point in points}
+    linked: dict[int, list[dict]] = {}
+    for item in documents:
+        for point_id in item["point_ids"]:
+            if point_id not in known:
+                continue
+            linked.setdefault(point_id, []).append(
+                {
+                    "id": item["id"],
+                    "title": item["title"],
+                    "status": item["status"],
+                    "index_status": item["index_status"],
+                    "usable": _usable(item),
+                }
+            )
+    covered = {point_id for point_id, docs in linked.items() if any(d["usable"] for d in docs)}
+    return {"linked": linked, "covered": covered}
+
+
 def coverage(db: Session, subject_id: int) -> dict:
-    if db.get(SystemSubject, subject_id) is None:
+    subject = db.get(SystemSubject, subject_id)
+    if subject is None:
         raise HTTPException(404, "Subject not found")
-    points = db.query(KnowledgePoint).filter_by(subject_id=subject_id).all()
-    covered = set()
-    for item in catalog(db):
-        if (
-            item["subject_id"] == subject_id
-            and item["status"] != "ARCHIVED"
-            and item["active_version"]
-            and item["index_status"] == "INDEXED"
-        ):
-            covered.update(item["point_ids"])
+    points = (
+        db.query(KnowledgePoint)
+        .filter_by(subject_id=subject_id)
+        .order_by(KnowledgePoint.chapter, KnowledgePoint.id)
+        .all()
+    )
+    documents = _subject_documents(catalog(db), subject_id)
+    state = _point_state(points, documents)
+    linked, covered = state["linked"], state["covered"]
+    detail = [
+        {
+            "id": point.id,
+            "name": point.name,
+            "chapter": point.chapter,
+            "difficulty": point.difficulty,
+            "importance": point.importance,
+            "construction_status": point.construction_status,
+            "objectives": point.objectives_json or [],
+            "prerequisites": point.prerequisites_json or [],
+            "documents": linked.get(point.id, []),
+            "covered": point.id in covered,
+        }
+        for point in points
+    ]
     missing = [{"id": p.id, "name": p.name} for p in points if p.id not in covered]
+    unlinked = [
+        {
+            "id": item["id"],
+            "title": item["title"],
+            "status": item["status"],
+            "index_status": item["index_status"],
+            "usable": _usable(item),
+        }
+        for item in documents
+        if not item["point_ids"]
+    ]
     total = len(points)
     return {
+        "subject_id": subject.id,
+        "subject_name": subject.name,
+        "code": subject.code,
         "total_points": total,
         "covered_points": total - len(missing),
         "missing_points": missing,
+        "points": detail,
+        "unlinked_documents": unlinked,
         "coverage": round((total - len(missing)) / total, 4) if total else None,
         "basis": "explicit point links + active reviewed publication + current manifest; live retrieval must be verified separately",
     }
+
+
+def overview(db: Session) -> dict:
+    """Per-subject counts in one pass, so the catalog page can label every card."""
+    items = catalog(db)
+    points_by_subject: dict[int | None, list[KnowledgePoint]] = {}
+    for point in db.query(KnowledgePoint).all():
+        points_by_subject.setdefault(point.subject_id, []).append(point)
+    rows = []
+    for subject in db.query(SystemSubject).order_by(SystemSubject.id).all():
+        points = points_by_subject.get(subject.id, [])
+        documents = _subject_documents(items, subject.id)
+        covered = _point_state(points, documents)["covered"]
+        total = len(points)
+        rows.append(
+            {
+                "id": subject.id,
+                "name": subject.name,
+                "code": subject.code,
+                "total_points": total,
+                "covered_points": len(covered),
+                "published_points": sum(
+                    1 for point in points if point.construction_status == "PUBLISHED"
+                ),
+                "document_count": len(documents),
+                "unlinked_documents": sum(1 for item in documents if not item["point_ids"]),
+                "coverage": round(len(covered) / total, 4) if total else None,
+            }
+        )
+    return {"items": rows}
 
 
 def preflight(db: Session, name: str) -> dict:

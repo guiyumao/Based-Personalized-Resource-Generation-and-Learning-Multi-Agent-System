@@ -2,7 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { evaluationApi } from '../api/http'
+import { formatDuration } from '../utils/duration'
 import LearningContent from './LearningContent.vue'
+import WeeklyActivityChart from './WeeklyActivityChart.vue'
 
 type Task = { task_id: string; title: string; knowledge_point: string; task_type: string }
 type Plan = { path_id: number; subject: string; knowledge_point: string; completed_tasks: number; total_tasks: number; completion_percent: number | null; pending_tasks: Task[] }
@@ -21,8 +23,7 @@ const overview = ref<Overview | null>(null)
 const loading = ref(false)
 const error = ref('')
 const days = computed(() => overview.value?.analytics.daily.slice(-7) ?? [])
-const maxSeconds = computed(() => Math.max(60, ...days.value.map(day => day.study_seconds ?? 0)))
-const minutes = (seconds: number | null | undefined) => seconds == null ? '尚未启用采集' : `${Math.floor(seconds / 60)} 分钟`
+const minutes = (seconds: number | null | undefined) => seconds == null ? '尚未启用采集' : formatDuration(seconds)
 async function refresh() {
   loading.value = true
   error.value = ''
@@ -59,21 +60,34 @@ onMounted(refresh)
             <ul v-if="plan.pending_tasks.length"><li v-for="task in plan.pending_tasks.slice(0, 3)" :key="task.task_id">{{ task.title || task.knowledge_point || '待学习任务' }}</li></ul>
             <el-button size="small" @click="openPlan">打开学习目录</el-button>
           </div>
-          <h3>近期生成资源</h3>
-          <div v-if="!overview.recent_resources.length" class="overview-empty">暂无生成资源</div>
-          <button v-for="resource in overview.recent_resources" :key="resource.id" type="button" class="overview-resource" @click="router.push({ path: '/student/resources', query: { resource: String(resource.id) } })">{{ resource.title || '未命名资源' }} <small>{{ resource.type }} · {{ resource.generation_status }}</small></button>
+        </article>
+        <article class="overview-activity" aria-label="近七日有效活动">
+          <h3>近七日有效活动</h3>
+          <WeeklyActivityChart :days="days" />
+          <p class="evidence-note">仅统计学习页面可见、获得焦点且近期有操作的活动；空闲和重复标签页不累计，不回填历史时长。</p>
         </article>
         <article>
-          <h3>近七日有效活动</h3>
-          <div v-for="day in days" :key="day.date" class="study-day"><time>{{ day.date.slice(5) }}</time><meter min="0" :max="maxSeconds" :value="day.study_seconds ?? 0" :aria-label="`${day.date}有效活动秒数`" /><span>{{ minutes(day.study_seconds) }}</span></div>
-          <p class="evidence-note">仅统计学习页面可见、获得焦点且近期有操作的活动；空闲和重复标签页不累计，不回填历史时长。</p>
           <h3>需要加强的知识点</h3>
           <div v-if="!overview.weak_points.length" class="overview-empty">暂无薄弱项证据，完成练习后更新。</div>
           <div v-for="point in overview.weak_points" :key="point.knowledge_point_id" class="overview-weak"><strong>{{ point.name }}</strong><span>{{ point.accuracy_percent }}% · {{ point.graded_answers }} 次判分{{ point.confidence === 'low' ? ' · 样本不足' : '' }}</span><el-button size="small" @click="router.push({ path: '/student/exercise', query: { topic: point.name } })">补强练习</el-button></div>
-          <ul class="overview-suggestions"><li v-for="suggestion in overview.suggestions" :key="suggestion"><LearningContent :content="suggestion" /></li></ul>
+        </article>
+        <article>
+          <h3>AI 学习建议</h3>
+          <ul v-if="overview.suggestions.length" class="overview-suggestions"><li v-for="suggestion in overview.suggestions" :key="suggestion"><LearningContent :content="suggestion" /></li></ul>
+          <div v-else class="overview-empty">产生更多学习记录后，这里会给出个性化建议。</div>
           <nav aria-label="学习快捷入口"><el-button @click="router.push('/student/report')">学情报告</el-button><el-button @click="router.push('/student/mistakes')">错题本</el-button><el-button @click="router.push('/student/knowledge-graph')">知识图谱</el-button></nav>
         </article>
       </div>
+      <section class="overview-resources" aria-label="近期生成资源">
+        <header><h3>近期生成资源</h3><el-button v-if="overview.recent_resources.length" size="small" text type="primary" @click="router.push('/student/resources')">查看全部 →</el-button></header>
+        <div v-if="!overview.recent_resources.length" class="overview-empty">暂无生成资源</div>
+        <div v-else class="resource-grid">
+          <button v-for="resource in overview.recent_resources.slice(0, 8)" :key="resource.id" type="button" class="resource-card" @click="router.push({ path: '/student/resources', query: { resource: String(resource.id) } })">
+            <strong>{{ resource.title || '未命名资源' }}</strong>
+            <small><span class="resource-tag">{{ resource.type }}</span>{{ resource.generation_status }}</small>
+          </button>
+        </div>
+      </section>
     </template>
   </section>
 </template>
@@ -86,10 +100,21 @@ p,small,.overview-empty,.evidence-note { color:var(--muted); line-height:1.7; }
 .overview-metrics { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
 .overview-metrics>div,.overview-metrics>button { display:grid; gap:10px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--surface-muted); text-align:left; color:var(--text); font:inherit; }
 .overview-metrics span { color:var(--muted); font-size:13px; }.overview-metrics strong { font-size:20px; }
-.overview-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px; }.overview-columns article { min-width:0; }
+.overview-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px 28px; align-items:start; margin-top:20px; }.overview-columns article { min-width:0; }
+.overview-columns article > h3:first-child,.overview-columns article > header h3 { margin-top:0; }
+.overview-activity { padding:18px; border:1px solid var(--line); border-radius:12px; background:var(--surface-muted); }
+.overview-activity .evidence-note { margin:8px 0 0; }
 .overview-plan { padding:16px; border:1px solid var(--line); border-radius:12px; margin-bottom:12px; }.overview-plan ul,.overview-suggestions { padding-left:20px; line-height:1.8; }
-.overview-resource { display:block; width:100%; background:none; border:0; border-bottom:1px solid var(--line); padding:12px 0; color:var(--text); text-align:left; font:inherit; overflow-wrap:anywhere; cursor:pointer; }.overview-resource small { display:block; }
-.study-day { display:flex; gap:12px; align-items:center; margin:9px 0; font-size:12px; }.study-day meter { flex:1; min-width:20px; }.study-day span { min-width:64px; }.evidence-note { font-size:12px; }
+.overview-resources { margin-top:24px; padding-top:18px; border-top:1px solid var(--line); }
+.overview-resources > header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.overview-resources h3 { margin:0; }
+.resource-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; }
+.resource-card { display:grid; gap:8px; align-content:start; padding:14px; border:1px solid var(--line); border-radius:12px; background:var(--surface-muted); color:var(--text); text-align:left; font:inherit; cursor:pointer; transition:border-color .15s ease, background .15s ease, transform .15s ease; }
+.resource-card:hover { border-color:color-mix(in srgb,var(--accent) 40%,var(--line)); background:var(--accent-soft); transform:translateY(-1px); }
+.resource-card strong { font-size:13px; line-height:1.5; overflow-wrap:anywhere; display:-webkit-box; overflow:hidden; -webkit-line-clamp:2; -webkit-box-orient:vertical; min-height:2.9em; }
+.resource-card small { color:var(--muted); font-size:11px; display:flex; align-items:center; gap:6px; }
+.resource-tag { padding:2px 7px; border-radius:6px; background:var(--accent-soft); color:var(--accent); font-weight:700; }
+.evidence-note { font-size:12px; }
 .overview-weak { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:12px 0; }.overview-weak span { color:var(--muted); font-size:12px; } nav { display:flex; flex-wrap:wrap; gap:8px; }
 button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 @media(max-width:1000px) { .overview-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } }

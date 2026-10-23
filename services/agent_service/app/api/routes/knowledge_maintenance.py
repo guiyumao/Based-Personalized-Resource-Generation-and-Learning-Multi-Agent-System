@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from common.db.session import get_db
 from common.dependencies import require_role
 from common.models.learning import KnowledgeMaintenancePlan, User
-from services.agent_service.app.services.knowledge_maintenance import MaintenancePolicy, create_plan, plan_to_dict
+from services.agent_service.app.services.knowledge_maintenance import MaintenancePolicy, _require_existing_subject, create_plan, plan_to_dict
 
 router = APIRouter(prefix="/knowledge-base/maintenance-plans", tags=["knowledge-maintenance"])
 
@@ -75,6 +75,10 @@ def update_maintenance_plan(
     if "name" in fields and payload.name is not None:
         plan.name = payload.name.strip()
     if "subject" in fields and payload.subject is not None:
+        try:
+            _require_existing_subject(db, payload.subject.strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         plan.subject = payload.subject.strip()
     if "interval_hours" in fields:
         plan.interval_hours = payload.interval_hours

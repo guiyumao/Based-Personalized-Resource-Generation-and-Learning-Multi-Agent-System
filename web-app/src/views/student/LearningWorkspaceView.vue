@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentApi, evaluationApi, userApi } from '../../api/http'
 import { useAuthStore } from '../../stores/auth'
 import { renderLearningMarkdown } from '../../utils/renderLearningMarkdown'
 import ResourceArtifactPanel from '../../components/ResourceArtifactPanel.vue'
+import GenerationProgress from '../../components/GenerationProgress.vue'
 import CoursewareReader from '../../components/CoursewareReader.vue'
 import MindmapEditor from '../../components/MindmapEditor.vue'
+import { workspaceJobs, workspaceJobKey, jobFinished, resumeWorkspaceJob, startWorkspaceJob } from '../../stores/workspaceGeneration'
 
 type Task = { task_id: string; title: string; task_type: string; knowledge_point: string; completed: boolean }
 type Stage = { stage_id: string; title: string; tasks: Task[] }
@@ -23,10 +25,12 @@ const toolsOpen = ref(true); const outlineOpen = ref(true)
 const question = ref(''); const answer = ref(''); const conversationId = ref<number>(); const asking = ref(false)
 const noteBody = ref(''); const noteTitle = ref(''); const noteSaved = ref(false)
 const answers = ref<Record<number, string>>({}); const attemptIds = ref<Record<number, string>>({})
-type Job = { partial_resource?: { id: number; title: string; content: string; structured_json: string }; id: number; status: string; current_step: string; result?: { cards?: { learning_context_id?: string }[]; content?: string; evidence?: { knowledge_coverage?: { state: string }; knowledge_supplementation?: { status: string; candidate_ids: number[]; reused: boolean } } } }
-const job = ref<Job | null>(null)
-const submitting = ref(false); const allowWeb = ref(true)
-const jobBusy = computed(() => submitting.value || !!job.value && !['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(job.value.status))
+const generation = computed(() => auth.user && snapshot.value ? workspaceJobs[workspaceJobKey(auth.user.userId, snapshot.value.id)] : undefined)
+const job = computed(() => generation.value?.job ?? null)
+const lastAction = ref<'courseware' | 'exercise'>('courseware')
+const generatingLabel = computed(() => (job.value?.task_type || lastAction.value) === 'exercise' ? '练习' : '课件')
+const allowWeb = ref(true)
+const jobBusy = computed(() => !!generation.value?.submitting || !!job.value && !jobFinished(job.value))
 const reusableCourseware = computed(() => snapshot.value?.resource_candidates.find(item => item.type === 'courseware' && item.teaching_schema === 'teaching-v2' && taskResources.value.some(binding => binding.id === item.id && binding.plan_id === snapshot.value?.plan_id && binding.module_id === snapshot.value?.module_id && binding.task_id === snapshot.value?.task_id)))
 const hasCourseware = computed(() => !!reusableCourseware.value)
 const supplementationText = computed(() => {
@@ -38,7 +42,6 @@ const supplementationText = computed(() => {
 })
 function resourcesFor(stage: Stage, task: Task) { return taskResources.value.filter(item => item.plan_id === planId.value && item.module_id === stage.stage_id && item.task_id === task.task_id) }
 let selectionSequence = 0
-let timer: ReturnType<typeof setInterval> | undefined
 const selectedPlan = computed(() => plans.value.find(plan => plan.id === planId.value))
 const resourceHtml = computed(() => renderLearningMarkdown(snapshot.value?.resource?.content ?? ''))
 const supportedText = computed(() => ['article', 'courseware', 'notes', 'text', 'summary', 'code_case'].includes(snapshot.value?.resource?.type ?? ''))
@@ -65,12 +68,7 @@ async function load() {
     const data = (await agentApi.get(`/learning/contexts/${contextId}`)).data
     if (String(route.params.contextId) === contextId) {
       snapshot.value = data; planId.value = data.plan_id
-      const pending = Number(sessionStorage.getItem(`workspace-job:${contextId}`))
-      if (pending && job.value?.id !== pending) {
-        job.value = { id: pending, status: 'PENDING', current_step: '恢复任务进度' }
-        clearInterval(timer); timer = setInterval(() => void pollJob(contextId), 2000)
-        void pollJob(contextId)
-      }
+      if (auth.user) await resumeWorkspaceJob(auth.user.userId, contextId)
     }
   } catch (reason) { if (String(route.params.contextId) === contextId) { snapshot.value = null; error.value = describe(reason) } }
   finally { if (String(route.params.contextId) === contextId) loading.value = false }
@@ -113,41 +111,18 @@ async function saveNote() {
     if (snapshot.value?.id === current.id) noteSaved.value = true
   } catch (reason) { error.value = describe(reason) }
 }
-async function pollJob(contextId: string) {
-  if (!job.value || snapshot.value?.id !== contextId) return
-  const id = job.value.id
-  try {
-    const update: Job = (await agentApi.get(`/assistant/tasks/${id}`)).data
-    if (snapshot.value?.id !== contextId || job.value?.id !== id) return
-    job.value = update
-    if (['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(update.status)) {
-      clearInterval(timer); sessionStorage.removeItem(`workspace-job:${contextId}`)
-      await catalog()
-      const linked = update.result?.cards?.find(card => card.learning_context_id)?.learning_context_id
-      if (linked && update.status === 'SUCCEEDED') await router.replace(`/student/workspace/${linked}`)
-      else await load()
-      job.value = update
-    }
-  } catch (reason) { clearInterval(timer); error.value = describe(reason) }
-}
 async function generate(action: 'courseware' | 'exercise', force = false) {
   const current = snapshot.value; if (!current) return
   if (jobBusy.value) return
   const reusable = reusableCourseware.value
   if (action === 'courseware' && reusable && !force) { await openResource(reusable); return }
-  submitting.value = true
+  lastAction.value = action
   error.value = ''
   try {
-    const { data } = await agentApi.post('/assistant/chat', { message: `${force ? '重新生成' : '生成'}${current.knowledge_point}的${action === 'exercise' ? '3道练习' : '课件'}`,
+    await startWorkspaceJob(auth.user!.userId, current.id, { message: `${force ? '重新生成' : '生成'}${current.knowledge_point}的${action === 'exercise' ? '3道练习' : '课件'}`,
       action, knowledge_point: current.knowledge_point, learning_context_id: current.id, course_key: current.subject,
       allow_web_knowledge: allowWeb.value, client_request_id: crypto.randomUUID(), exercise_count: 3 })
-    if (snapshot.value?.id !== current.id) return
-    job.value = data.task
-    sessionStorage.setItem(`workspace-job:${current.id}`, String(data.task.id))
-    clearInterval(timer)
-    timer = setInterval(() => void pollJob(current.id), 2000)
-  } catch (reason) { error.value = describe(reason) }
-  finally { submitting.value = false }
+  } catch (reason) { if (snapshot.value?.id === current.id) error.value = describe(reason) }
 }
 async function submit(quiz: Quiz) {
   const current = snapshot.value; if (!current) return
@@ -161,10 +136,22 @@ async function submit(quiz: Quiz) {
 }
 watch(() => route.params.contextId, () => {
   snapshot.value = null; conversationId.value = undefined; question.value = ''; answer.value = ''; noteBody.value = ''; noteSaved.value = false
-  clearInterval(timer); job.value = null; answers.value = {}; attemptIds.value = {}; void load()
+  answers.value = {}; attemptIds.value = {}; void load()
 })
 onMounted(async () => { await catalog(); await load() })
-onUnmounted(() => clearInterval(timer))
+watch(() => [snapshot.value?.id, job.value?.id, job.value?.status] as const, async ([contextId, id, status]) => {
+  if (!contextId || !id || status !== 'SUCCEEDED') return
+  const linked = job.value?.result?.cards?.find(card => card.learning_context_id)?.learning_context_id
+  await catalog()
+  if (snapshot.value?.id !== contextId) return
+  if (linked && linked !== contextId) await router.replace(`/student/workspace/${linked}`)
+  else {
+    try {
+      const { data } = await agentApi.get(`/learning/contexts/${contextId}`)
+      if (snapshot.value?.id === contextId) snapshot.value = data
+    } catch (reason) { error.value = describe(reason) }
+  }
+})
 </script>
 
 <template>
@@ -190,8 +177,10 @@ onUnmounted(() => clearInterval(timer))
           </template>
           <p v-else>当前任务尚未选择资源。可打开上方已有资源，或提交课件生成任务。</p>
           <div class="workspace-actions"><el-button :disabled="jobBusy" @click="generate('courseware')">{{ hasCourseware ? '打开已有课件' : '生成课件' }}</el-button><el-button v-if="hasCourseware" :disabled="jobBusy" @click="generate('courseware', true)">重新生成课件</el-button><el-button :disabled="jobBusy" @click="generate('exercise')">生成3道练习</el-button><el-checkbox v-model="allowWeb" :disabled="jobBusy">资料不足时联网补充并保存</el-checkbox></div>
+          <GenerationProgress v-if="jobBusy" :job="job" :submitting="!!generation?.submitting" :label="generatingLabel" />
           <section v-if="job?.partial_resource && job.status !== 'SUCCEEDED'" class="partial-courseware"><h3>{{ job.partial_resource.title }} · 已保存章节</h3><p>已完成的章节可先阅读，其余章节继续生成。</p><CoursewareReader :content="job.partial_resource.content" :structured="job.partial_resource.structured_json" /></section>
           <ResourceArtifactPanel v-if="snapshot.resource" :key="snapshot.id" :context-id="snapshot.id"/>
+          <el-alert v-if="generation?.error" :title="generation.error" type="warning" :closable="false" />
           <el-alert v-if="job" :title="`任务 #${job.id} · ${job.status} · ${job.current_step}`" :type="job.status === 'FAILED' ? 'error' : 'info'" :closable="false"><div v-if="job.result?.content">{{ job.result.content }}</div><p v-if="supplementationText">{{ supplementationText }}</p></el-alert>
           <section v-for="quiz in snapshot.exercises" :key="quiz.exercise_id" class="workspace-quiz"><div class="markdown-content quiz-prompt" v-html="renderLearningMarkdown(quiz.prompt)" /><div v-for="option in quiz.options" :key="option" class="markdown-content quiz-option" v-html="renderLearningMarkdown(option)" /><el-input v-model="answers[quiz.exercise_id]" :aria-label="`题目${quiz.exercise_id}答案`" placeholder="输入你的答案" /><el-button @click="submit(quiz)">提交作答</el-button><el-alert v-if="quiz.feedback" :title="`${quiz.feedback.is_correct ? '回答正确' : '需要复习'} · ${quiz.feedback.score}/${quiz.feedback.max_score}`" :type="quiz.feedback.is_correct ? 'success' : 'warning'" :closable="false"><div v-html="renderLearningMarkdown(quiz.feedback.explanation)" /></el-alert></section>
         </template>

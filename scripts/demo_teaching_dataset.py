@@ -51,6 +51,10 @@ TZ = timezone(timedelta(hours=8))
 SEMESTER = "2026-2027-1"
 WEEK_START = "2026-09-07"
 WEEK_END = "2027-01-10"
+# 演示管理员：演示账号一律由本脚本创建（含 /system 管理端用例所需的管理员）。
+# 注意只有 ROLE 能通过 HTTP 完成的操作才写进角色用例；账号与题库属于环境准备。
+DEMO_ADMIN = ("demo_admin", "演示管理员")
+DEFAULT_QUESTION_BANK_PER_POINT = 20
 
 
 # --------------------------------------------------------------------------- #
@@ -427,14 +431,11 @@ def seed(db_path: Path, *, refresh: bool = False) -> dict:
     from common.db.session import SessionLocal
     from common.models.checkin import AttendanceSession, CheckinTask
     from common.models.learning import (
-        AnswerRecord,
         Assignment,
         AssignmentSubmission,
         ClassEnrollment,
         Classroom,
         Course,
-        Exercise,
-        KnowledgePoint,
         User,
         UserProfile,
     )
@@ -518,6 +519,28 @@ def seed(db_path: Path, *, refresh: bool = False) -> dict:
                 )
                 bump("created", "students")
             student_ids[student.key] = existing.id
+        admin_username, admin_name = DEMO_ADMIN
+        existing_admin = db.query(User).filter_by(username=admin_username).first()
+        if existing_admin is None:
+            existing_admin = User(
+                username=admin_username,
+                password_hash=password_hash,
+                role="admin",
+                email=f"admin@demo.local",
+                is_active=True,
+            )
+            db.add(existing_admin)
+            db.flush()
+            db.add(
+                UserProfile(
+                    user_id=existing_admin.id,
+                    mastery_json={},
+                    learning_style="",
+                    cognitive_abilities={},
+                    habits={},
+                )
+            )
+            bump("created", "admins")
         db.commit()
 
     # ------------------------------------------------- administrative cohorts
@@ -1077,56 +1100,28 @@ def seed(db_path: Path, *, refresh: bool = False) -> dict:
         except Exception as exc:  # noqa: BLE001
             report["errors"].append(f"attendance-close {spec['key']}: {exc}")
 
-    # -------------------------------------------------------- answer evidence
-    # Real exercises already exist for 数据结构(2) and 计算机网络(3). They are the
-    # only subjects with published knowledge points, so analytics stay evidence-based.
-    subject_pool = {"数据结构": 2, "计算机网络": 3}
-    with SessionLocal() as db:
-        for class_spec in CLASSROOMS:
-            course = COURSES[class_spec["course"]]
-            subject_id = subject_pool.get(course["subject"])
-            if subject_id is None:
-                continue
-            exercise_rows = (
-                db.query(Exercise.id)
-                .join(KnowledgePoint, KnowledgePoint.id == Exercise.knowledge_point_id)
-                .filter(KnowledgePoint.subject_id == subject_id)
-                .order_by(Exercise.id)
-                .limit(40)
-                .all()
-            )
-            exercise_ids = [row[0] for row in exercise_rows]
-            if not exercise_ids:
-                continue
-            members = [s for s in STUDENTS if s.cohort in class_spec["cohorts"]]
-            for student in members:
-                user_id = student_ids[student.key]
-                if db.query(AnswerRecord).filter_by(user_id=user_id).count() >= 6:
-                    bump("skipped", "answers")
-                    continue
-                accuracy = {"excellent": 0.9, "normal": 0.72, "struggling": 0.45, "pending": 0.6}[
-                    student.persona
-                ]
-                count = 8
-                for index in range(count):
-                    exercise_id = exercise_ids[
-                        (STUDENTS.index(student) * 3 + index) % len(exercise_ids)
-                    ]
-                    correct = _stable_ratio(student.key, exercise_id, index) <= accuracy
-                    db.add(
-                        AnswerRecord(
-                            user_id=user_id,
-                            exercise_id=exercise_id,
-                            user_answer="A" if correct else "B",
-                            is_correct=correct,
-                            time_spent=40 + int(_stable_ratio(student.key, index) * 120),
-                            evaluation_json={"source": "demo_seed"},
-                            created_at=datetime.utcnow()
-                            - timedelta(days=20 - index, hours=index),
-                        )
-                    )
-                    bump("created", "answers")
-        db.commit()
+    # ------------------------------------------------------ demo question bank
+    # Only the *question bank* and the teaching scope are seeded here. Answer
+    # records are never written by seeding: 学情 must come from real students
+    # answering through POST /evaluation/submit (scripts/demo_role_use_cases.py),
+    # where ReportService compares the submitted answer against the stored one.
+    #
+    # Right after `seed` finishes a demo class therefore has **no** analytics yet.
+    # Run `scripts/demo_role_use_cases.py` to have the roles actually act.
+    from scripts.demo_learning_evidence import build_question_bank
+
+    question_bank = build_question_bank(db_path, DEFAULT_QUESTION_BANK_PER_POINT)
+    report["question_bank"] = {
+        "created_clones": question_bank["created_clones"],
+        "updated_scopes": question_bank["updated_scopes"],
+        "created_scopes": question_bank["created_scopes"],
+        "questions": len(question_bank["questions"]),
+        "skipped": question_bank["skipped"],
+    }
+    report["analytics_ready"] = False
+    report["analytics_note"] = (
+        "seed 不写作答记录：学情需由真实角色用例 scripts/demo_role_use_cases.py 产生"
+    )
 
     if refresh:
         report["refreshed"] = refresh_windows(db_path)
@@ -1371,6 +1366,7 @@ def reset(db_path: Path) -> dict:
         ClassEnrollment,
         Classroom,
         Course,
+        Exercise,
         HomeworkAttachment,
         LearningPath,
         Notification,
@@ -1415,7 +1411,18 @@ def reset(db_path: Path) -> dict:
             AttendanceSession.class_id.in_(class_ids)
         )
 
+        # 演示题库（demo-evidence-<源题id>）及其之上的全部作答都属于演示数据：
+        # 先删作答再删题，避免留下指向已删题目的孤儿记录。
+        clone_ids = [
+            row[0]
+            for row in db.query(Exercise.id).filter(
+                Exercise.assistant_operation_key.like("demo-evidence-%")
+            )
+        ]
+        if clone_ids:
+            drop(AnswerRecord, AnswerRecord.exercise_id.in_(clone_ids))
         drop(AnswerRecord, AnswerRecord.user_id.in_(demo_ids))
+        drop(Exercise, Exercise.assistant_operation_key.like("demo-evidence-%"))
         drop(LearningPath, LearningPath.user_id.in_(demo_ids))
         drop(CheckinSubmissionRevision, CheckinSubmissionRevision.submission_id.in_(checkin_sub_ids))
         drop(CheckinSubmissionRevision, CheckinSubmissionRevision.actor_user_id.in_(demo_ids))

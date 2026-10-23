@@ -44,6 +44,19 @@ def plan_to_dict(plan: KnowledgeMaintenancePlan) -> dict[str, Any]:
     }
 
 
+def _require_existing_subject(db: Session, subject: str) -> None:
+    """Reject free-typed subjects that do not match any catalog entry.
+
+    A typo here would otherwise produce a plan that silently no-ops with
+    SUBJECT_NOT_IN_CATALOG on every run, so fail fast at creation time.
+    """
+    if not subject:
+        return
+    from services.agent_service.app.services.knowledge_construction import find_subject
+    if find_subject(db, subject) is None:
+        raise ValueError("Unknown subject: pick an existing subject name or code from the subject catalog")
+
+
 def create_plan(
     db: Session, *, actor_user_id: int, name: str, subject: str,
     next_run_at: datetime, interval_hours: int | None,
@@ -56,6 +69,7 @@ def create_plan(
     utc_run = next_run_at.astimezone(timezone.utc).replace(tzinfo=None)
     if utc_run <= datetime.utcnow():
         raise ValueError("First run must be in the future")
+    _require_existing_subject(db, subject.strip())
     plan = KnowledgeMaintenancePlan(
         actor_user_id=actor_user_id, name=name.strip(), subject=subject.strip(),
         interval_hours=interval_hours, enabled=True, next_run_at=utc_run,

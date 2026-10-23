@@ -13,6 +13,7 @@ import {
   type ResourceVariant,
 } from '../api'
 import { useAuthStore } from '../stores/auth'
+import { isPathGenerationBusy, onPathGenerationSettled, resumePathGeneration } from '../stores/pathGeneration'
 
 type CoursewareSection = {
   heading: string
@@ -118,11 +119,71 @@ function finishProgress() {
 
 onMounted(async () => {
   if (!snapshot.value) {
+    // A learning-path generation queued on the other page (or before a reload)
+    // may still be writing this topic's courseware; adopt it instead of paying
+    // for a second task.
+    const userId = authStore.user?.userId ?? 0
+    if (userId) {
+      void resumePathGeneration(userId)
+    }
+    if (isPathGenerationBusy() && await adoptBackgroundCourseware()) {
+      return
+    }
     await generateFromLatestPath()
   } else {
     await refreshSavedCourseware()
   }
 })
+
+const BACKGROUND_COURSEWARE_WAIT_MS = 12 * 60 * 1000
+
+/**
+ * Wait for the background learning-path task to settle, then load the courseware
+ * snapshot it persisted. Returns false when no courseware became available (the
+ * caller then falls back to requesting one).
+ */
+async function adoptBackgroundCourseware(): Promise<boolean> {
+  autoGenerating.value = true
+  setProgress('path', 12)
+  setProgress('generate', 20)
+  progressStages.value = progressStages.value.map(stage =>
+    stage.key === 'generate'
+      ? { ...stage, detail: '学习路径页发起的后台任务仍在生成课件，完成后会自动展开。' }
+      : stage,
+  )
+  try {
+    await waitForBackgroundGeneration()
+  } finally {
+    autoGenerating.value = false
+  }
+  const stored = readStoredSnapshot()
+  if (!mounted || !stored) {
+    return false
+  }
+  snapshot.value = stored
+  selectedVariantId.value = stored.selectedVariantId || ''
+  finishProgress()
+  ElMessage.success('课件已由后台生成任务完成')
+  void refreshSavedCourseware()
+  return true
+}
+
+function waitForBackgroundGeneration(): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const finish = () => {
+      if (settled) return
+      settled = true
+      off()
+      if (timer) clearTimeout(timer)
+      resolve()
+    }
+    const off = onPathGenerationSettled(() => finish())
+    timer = setTimeout(finish, BACKGROUND_COURSEWARE_WAIT_MS)
+    if (!isPathGenerationBusy()) finish()
+  })
+}
 
 function readStoredSnapshot(): StoredCoursewareSnapshot | null {
   if (typeof window === 'undefined') {

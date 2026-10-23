@@ -146,6 +146,11 @@ def reconcile_publications(
     )
 
 
+@router.get("/subjects/overview")
+def subject_overview(db: Session = Depends(get_db)):
+    return service.overview(db)
+
+
 @router.get("/subjects/{subject_id}/coverage")
 def coverage(subject_id: int, db: Session = Depends(get_db)):
     return service.coverage(db, subject_id)

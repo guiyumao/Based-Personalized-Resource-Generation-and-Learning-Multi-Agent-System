@@ -1,32 +1,35 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import {
   agentApi,
   evaluationApi,
+  resourceApi,
   teacherApi,
   type ApiEnvelope,
   type CoordinationResponse,
-  type ExerciseGenerationResponse,
   type KnowledgeSubjectCatalogResponse,
   type KnowledgeSubjectOption,
   type LearningPathPayload,
   type LearningPathResponse,
   type LearningTaskItem,
-  type ResourceResult,
+  type ManagedResourceItem,
   type TeachingScopeItem,
   type TranscriptAnalysis,
 } from '../../api'
+import { writeStudentWorkspaceContext } from '../../utils/studentWorkspace'
 import {
-  clearStudentWorkspaceArtifacts,
-  COURSEWARE_STORAGE_KEY,
-  EXERCISE_STORAGE_KEY,
-  sameWorkspaceTopic,
-  writeStudentWorkspaceContext,
-} from '../../utils/studentWorkspace'
+  isPathGenerationBusy,
+  pathGenerationState,
+  resumePathGeneration,
+  startPathGeneration,
+  type PathGenerationMeta,
+} from '../../stores/pathGeneration'
 import LearningAtmosphere from '../../components/LearningAtmosphere.vue'
+import GenerationProgress from '../../components/GenerationProgress.vue'
+import LearningContent from '../../components/LearningContent.vue'
 import PlanAdaptationPanel from '../../components/PlanAdaptationPanel.vue'
 import PlanFeedbackPanel from '../../components/PlanFeedbackPanel.vue'
 import TaskFeedbackButton from '../../components/TaskFeedbackButton.vue'
@@ -45,9 +48,16 @@ const pathForm = reactive<LearningPathPayload>({
 })
 
 const learningPath = ref<LearningPathResponse | null>(null)
-const loading = ref(false)
-let pageDisposed = false
-onUnmounted(() => { pageDisposed = true })
+// The generation itself is owned by stores/pathGeneration, so leaving this page
+// neither aborts the server task nor loses the finished result.
+const loading = computed(() => isPathGenerationBusy())
+// The coordination task exposes no per-agent step, so surface phase + elapsed time.
+const pathJob = computed(() => loading.value ? {
+  id: pathGenerationState.taskId,
+  status: pathGenerationState.taskId ? 'RUNNING' : 'PENDING',
+  current_step: pathGenerationState.taskId ? '正在生成学习路径、课件与配套练习' : '正在提交生成任务',
+  created_at: new Date(pathGenerationState.startedAt || Date.now()).toISOString(),
+} : null)
 const pathError = ref('')
 const knowledgeCheck = ref<{ ready: boolean; message: string; reason: string; mode?: string; gap_id?: string } | null>(null)
 async function checkKnowledge() {
@@ -61,12 +71,17 @@ async function checkKnowledge() {
   return Boolean(data.ready)
 }
 const coordination = ref<CoordinationResponse | null>(null)
-const generationTaskId = ref(0)
 const historyItems = ref<PathHistoryItem[]>([])
 const historyLoading = ref(false)
 const historyError = ref('')
 const loadingHistoryId = ref(0)
 const activeHistoryId = ref(0)
+/** Courseware generated with the currently shown path; opened from history, never regenerated. */
+type ActiveCourseware = { id: number; title: string; created_at: string | null }
+const activeCourseware = ref<ActiveCourseware | null>(null)
+const coursewareOpen = ref(false)
+const coursewareLoading = ref(false)
+const coursewareDetail = ref<{ id: number; title: string; content: string; created_at: string | null } | null>(null)
 const teachingScopes = ref<TeachingScopeItem[]>([])
 const scopeLoading = ref(false)
 const knowledgeSubjects = ref<KnowledgeSubjectOption[]>([])
@@ -195,56 +210,33 @@ function syncTeacherScopeFromPath(path: LearningPathResponse) {
   }
 }
 
-function persistTeacherScopeCourseware(scope: TeachingScopeItem, path: LearningPathResponse) {
-  if (!scope.courseware_content.trim()) {
-    return
-  }
-  const content = scope.courseware_content.trim().startsWith('#')
-    ? scope.courseware_content
-    : `# ${scope.courseware_title}\n\n${scope.courseware_content}`
-  const resourceResult: ResourceResult = {
-    user_id: user.userId,
-    knowledge_point: path.knowledge_point,
-    resource_type: 'courseware',
-    resource_style: 'teacher',
-    references: [],
-    content,
-    variants: [
-      {
-        variant_id: `teacher-scope-${scope.id}`,
-        title: scope.courseware_title,
-        summary: scope.learning_direction,
-        resource_style: 'interactive',
-        content,
-        is_recommended: true,
-      },
-    ],
-  }
-  window.sessionStorage.setItem(COURSEWARE_STORAGE_KEY, JSON.stringify({
-    subject: path.subject,
-    topic: path.knowledge_point,
-    goal: path.overview,
-    selectedVariantId: `teacher-scope-${scope.id}`,
-    generatedAt: Date.now(),
-    resourceResult,
-    teacherScope: scope,
-  }))
-}
-
 onMounted(async () => {
   void fetchHistory()
+  // Reattach to a generation that was queued on an earlier visit: the server
+  // worker kept going, so this page only has to resume watching it.
+  void resumePathGeneration(user.userId)
+  if (pathGenerationState.phase === 'succeeded' && pathGenerationState.result) {
+    // It finished while another route was open; show that result immediately
+    // instead of waiting for a reload to re-read the saved plan.
+    appliedRevision = pathGenerationState.revision
+    applyCoordinatedResult(pathGenerationState.result)
+  }
   await Promise.all([fetchTeachingScopes(), fetchKnowledgeSubjects()])
   try {
     const { data } = await agentApi.get<LearningPathResponse>(`/paths/${user.userId}`)
-    if (data?.stages?.length) {
+    if (data?.stages?.length && !learningPath.value) {
       learningPath.value = data
-      pathForm.subject = knowledgeSubjects.value.find(
-        (subject) => subject.label === data.subject || subject.value === data.subject,
-      )?.label ?? data.subject
-      selectedKnowledgeSubject.value = knowledgeSubjects.value.find(
-        (subject) => subject.label === data.subject || subject.value === data.subject,
-      )?.label ?? ''
-      pathForm.knowledge_point = data.knowledge_point
+      // An in-flight generation owns the form inputs; overwriting them would
+      // send the learner back to the previous topic while it is still running.
+      if (!isPathGenerationBusy()) {
+        pathForm.subject = knowledgeSubjects.value.find(
+          (subject) => subject.label === data.subject || subject.value === data.subject,
+        )?.label ?? data.subject
+        selectedKnowledgeSubject.value = knowledgeSubjects.value.find(
+          (subject) => subject.label === data.subject || subject.value === data.subject,
+        )?.label ?? ''
+        pathForm.knowledge_point = data.knowledge_point
+      }
       syncTeacherScopeFromPath(data)
     }
   } catch {
@@ -289,64 +281,37 @@ async function generateLearningPath() {
     ElMessage.warning('请先输入学习主题')
     return
   }
+  if (isPathGenerationBusy()) {
+    return
+  }
 
-  loading.value = true
   pathError.value = ''
   coordination.value = null
   try {
     pathForm.user_id = user.userId
     if (!await checkKnowledge()) return
-    await requestCoordination()
-
-    const coordinatedPath = coordination.value?.outputs?.path_planning_agent?.learning_path as LearningPathResponse | undefined
-    if (!coordinatedPath) {
-      throw new Error(describeAgentFailure(coordination.value?.outputs?.path_planning_agent))
+    const previousTopic = learningPath.value?.knowledge_point || pathForm.knowledge_point
+    const meta: PathGenerationMeta = {
+      userId: user.userId,
+      subject: pathForm.subject,
+      knowledgePoint: pathForm.knowledge_point,
+      requestedTopic,
+      previousTopic,
     }
-
-    clearWorkspaceForNewTopic(requestedTopic)
-    learningPath.value = coordinatedPath
-    // Only claim the published version is in use when it actually is: on a
-    // personal-draft fallback the model integration has not landed yet and the
-    // draft alert has to stay authoritative.
-    if (coordinatedPath.knowledge_scope === 'public') {
-      knowledgeCheck.value = { ready: true, mode: 'public', reason: 'READY',
-        message: '公共知识已由模型自动审核、修订并融入，正在使用已发布版本。' }
-    }
-    pathForm.subject = coordinatedPath.subject
-    pathForm.knowledge_point = coordinatedPath.knowledge_point
-    persistWorkspaceContext(coordinatedPath)
-    const hasTeacherScope = Boolean(coordinatedPath.teacher_scope)
-    syncTeacherScopeFromPath(coordinatedPath)
-    if (!hasTeacherScope) {
-      persistCoordinatedCourseware()
-    }
-    persistCoordinatedExercises()
-    notifyGenerationResult()
+    // Ownership of polling and result persistence lives outside this component:
+    // the learner may navigate away before the worker finishes.
+    await startPathGeneration(buildCoordinationBody(), meta)
   } catch (error: any) {
     const rawDetail = error?.response?.data?.detail
     const detail = typeof rawDetail === 'string' ? rawDetail : rawDetail?.message ?? error?.message ?? '未知错误'
     pathError.value = `请求失败：${detail}`
     ElMessage.error(pathError.value)
-  } finally {
-    loading.value = false
   }
 }
 
-async function waitForCoordination(taskId: number): Promise<CoordinationResponse> {
-  const deadline = Date.now() + 6 * 60 * 1000
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    if (pageDisposed) throw new Error('页面已离开，任务仍在后台生成，可在「历史生成」中查看')
-    const { data } = await agentApi.get<any>(`/agents/coordinate/tasks/${taskId}`)
-    if (data.status === 'SUCCEEDED') return data.result as CoordinationResponse
-    if (data.status === 'FAILED') throw new Error(String(data.error_message || data.error_code || '学习路径生成失败'))
-  }
-  throw new Error('生成超时，请稍后在「历史生成」中查看结果')
-}
-
-async function requestCoordination(): Promise<void> {
+function buildCoordinationBody(): Record<string, unknown> {
   const teacherScope = selectedTeachingScope.value
-  const body = {
+  return {
     user_id: user.userId,
     intent: generateCompanionResources.value
       ? `Generate a personalized learning path, courseware, and exercises for ${pathForm.subject || 'the current subject'}: ${pathForm.knowledge_point}`
@@ -356,7 +321,8 @@ async function requestCoordination(): Promise<void> {
       ...pathForm,
       execute: true,
       dynamic_knowledge: true,
-      allow_web_knowledge: false,
+      allow_web_knowledge: true,
+      enrich_knowledge: true,
       include_exercises: generateCompanionResources.value,
       force_agents: generateCompanionResources.value
         ? ['learner_profiling_agent', 'knowledge_graph_agent', 'path_planning_agent', 'resource_generation_agent', 'exercise_generation_agent']
@@ -372,28 +338,72 @@ async function requestCoordination(): Promise<void> {
       teacher_scope: teacherScope ?? undefined,
     },
   }
-  try {
-    // Async: the route enqueues on RabbitMQ and returns a task id immediately,
-    // so the 60s model workflow survives navigation and never blocks the tab.
-    const { data } = await agentApi.post<{ task_id: number }>('/agents/coordinate/async', body)
-    generationTaskId.value = data.task_id
-    coordination.value = await waitForCoordination(data.task_id)
-    await fetchHistory()
-  } catch (error: any) {
-    const message = String(error?.response?.data?.detail ?? error?.message ?? '')
-    if (message.includes('PUBLIC_KNOWLEDGE_PROCESSING')) {
-      knowledgeCheck.value = { ready: false, mode: 'public_build_pending', reason: 'PROCESSING', message: '公共知识正在建设中，完成后会自动继续生成。' }
-      while (!pageDisposed) {
-        await new Promise((resolve) => setTimeout(resolve, 3000))
-        if (pageDisposed) return
-        const check = await agentApi.post('/paths/preflight', { subject: pathForm.subject, knowledge_point: pathForm.knowledge_point })
-        if (check.data.ready) return requestCoordination()
+}
+
+/**
+ * Apply a finished coordination result to this page. The courseware/exercise
+ * artifacts are already persisted by the background store, so this only owns
+ * the visible plan, the form state and the feedback messages.
+ */
+function applyCoordinatedResult(result: CoordinationResponse) {
+  coordination.value = result
+  const coordinatedPath = result.outputs?.path_planning_agent?.learning_path as LearningPathResponse | undefined
+  if (!coordinatedPath) {
+    pathError.value = `请求失败：${describeAgentFailure(result.outputs?.path_planning_agent)}`
+    ElMessage.error(pathError.value)
+    return
+  }
+
+  learningPath.value = coordinatedPath
+  const generatedResource = (
+    result.outputs?.resource_generation_agent as Record<string, unknown> | undefined
+  )?.resource as { id?: number; title?: string } | undefined
+  const generatedResourceId = Number(generatedResource?.id)
+  activeCourseware.value = Number.isInteger(generatedResourceId) && generatedResourceId > 0
+    ? {
+        id: generatedResourceId,
+        title: generatedResource?.title || '本次生成课件',
+        created_at: null,
       }
+    : null
+  // Only claim the published version is in use when it actually is: on a
+  // personal-draft fallback the model integration has not landed yet and the
+  // draft alert has to stay authoritative.
+  if (coordinatedPath.knowledge_scope === 'public') {
+    knowledgeCheck.value = { ready: true, mode: 'public', reason: 'READY',
+      message: '公共知识已由模型自动审核、修订并融入，正在使用已发布版本。' }
+  }
+  pathForm.subject = coordinatedPath.subject
+  pathForm.knowledge_point = coordinatedPath.knowledge_point
+  syncTeacherScopeFromPath(coordinatedPath)
+  notifyGenerationResult()
+  void fetchHistory()
+}
+
+let appliedRevision = 0
+
+// The store can finish (or fail) while this page is open or after coming back
+// from another route, so react to its revision instead of awaiting the request.
+watch(
+  () => pathGenerationState.revision,
+  () => {
+    if (pathGenerationState.revision === appliedRevision) {
       return
     }
-    throw error
-  }
-}
+    if (pathGenerationState.phase === 'succeeded' && pathGenerationState.result) {
+      appliedRevision = pathGenerationState.revision
+      applyCoordinatedResult(pathGenerationState.result)
+      return
+    }
+    if (pathGenerationState.phase === 'failed') {
+      appliedRevision = pathGenerationState.revision
+      pathError.value = pathGenerationState.error
+        ? `请求失败：${pathGenerationState.error}`
+        : '生成失败，请稍后重试'
+      ElMessage.error(pathError.value)
+    }
+  },
+)
 
 type PathHistoryItem = {
   id: number
@@ -406,6 +416,9 @@ type PathHistoryItem = {
   stage_count: number
   task_count: number
   teacher_scope_title: string
+  courseware_resource_id?: number | null
+  courseware_title?: string
+  courseware_created_at?: string | null
 }
 
 async function fetchHistory() {
@@ -436,6 +449,14 @@ async function loadHistoryItem(item: PathHistoryItem) {
     }
     learningPath.value = data
     activeHistoryId.value = item.id
+    const coursewareId = Number(item.courseware_resource_id)
+    activeCourseware.value = Number.isInteger(coursewareId) && coursewareId > 0
+      ? {
+          id: coursewareId,
+          title: item.courseware_title || '本次生成课件',
+          created_at: item.courseware_created_at ?? null,
+        }
+      : null
     pathForm.subject = data.subject
     pathForm.knowledge_point = data.knowledge_point
     syncTeacherScopeFromPath(data)
@@ -454,6 +475,66 @@ async function loadHistoryItem(item: PathHistoryItem) {
   }
 }
 
+function openHistoryCourseware(item: PathHistoryItem) {
+  const resourceId = Number(item.courseware_resource_id)
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    ElMessage.info('该历史记录尚未关联已保存课件，可查看学习路径')
+    return
+  }
+  void openCourseware({
+    id: resourceId,
+    title: item.courseware_title || '本次生成课件',
+    created_at: item.courseware_created_at ?? null,
+  })
+}
+
+function openActiveCourseware() {
+  if (activeCourseware.value) {
+    void openCourseware(activeCourseware.value)
+  }
+}
+
+/**
+ * Open the courseware that belongs to this path. It is fetched from the
+ * resource library by id, so opening history never starts another generation.
+ */
+async function openCourseware(target: ActiveCourseware) {
+  const resourceId = Number(target.id)
+  if (!Number.isInteger(resourceId) || resourceId <= 0 || coursewareLoading.value) {
+    return
+  }
+  coursewareOpen.value = true
+  coursewareLoading.value = true
+  coursewareDetail.value = null
+  try {
+    const { data } = await resourceApi.get<ApiEnvelope<ManagedResourceItem>>(`/resources/${resourceId}`)
+    const resource = data.data
+    if (!resource || !resource.id) {
+      throw new Error('courseware missing')
+    }
+    coursewareDetail.value = {
+      id: resource.id,
+      title: resource.title || target.title || '本次生成课件',
+      content: resource.content || '',
+      created_at: target.created_at ?? null,
+    }
+  } catch {
+    ElMessage.error('历史课件读取失败，请到资源中心查看')
+    coursewareOpen.value = false
+  } finally {
+    coursewareLoading.value = false
+  }
+}
+
+function openCoursewareInLibrary() {
+  if (!coursewareDetail.value) {
+    return
+  }
+  const resourceId = coursewareDetail.value.id
+  coursewareOpen.value = false
+  void router.push({ name: 'student-resources', query: { resource: String(resourceId) } })
+}
+
 function formatHistoryTime(value: string | null) {
   if (!value) return '时间未知'
   const date = new Date(value)
@@ -464,19 +545,6 @@ function formatHistoryTime(value: string | null) {
 
 function hasAgentPayload(output: Record<string, unknown> | undefined, key: string) {
   return Boolean(output && output.status !== 'failed' && output[key])
-}
-
-function clearWorkspaceForNewTopic(nextTopic: string) {
-  const currentTopic = learningPath.value?.knowledge_point || pathForm.knowledge_point
-  if (sameWorkspaceTopic(currentTopic, nextTopic)) {
-    return
-  }
-  clearStudentWorkspaceArtifacts(user.userId, {
-    clearCourseware: true,
-    clearExercises: true,
-    clearPracticeSession: true,
-    clearContext: false,
-  })
 }
 
 function persistWorkspaceContext(path: LearningPathResponse) {
@@ -533,38 +601,6 @@ function notifyGenerationResult() {
   ElMessage.warning('本次仅完成了部分协同结果，请查看页面中的失败原因')
 }
 
-function persistCoordinatedCourseware() {
-  const resourceResult = coordination.value?.outputs?.resource_generation_agent?.resource as ResourceResult | undefined
-  if (!resourceResult) {
-    return
-  }
-  const selectedVariantId =
-    resourceResult.variants?.find((item) => item.is_recommended)?.variant_id
-    ?? resourceResult.variants?.[0]?.variant_id
-    ?? ''
-
-  window.sessionStorage.setItem(COURSEWARE_STORAGE_KEY, JSON.stringify({
-    subject: pathForm.subject,
-    topic: pathForm.knowledge_point,
-    goal: learningPath.value?.overview ?? '',
-    selectedVariantId,
-    generatedAt: Date.now(),
-    resourceResult,
-  }))
-}
-
-function persistCoordinatedExercises() {
-  const exerciseSet = coordination.value?.outputs?.exercise_generation_agent?.exercise_set as ExerciseGenerationResponse | undefined
-  if (!exerciseSet) {
-    return
-  }
-  window.sessionStorage.setItem(EXERCISE_STORAGE_KEY, JSON.stringify({
-    generatedAt: Date.now(),
-    source: 'learning_path',
-    exerciseSet,
-  }))
-}
-
 function resolveTaskRoute(taskType: LearningTaskItem['task_type']) {
   const routeMap: Record<LearningTaskItem['task_type'], string> = {
     courseware: 'student-courseware',
@@ -586,6 +622,13 @@ function getTaskActionLabel(taskType: LearningTaskItem['task_type']) {
 }
 
 function navigateToTask(task: LearningTaskItem) {
+  // A courseware task inside a path that already has a saved courseware opens
+  // that file instead of routing to the courseware page (which would start a
+  // new generation when its session snapshot is missing).
+  if (task.task_type === 'courseware' && activeCourseware.value) {
+    void openCourseware(activeCourseware.value)
+    return
+  }
   const routeName = resolveTaskRoute(task.task_type)
   const topic = task.knowledge_point || learningPath.value?.knowledge_point || pathForm.knowledge_point
 
@@ -667,6 +710,8 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
           </button>
         </div>
 
+        <GenerationProgress v-if="loading" :job="pathJob" label="学习路径与配套资源"/>
+
         <div v-if="pathError" class="path-error">{{ pathError }}</div>
         <el-alert v-if="knowledgeCheck" :title="knowledgeCheck.message" :type="knowledgeCheck.ready ? 'success' : (knowledgeCheck.mode === 'public_build_pending' ? 'info' : 'warning')" :closable="false"><span v-if="knowledgeCheck.gap_id && knowledgeCheck.mode !== 'public_build_pending'">公共建设跟踪编号 #{{ knowledgeCheck.gap_id }}，系统自动处理。</span></el-alert>
 
@@ -696,6 +741,19 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
               </p>
             </div>
           </el-alert>
+          <article v-if="activeCourseware" class="history-courseware-card">
+            <div class="history-courseware-copy">
+              <span class="panel-kicker">本次生成课件</span>
+              <h3>{{ activeCourseware.title }}</h3>
+              <p>
+                {{ activeCourseware.created_at ? formatHistoryTime(activeCourseware.created_at) : '已保存' }}
+                · 打开的是已生成文件，不会重新调用模型
+              </p>
+            </div>
+            <div class="history-courseware-card-actions">
+              <button type="button" @click="openActiveCourseware">查看课件</button>
+            </div>
+          </article>
           <PlanFeedbackPanel @updated="learningPath = $event" />
           <PlanAdaptationPanel @updated="learningPath = $event" />
           <article v-for="stage in learningPath.stages" :key="stage.stage_id" class="stage-item">
@@ -769,22 +827,43 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
           <p v-if="historyLoading && !historyItems.length">正在读取历史记录...</p>
           <p v-else-if="historyError" class="warning-text">{{ historyError }}</p>
           <div v-else-if="historyItems.length" class="history-list">
-            <button
+            <div
               v-for="item in historyItems"
               :key="item.id"
-              type="button"
-              class="history-item"
+              class="history-entry"
               :class="{ active: activeHistoryId === item.id }"
-              :disabled="loadingHistoryId === item.id"
-              @click="loadHistoryItem(item)"
             >
-              <strong>{{ item.subject || '未命名学科' }}</strong>
-              <span class="history-topic">{{ item.knowledge_point || '未标注知识点' }}</span>
-              <small>
-                {{ formatHistoryTime(item.created_at) }} · {{ item.stage_count }} 阶段 / {{ item.task_count }} 任务
-              </small>
-              <span v-if="loadingHistoryId === item.id" class="history-loading">加载中...</span>
-            </button>
+              <button
+                type="button"
+                class="history-item"
+                :disabled="coursewareLoading"
+                @click="openHistoryCourseware(item)"
+              >
+                <strong>{{ item.subject || '未命名学科' }}</strong>
+                <span class="history-topic">{{ item.knowledge_point || '未标注知识点' }}</span>
+                <small>
+                  {{ formatHistoryTime(item.created_at) }} · {{ item.stage_count }} 阶段 / {{ item.task_count }} 任务
+                </small>
+                <span v-if="!item.courseware_resource_id" class="history-loading">暂无关联课件</span>
+              </button>
+              <button
+                v-if="item.courseware_resource_id"
+                type="button"
+                class="history-courseware-open"
+                :disabled="coursewareLoading"
+                @click="openHistoryCourseware(item)"
+              >
+                查看历史课件
+              </button>
+              <button
+                type="button"
+                class="history-courseware-open history-path-open"
+                :disabled="!!loadingHistoryId"
+                @click="loadHistoryItem(item)"
+              >
+                {{ loadingHistoryId === item.id ? '加载中...' : '查看学习路径' }}
+              </button>
+            </div>
           </div>
           <p v-else>暂无历史生成记录，生成一次后会出现在这里。</p>
         </section>
@@ -819,6 +898,28 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
         </section>
       </aside>
     </section>
+
+    <el-dialog
+      v-model="coursewareOpen"
+      :title="coursewareDetail?.title || '本次生成课件'"
+      width="min(920px, 94vw)"
+      append-to-body
+    >
+      <div v-if="coursewareLoading" class="history-courseware-loading">正在读取已保存的课件...</div>
+      <template v-else-if="coursewareDetail">
+        <p class="history-courseware-meta">
+          {{ coursewareDetail.created_at ? formatHistoryTime(coursewareDetail.created_at) : '已保存' }}
+          · 打开的是生成时落库的原文，不会重新调用模型
+        </p>
+        <div class="history-courseware-content">
+          <LearningContent :content="coursewareDetail.content" empty="该课件正文为空，请到资源中心查看" />
+        </div>
+      </template>
+      <template #footer>
+        <el-button @click="coursewareOpen = false">关闭</el-button>
+        <el-button type="primary" :disabled="!coursewareDetail" @click="openCoursewareInLibrary">在资源库中打开</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -920,6 +1021,17 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
 .path-form button:disabled {
   cursor: wait;
   opacity: 0.65;
+}
+
+.path-background-hint {
+  margin-bottom: 14px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .path-error {
@@ -1219,27 +1331,77 @@ async function adjustTask(taskId: string, action: 'complete' | 'skip') {
 .history-refresh:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .history-refresh:disabled { opacity: .55; cursor: not-allowed; }
 .history-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.history-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  transition: border-color .18s ease, background .18s ease;
+}
+.history-entry:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.history-entry.active { border-color: var(--accent); background: var(--accent-soft); }
 .history-item {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 9px 11px;
+  padding: 0;
   text-align: left;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--surface-soft);
+  border: 0;
+  background: transparent;
   color: var(--text);
   cursor: pointer;
   font-family: inherit;
-  transition: border-color .18s ease, background .18s ease, transform .18s ease;
 }
-.history-item:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
 .history-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.history-item.active { border-color: var(--accent); background: var(--accent-soft); }
 .history-item:disabled { opacity: .65; cursor: progress; }
 .history-item strong { font-size: 13px; font-weight: 600; color: var(--text); }
 .history-item .history-topic { font-size: 12px; color: var(--accent); }
 .history-item small { font-size: 11px; color: var(--muted); }
 .history-item small em { font-style: normal; color: var(--accent); }
 .history-loading { font-size: 11px; color: var(--accent); }
+.history-courseware-open {
+  align-self: flex-start;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--accent);
+  border-radius: 7px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease;
+}
+.history-courseware-open:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.history-courseware-open:disabled { opacity: .55; cursor: progress; }
+.history-courseware-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 16px;
+  margin: 12px 0;
+  border-radius: 13px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.history-courseware-copy h3 { margin: 3px 0; font-size: 15px; color: var(--text); }
+.history-courseware-copy p { margin: 0; font-size: 12px; color: var(--muted); }
+.history-courseware-card-actions { flex: 0 0 auto; }
+.history-courseware-card-actions button {
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 9px;
+  padding: 7px 13px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.history-courseware-card-actions button:hover { background: var(--accent); color: #fff; }
+.history-courseware-meta { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.history-courseware-content { max-height: 62vh; overflow: auto; padding-right: 4px; }
+.history-courseware-loading { padding: 18px 4px; color: var(--muted); font-size: 13px; }
 </style>

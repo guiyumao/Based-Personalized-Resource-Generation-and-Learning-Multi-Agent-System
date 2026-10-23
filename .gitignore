@@ -76,3 +76,7 @@ web-app/coverage
 /.workbuddy/memory/
 /output/
 /knowledge_base/corpus/auto_*/
+
+# Frontend build-verify artifacts and local preview outputs
+/web-app/dist-verify/
+/web-app/output/

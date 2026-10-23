@@ -113,6 +113,19 @@ def advance_public_build(db, task, guard=None) -> dict:
                     if row.get("url") and row.get("content")][:3]
             except Exception:
                 state["public_references"] = []
+            try:
+                from services.agent_service.app.services.knowledge_sources import (
+                    store_public_sources,
+                )
+
+                state["stored_sources"] = store_public_sources(
+                    subject_code=str(initial.get("subject") or ""),
+                    knowledge_point=topic,
+                    knowledge_point_id=str(initial.get("point_id") or ""),
+                    sources=list(state["public_references"]),
+                )
+            except Exception:
+                state["stored_sources"] = []
             checkpoint("公共资料准备完成，继续模型建设")
         if not state.get("public_body") or state.get("revision_issues"):
             state["rounds"] = int(state.get("rounds", 0)) + 1

@@ -17,6 +17,7 @@ from services.agent_service.app.api.routes import (
     assistant,
     chat,
     graph,
+    generation,
     knowledge_acquisition,
     knowledge_candidates,
     knowledge_construction,
@@ -68,6 +69,7 @@ _storage_dir = Path(__file__).resolve().parents[3] / "storage"
 _storage_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/storage", StaticFiles(directory=str(_storage_dir)), name="storage")
 app.include_router(agents.router, prefix="/agents", tags=["agents"])
+app.include_router(generation.router)
 app.include_router(graph.router, prefix="/graph", tags=["knowledge-graph"])
 app.include_router(resources.router, prefix="/resources", tags=["resource-generation"])
 app.include_router(knowledge_tasks.router)

@@ -104,12 +104,51 @@ def assess_coverage(db: Session, *, subject: str, knowledge_point: str, max_sour
             "assessment": "metadata_alias_keyword_and_semantic_evidence"}
 
 
-def acquire_context(db: Session, *, actor_user_id: int, subject: str, knowledge_point: str, allow_web: bool) -> dict[str, Any]:
+def acquire_context(
+    db: Session,
+    *,
+    actor_user_id: int,
+    subject: str,
+    knowledge_point: str,
+    allow_web: bool,
+    enrich_sources: bool = False,
+) -> dict[str, Any]:
     from common.config import get_settings
     from services.agent_service.app.services.public_knowledge import ensure_public_knowledge
 
     verified = ensure_public_knowledge(db, actor_user_id, subject, knowledge_point, allow_web=allow_web)
     chunks = verified["usable_chunks"]
+    # A published version can be a thin AI placeholder. When no real external
+    # reference is indexed for this point yet, fetch it once, persist it in the
+    # corpus and re-read the merged chunks. The marker in knowledge_sources
+    # bounds failures so this is not a search on every request.
+    if enrich_sources and allow_web and not any(
+        str((row.get("metadata") or {}).get("source_type") or "") == "web_reference"
+        for row in chunks
+    ):
+        try:
+            from services.agent_service.app.services.knowledge_sources import (
+                ensure_external_sources,
+            )
+            from services.agent_service.app.services.plan_knowledge import (
+                require_plan_knowledge,
+            )
+
+            stored = ensure_external_sources(
+                db,
+                actor_user_id=actor_user_id,
+                subject_label=subject,
+                subject_code=verified["subject"],
+                knowledge_point=knowledge_point,
+                knowledge_point_id=str(verified.get("point_id") or ""),
+                allow_web=allow_web,
+            )
+            if stored:
+                verified = require_plan_knowledge(db, actor_user_id, subject, knowledge_point)
+                chunks = verified["usable_chunks"]
+        except Exception:
+            # Enrichment is additive: the already-verified public chunks remain.
+            pass
     now = datetime.utcnow()
     context = {"context_id": hashlib.sha256(f"{subject}:{knowledge_point}:{now.isoformat()}".encode()).hexdigest()[:24],
                "query": knowledge_point, "knowledge_point_id": knowledge_point, "scope_id": "public",
@@ -119,7 +158,17 @@ def acquire_context(db: Session, *, actor_user_id: int, subject: str, knowledge_
     return {"coverage": {"state": "COMPLETE", "subject": verified["subject"],
                          "point_id": verified["point_id"], "published_versions": verified["published_versions"]},
             "retrieval_context": context,
-            "sources": [{"source": (row.get("metadata") or {}).get("source"), "review_status": "PUBLISHED"} for row in chunks],
+            "sources": [
+                {
+                    "source": (row.get("metadata") or {}).get("source"),
+                    "review_status": (
+                        "EXTERNAL_REFERENCE"
+                        if str((row.get("metadata") or {}).get("source_type") or "") == "web_reference"
+                        else "PUBLISHED"
+                    ),
+                }
+                for row in chunks
+            ],
             "supplementation": {"status": "MODEL_REVIEWED_PUBLISHED" if verified.get("auto_build") else "NOT_NEEDED",
                                 "candidate_ids": [verified["auto_build"]["candidate_id"]] if verified.get("auto_build", {}).get("candidate_id") else [],
                                 "reused": not bool(verified.get("auto_build"))}}

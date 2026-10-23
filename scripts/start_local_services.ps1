@@ -135,6 +135,18 @@ foreach ($service in $services) {
 $workerProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction SilentlyContinue | Where-Object {
     $_.CommandLine -match 'services\.agent_service\.app\.services\.(assistant_worker|knowledge_worker)'
 })
+$assistantExecutionMode = (& python -c "from common.config import get_settings; print(get_settings().assistant_task_execution_mode)").Trim()
+if ($LASTEXITCODE -ne 0) { throw "Unable to resolve assistant task execution mode" }
+if ($assistantExecutionMode -eq "worker" -and -not @($workerProcesses | Where-Object {
+    $_.CommandLine -match 'services\.agent_service\.app\.services\.assistant_worker'
+}).Count) {
+    Write-Host "Starting assistant-worker for durable workspace generation..."
+    Start-Process python -ArgumentList @("-m", "services.agent_service.app.services.assistant_worker", "--skip-schema-bootstrap") `
+        -WorkingDirectory $root -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $serviceLogRoot "assistant-worker.stdout.log") `
+        -RedirectStandardError (Join-Path $serviceLogRoot "assistant-worker.stderr.log")
+    $workerProcesses = @("assistant-worker-start-requested")
+}
 if ($workerProcesses.Count -eq 0 -and $env:KNOWLEDGE_WORKER_ENABLED -ne "false") {
     Write-Host "Starting knowledge-worker for queued and scheduled knowledge tasks..."
     Start-Process python -ArgumentList @("-m", "services.agent_service.app.services.knowledge_worker") `

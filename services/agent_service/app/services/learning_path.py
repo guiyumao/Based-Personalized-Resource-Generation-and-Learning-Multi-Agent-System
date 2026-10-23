@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from common.ai_errors import AIServiceError
 from common.config import get_settings
-from common.models.learning import LearningPath, TranscriptAnalysis
+from common.models.learning import AssistantTask, LearningContext, LearningPath, TranscriptAnalysis
 from common.performance import traced_invoke
 from common.schemas.agent import LearningPathAdjustRequest, LearningPathRequest
 from services.agent_service.app.services.llm_factory import LLMFactory
@@ -576,13 +576,26 @@ class LearningPathService:
         return problems
 
     def _persist_generated_path(self, user_id: int, payload: dict[str, object]) -> dict[str, object]:
+        # A new topic must not invalidate another open workspace. Keep plans with
+        # queued/running work active until their durable operations have settled.
+        busy_contexts = [row.request_json.get("learning_context_id") for row in self.db.query(AssistantTask).filter(
+            AssistantTask.user_id == user_id,
+            AssistantTask.status.in_(["PENDING", "RUNNING", "CANCEL_REQUESTED"]),
+        ).all() if row.request_json]
+        busy_plans = {row.plan_id for row in self.db.query(LearningContext).filter(
+            LearningContext.user_id == user_id, LearningContext.id.in_(busy_contexts),
+        ).all()}
         existing_records = (
             self.db.query(LearningPath)
             .filter(LearningPath.user_id == user_id, LearningPath.status == "active")
             .all()
         )
         for item in existing_records:
-            item.status = "archived"
+            previous = item.path_data_json or {}
+            if (item.id not in busy_plans and not previous.get("teacher_scope")
+                    and str(previous.get("subject", "")).strip().casefold() == str(payload.get("subject", "")).strip().casefold()
+                    and str(previous.get("knowledge_point", "")).strip().casefold() == str(payload.get("knowledge_point", "")).strip().casefold()):
+                item.status = "archived"
 
         record = LearningPath(
             user_id=user_id,

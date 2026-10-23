@@ -18,6 +18,7 @@ import { evaluationApi, resourceApi, serviceEndpoints, userApi, type ApiEnvelope
 import { useAuthStore } from '../../stores/auth'
 import LearningAtmosphere from '../../components/LearningAtmosphere.vue'
 import LearningContent from '../../components/LearningContent.vue'
+import RadarChart from '../../components/RadarChart.vue'
 import LearningOverviewPanel from '../../components/LearningOverviewPanel.vue'
 
 type ServiceStatus = { label: string; baseUrl: string; online: boolean; checking: boolean }
@@ -56,7 +57,8 @@ const profileDimensionItems = computed<ProfileDimensionItem[]>(() => profileDime
 const filledProfileDimensions = computed(() => profileDimensionItems.value.filter((item) => item.value).length)
 const profileCompletionPercent = computed(() => Math.round((filledProfileDimensions.value / profileDimensionKeys.length) * 100))
 const learningContent = computed(() => dashboard.value?.learning_content)
-const visibleRadarMetrics = computed(() => (dashboard.value?.radar_metrics ?? []).filter((metric) => metric.dimension && metric.score >= 0))
+const visibleRadarMetrics = computed(() => (dashboard.value?.radar_metrics ?? []).filter((metric) => metric.dimension && typeof metric.score === 'number' && Number.isFinite(metric.score) && metric.score >= 0))
+const capabilityAxes = computed(() => (dashboard.value?.radar_metrics ?? []).filter((metric) => metric.dimension).map((metric) => ({ key: metric.dimension, label: metric.dimension, value: typeof metric.score === 'number' && Number.isFinite(metric.score) && metric.score >= 0 ? metric.score : null })))
 const hasLearningActivity = computed(() => (learningContent.value?.total_answers ?? 0) > 0)
 const overviewPercent = computed(() => learningContent.value?.accuracy ?? 0)
 const overviewLabel = computed(() => hasLearningActivity.value ? '近期答题正确率' : '等待学习记录')
@@ -224,6 +226,7 @@ onMounted(() => void refreshDashboard())
 
         <article class="dashboard-panel capability-panel">
           <header><div><span class="section-kicker">能力分布</span><h2>当前掌握情况</h2><p>数据来自已完成练习的评估结果。</p></div><span class="data-source">实时画像</span></header>
+          <RadarChart v-if="capabilityAxes.length >= 3 && visibleRadarMetrics.length" :axes="capabilityAxes" label="当前掌握情况雷达图" />
           <div v-if="visibleRadarMetrics.length" class="capability-bars">
             <div v-for="metric in visibleRadarMetrics" :key="metric.dimension" class="capability-row"><div><span>{{ metric.dimension }}</span><b>{{ metric.score }}%</b></div><div class="capability-track"><i :style="{ width: `${metric.score}%` }"></i></div></div>
           </div>

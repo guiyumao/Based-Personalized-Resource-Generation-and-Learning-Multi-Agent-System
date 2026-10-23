@@ -674,6 +674,58 @@ def run(db_path: Path) -> dict:
             f"keys={sorted(sample.keys())[:8]}",
             evidence="insights[0]",
         )
+        # 数据非空才算真通过：字段存在但全为 None/0 说明证据链没接上。
+        mastered = [
+            item.get("mastery")
+            for item in insights
+            if isinstance(item.get("mastery"), int)
+        ]
+        record(
+            "场景G 学情",
+            "学生掌握度来自真实作答（非空）",
+            bool(mastered) and all(value > 0 for value in mastered),
+            "mastery 为 1~100 的整数",
+            f"mastery={mastered[:8]}",
+            evidence="GET /teacher/classes/{id}/insights",
+        )
+        record(
+            "场景G 学情",
+            "不同画像学生掌握度存在差异",
+            len(set(mastered)) >= 2,
+            "至少两种掌握度",
+            f"distinct={sorted(set(mastered))}",
+            evidence="GET /teacher/classes/{id}/insights",
+        )
+        wrong = [item.get("mistake_count") for item in insights if isinstance(item.get("mistake_count"), int)]
+        record(
+            "场景G 学情",
+            "错题数由作答记录推导",
+            any(value > 0 for value in wrong),
+            "至少一名学生错题 > 0",
+            f"mistake_count={wrong[:8]}",
+            evidence="GET /teacher/classes/{id}/insights",
+        )
+
+    analytics_status, analytics = teacher_client.data(
+        "GET", f"/teacher/classes/{ds_class_id}/teaching-analytics", zhang
+    )
+    payload = analytics if isinstance(analytics, dict) else {}
+    record(
+        "场景G 学情",
+        "教学分析统计到真实作答",
+        analytics_status == 200 and (payload.get("total_answers") or 0) > 0,
+        "total_answers > 0",
+        f"status={analytics_status} total_answers={payload.get('total_answers')}",
+        evidence="GET /teacher/classes/{id}/teaching-analytics",
+    )
+    record(
+        "场景G 学情",
+        "教学分析正确率与薄弱点可追溯",
+        payload.get("correct_rate") is not None and bool(payload.get("weak_knowledge_points")),
+        "correct_rate 非空且存在薄弱知识点",
+        f"correct_rate={payload.get('correct_rate')} weak={len(payload.get('weak_knowledge_points') or [])}",
+        evidence="GET /teacher/classes/{id}/teaching-analytics",
+    )
 
     # ------------------------------------------- scene H: concurrent joins
     import sqlite3

@@ -27,7 +27,7 @@ export type AuthTokenResponse = {
 
 export type LearnerRadarMetric = {
   dimension: string
-  score: number
+  score: number | null
 }
 
 export type LearnerHeatmapCell = {

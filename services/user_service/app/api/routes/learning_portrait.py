@@ -13,16 +13,16 @@ from common.db.session import get_db
 from common.dependencies import get_current_user, require_self_or_admin
 from common.models.learning import AuditLog, User, UserProfile
 from common.schemas.user import PROFILE_DIMENSION_KEYS, sanitize_profile_dimensions
+from services.user_service.app.services.learning_style_inference import (
+    infer_learning_style,
+    inference_state,
+    merged_axes,
+    style_source_text,
+)
 from services.user_service.app.services.zhishu_profile import build_user_zhishu_profile
 
 router = APIRouter()
 Axis = Literal["processing", "perception", "input", "understanding"]
-AXES = {
-    "processing": ("信息加工", "沉思", "活跃"),
-    "perception": ("信息感知", "直觉", "感知"),
-    "input": ("信息输入", "言语", "视觉"),
-    "understanding": ("理解方式", "全局", "序列"),
-}
 
 
 class PortraitEdit(BaseModel):
@@ -33,6 +33,10 @@ class PortraitEdit(BaseModel):
     dimensions: dict[str, Annotated[str, Field(max_length=1500)]] = Field(default_factory=dict)
 
 
+class PortraitInference(BaseModel):
+    force: bool = False
+
+
 def snapshot(db: Session, user_id: int) -> dict:
     profile = db.get(UserProfile, user_id)
     if profile is None:
@@ -40,28 +44,16 @@ def snapshot(db: Session, user_id: int) -> dict:
             user_id=user_id, mastery_json={}, cognitive_abilities={}, habits={}, learning_style=""
         )
     habits = profile.habits if isinstance(profile.habits, dict) else {}
-    axes = habits.get("learning_style_axes", {})
-    axes = axes if isinstance(axes, dict) else {}
+    axes = merged_axes(profile)
     return {
         "user_id": user_id,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
-        "axes": [
-            {
-                "key": key,
-                "label": labels[0],
-                "negative": labels[1],
-                "positive": labels[2],
-                "value": axes.get(key)
-                if isinstance(axes.get(key), (int, float)) and -1 <= axes[key] <= 1
-                else None,
-                "source": "user_reported" if key in axes else "missing",
-            }
-            for key, labels in AXES.items()
-        ],
+        "axes": axes,
         "dimensions": sanitize_profile_dimensions(habits.get("profile_dimensions")),
         "dimension_sources": habits.get("profile_fact_sources", {}),
         "behavior_profile": build_user_zhishu_profile(db, profile),
-        "style_source": "自述学习偏好，参考Felder–Silverman维度；不是测验结果，不从成绩推断偏好。",
+        "style_source": style_source_text(axes),
+        "inference": inference_state(db, user_id, profile),
     }
 
 
@@ -73,6 +65,23 @@ def read_portrait(
     if db.get(User, user_id) is None:
         raise HTTPException(404, "User not found")
     return snapshot(db, user_id)
+
+
+@router.post("/users/{user_id}/learning-portrait/infer")
+def infer_portrait(
+    user_id: int,
+    payload: PortraitInference,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Let the model infer the style axes from the evidence already collected."""
+
+    require_self_or_admin(user_id, user)
+    if db.get(User, user_id) is None:
+        raise HTTPException(404, "User not found")
+    result = infer_learning_style(db, user_id, force=payload.force)
+    db.expire_all()
+    return {**result, "snapshot": snapshot(db, user_id)}
 
 
 @router.put("/users/{user_id}/learning-portrait")

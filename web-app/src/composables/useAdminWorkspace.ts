@@ -21,7 +21,6 @@ import {
   type ResourceRewriteResult,
   type ResourceSection,
   type RoleAssignmentPayload,
-  type SubjectCreatePayload,
   type SubjectItem,
   type SystemConfigItem,
   type SystemConfigUpdatePayload,
@@ -40,6 +39,9 @@ type MaintenancePlan = { id: number; name: string; subject: string; interval_hou
 type KnowledgeCandidate = { id: number; source_task_id: number; subject: string; knowledge_point: string; title: string; content: string; source_url: string; status: string; review_notes: string; published_version_id: number | null; license_name: string; license_evidence_url: string; publication_allowed: boolean }
 type ConstructionSubject = { id: number; name: string; code: string | null; status: string }
 type ConstructionPoint = { id: number; name: string; chapter: string; status: string }
+type OutlineReviewPoint = { name: string; aliases: string[]; prerequisites: string[]; objectives: string[]; kept: boolean }
+type OutlineReviewChapter = { name: string; points: OutlineReviewPoint[] }
+type OutlineReview = { taskId: number; name: string; code: string; aliases: string[]; description: string; chapters: OutlineReviewChapter[] }
 type KnowledgeVersion = { id: number; candidate_id: number; number: number; title: string; content: string; is_active: boolean; published_at: string }
 
 
@@ -64,10 +66,12 @@ const constructionPoints = ref<ConstructionPoint[]>([])
 const constructionSubjectId = ref<number>()
 const constructionSelectedPoints = ref<number[]>([])
 const constructionForm = reactive({ name: '', stage: '本科', requirements: '', reference_material: '' })
-const outlineEditor = ref('')
+const outlineReview = ref<OutlineReview | null>(null)
+const outlineStatus = ref<'idle' | 'queued' | 'running' | 'ready' | 'failed'>('idle')
+const outlineError = ref('')
+const outlinePollCount = ref(0)
 const outlineTaskId = ref<number>()
 const constructionBusy = ref(false)
-const manualSubjectCode = ref('')
 const manualPoint = reactive({ name: '', chapter: '', objective: '' })
 const constructionFocus = ref('')
 const knowledgeVersions = ref<KnowledgeVersion[]>([])
@@ -92,11 +96,6 @@ const selectedConfigKey = ref('resource_generation_timeout')
 const roleForm = reactive<RoleAssignmentPayload>({
   user_id: 1,
   role: 'teacher',
-})
-
-const subjectForm = reactive<SubjectCreatePayload>({
-  name: '离散数学',
-  description: '逻辑、集合、图论基础',
 })
 
 const configForm = reactive<SystemConfigUpdatePayload>({
@@ -126,7 +125,6 @@ const illustrateBusy = ref(false)
 const loading = reactive({
   role: false,
   subjects: false,
-  createSubject: false,
   configs: false,
   updateConfig: false,
   logs: false,
@@ -409,14 +407,6 @@ async function loadConstructionSubjects() {
   catch { ElMessage.error('学科建设目录加载失败') }
 }
 
-async function createManualConstructionSubject() {
-  try {
-    await agentApi.post('/knowledge-base/construction/subjects', { name: constructionForm.name, code: manualSubjectCode.value, description: constructionForm.requirements.slice(0, 200) })
-    await loadConstructionSubjects()
-    ElMessage.success('学科已保存')
-  } catch { ElMessage.error('请输入学科名称和唯一英文代码') }
-}
-
 async function createManualConstructionPoint() {
   if (!constructionSubjectId.value) { ElMessage.warning('请先选择学科'); return }
   try {
@@ -426,32 +416,100 @@ async function createManualConstructionPoint() {
   } catch { ElMessage.error('知识点保存失败') }
 }
 
+function buildOutlineReview(outline: Record<string, any>, taskId: number): OutlineReview {
+  return {
+    taskId,
+    name: String(outline.name ?? ''),
+    code: String(outline.code ?? ''),
+    aliases: Array.isArray(outline.aliases) ? outline.aliases.map(String) : [],
+    description: String(outline.description ?? ''),
+    chapters: (Array.isArray(outline.chapters) ? outline.chapters : []).map((chapter: Record<string, any>) => ({
+      name: String(chapter.name ?? ''),
+      points: (Array.isArray(chapter.points) ? chapter.points : []).map((point: Record<string, any>) => ({
+        name: String(point.name ?? ''),
+        aliases: Array.isArray(point.aliases) ? point.aliases.map(String) : [],
+        prerequisites: Array.isArray(point.prerequisites) ? point.prerequisites.map(String) : [],
+        objectives: Array.isArray(point.objectives) ? point.objectives.map(String) : [],
+        kept: true,
+      })),
+    })),
+  }
+}
+
+async function pollOutline(taskId: number) {
+  outlineStatus.value = 'queued'
+  outlineError.value = ''
+  outlineReview.value = null
+  outlinePollCount.value = 0
+  for (let attempt = 1; attempt <= 100; attempt++) {
+    outlinePollCount.value = attempt
+    try {
+      const { data } = await agentApi.get<KnowledgeTask>(`/knowledge-base/tasks/${taskId}`)
+      if (data.status === 'COMPLETED') {
+        const outline = (data.result ?? {}).outline as Record<string, any> | undefined
+        if (!outline) { outlineStatus.value = 'failed'; outlineError.value = '规划任务完成但未返回大纲，请到任务监控查看详情'; return }
+        outlineReview.value = buildOutlineReview(outline, taskId)
+        outlineStatus.value = 'ready'
+        return
+      }
+      if (data.status === 'FAILED' || data.status === 'BLOCKED') {
+        outlineStatus.value = 'failed'
+        outlineError.value = `大纲规划未完成（${data.error_code || data.status}），可调整要求后重试`
+        return
+      }
+      outlineStatus.value = data.status === 'RUNNING' ? 'running' : 'queued'
+    } catch {
+      // 网络抖动：继续下一轮，不做中断
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000))
+  }
+  outlineStatus.value = 'failed'
+  outlineError.value = '等待规划结果超时，请稍后到「AI 用量与任务监控」查看任务状态'
+}
+
+function discardOutline() {
+  outlineReview.value = null
+  outlineStatus.value = 'idle'
+  outlineError.value = ''
+  outlineTaskId.value = undefined
+}
+
 async function planConstructionSubject() {
   constructionBusy.value = true
   try {
     const { data } = await agentApi.post<KnowledgeTask>('/knowledge-base/construction/subject-plans', { ...constructionForm, client_request_id: crypto.randomUUID() })
     outlineTaskId.value = data.id
-    ElMessage.success('大纲规划已排队，完成后可读取并编辑')
+    ElMessage.success('已提交 AI 规划，正在等待大纲生成')
     await fetchKnowledgeTasks()
-  } catch { ElMessage.error('规划失败；请检查名称是否已有确认大纲') }
+    await pollOutline(data.id)
+  } catch { ElMessage.error('规划提交失败；请检查名称是否已有确认大纲') }
   finally { constructionBusy.value = false }
 }
 
-async function loadConstructionOutline() {
-  if (!outlineTaskId.value) return
-  const { data } = await agentApi.get<KnowledgeTask>(`/knowledge-base/tasks/${outlineTaskId.value}`)
-  if (data.status !== 'COMPLETED' || !data.result.outline) { ElMessage.info(`规划任务状态：${data.status}`); return }
-  outlineEditor.value = JSON.stringify(data.result.outline, null, 2)
+function keptOutlinePayload(review: OutlineReview) {
+  const chapters = review.chapters
+    .map(chapter => ({ name: chapter.name, points: chapter.points.filter(point => point.kept) }))
+    .filter(chapter => chapter.points.length > 0)
+    .map(chapter => ({
+      name: chapter.name,
+      points: chapter.points.map(({ kept: _kept, ...point }) => point),
+    }))
+  return { name: review.name, code: review.code, aliases: review.aliases, description: review.description, chapters }
 }
 
 async function confirmConstructionOutline() {
-  if (!outlineTaskId.value) return
+  const review = outlineReview.value
+  if (!review) return
+  const payload = keptOutlinePayload(review)
+  if (!payload.chapters.length) { ElMessage.warning('请至少保留一个知识点再确认'); return }
+  constructionBusy.value = true
   try {
-    const outline = JSON.parse(outlineEditor.value)
-    await agentApi.post(`/knowledge-base/construction/subject-plans/${outlineTaskId.value}/confirm`, outline)
-    ElMessage.success('课程结构已确认，知识点等待建设')
+    await agentApi.post(`/knowledge-base/construction/subject-plans/${review.taskId}/confirm`, payload)
+    ElMessage.success(`课程结构已确认：${review.chapters.reduce((sum, ch) => sum + ch.points.filter(p => p.kept).length, 0)} 个知识点等待建设`)
+    discardOutline()
     await loadConstructionSubjects()
-  } catch { ElMessage.error('大纲格式无效或课程结构已确认') }
+  } catch { ElMessage.error('确认失败：该学科可能已有确认的课程结构') }
+  finally { constructionBusy.value = false }
 }
 
 async function loadConstructionPoints() {
@@ -651,19 +709,6 @@ async function fetchSubjects() {
   }
 }
 
-async function createSubject() {
-  loading.createSubject = true
-  try {
-    const { data } = await systemApi.post<ApiEnvelope<SubjectItem>>('/system/subjects', subjectForm)
-    subjects.value.push(data.data)
-    ElMessage.success('学科创建成功')
-    await fetchLogs()
-  } catch {
-    ElMessage.error('学科创建失败')
-  } finally {
-    loading.createSubject = false
-  }
-}
 
 async function fetchConfigs() {
   loading.configs = true
@@ -933,12 +978,12 @@ onMounted(async () => {
     case 'knowledge': await fetchKnowledgeStatus(); break
     case 'tasks': await fetchKnowledgeTasks(); break
     case 'review': await Promise.all([fetchKnowledgeCandidates(), loadKnowledgeVersions()]); break
-    case 'maintenance': await fetchMaintenancePlans(); break
+    case 'maintenance': await Promise.all([fetchMaintenancePlans(), fetchSubjects()]); break
     case 'resources': await fetchManagedResources(); break
     case 'settings': await fetchConfigs(); syncSelectedConfigValue(); break
     case 'logs': await fetchLogs(); break
     case 'prompts': await Promise.all([fetchPrompts(), fetchImageProvider()]); break
   }
 })
-return { router, authStore, candidateOriginFilter, subjects, configs, logs, dashboard, userPage, knowledgeStatus, knowledgeSources, knowledgeTasks, taskSubject, taskQuery, maintenancePlans, knowledgeCandidates, constructionSubjects, constructionPoints, constructionSubjectId, constructionSelectedPoints, constructionForm, outlineEditor, outlineTaskId, constructionBusy, manualSubjectCode, manualPoint, constructionFocus, knowledgeVersions, oldVersionId, newVersionId, versionComparison, maintenanceReport, taskUsage, versionImpact, planForm, knowledgeError, managedResources, resourceError, resourceFilter, selectedResource, userKeyword, userRole, newUser, currentUserPage, selectedConfigKey, roleForm, subjectForm, configForm, logFilter, roleResult, loading, configKeys, visibleLogs, visibleResources, adminStats, prompts, selectedPromptName, promptContent, promptPlaceholders, promptVersions, imageProvider, imageProviderForm, rewriteInstruction, rewriteStyle, rewriteResult, rewriteBusy, resourceSections, resourceIllustrations, illustratePrompt, illustrateBusy, fetchDashboard, fetchUsers, selectUser, createUser, setUserStatus, fetchKnowledgeStatus, fetchKnowledgeSources, reindexKnowledgeBase, fetchKnowledgeTasks, fetchMaintenancePlans, createMaintenancePlan, toggleMaintenancePlan, startKnowledgeTask, candidateSources, fetchedSource, searchKnowledgeSources, fetchCandidateSource, cancelKnowledgeTask, viewTaskUsage, retryKnowledgeTask, viewVersionImpact, loadConstructionSubjects, createManualConstructionSubject, createManualConstructionPoint, planConstructionSubject, loadConstructionOutline, confirmConstructionOutline, loadConstructionPoints, buildConstructionPoints, fetchKnowledgeCandidates, createKnowledgeCandidate, saveCandidate, submitCandidate, reviewCandidate, loadKnowledgeVersions, compareKnowledgeVersions, compareCandidateDraft, rollbackKnowledgeVersion, startCandidateRevision, viewMaintenanceReports, publishCandidate, createHealthCheckTask, fetchManagedResources, showResource, changeResourceStatus, assignRole, fetchSubjects, createSubject, fetchConfigs, syncSelectedConfigValue, updateConfig, fetchLogs, fetchPrompts, loadPrompt, savePrompt, loadPromptVersions, restorePromptVersion, fetchImageProvider, updateImageProvider, rewriteSelectedResource, applyRewrite, loadResourceSections, loadIllustrations, generateIllustration, reviewIllustration, insertIllustration, logout }
+return { router, authStore, candidateOriginFilter, subjects, configs, logs, dashboard, userPage, knowledgeStatus, knowledgeSources, knowledgeTasks, taskSubject, taskQuery, maintenancePlans, knowledgeCandidates, constructionSubjects, constructionPoints, constructionSubjectId, constructionSelectedPoints, constructionForm, outlineReview, outlineStatus, outlineError, outlinePollCount, outlineTaskId, constructionBusy, manualPoint, constructionFocus, knowledgeVersions, oldVersionId, newVersionId, versionComparison, maintenanceReport, taskUsage, versionImpact, planForm, knowledgeError, managedResources, resourceError, resourceFilter, selectedResource, userKeyword, userRole, newUser, currentUserPage, selectedConfigKey, roleForm, configForm, logFilter, roleResult, loading, configKeys, visibleLogs, visibleResources, adminStats, prompts, selectedPromptName, promptContent, promptPlaceholders, promptVersions, imageProvider, imageProviderForm, rewriteInstruction, rewriteStyle, rewriteResult, rewriteBusy, resourceSections, resourceIllustrations, illustratePrompt, illustrateBusy, fetchDashboard, fetchUsers, selectUser, createUser, setUserStatus, fetchKnowledgeStatus, fetchKnowledgeSources, reindexKnowledgeBase, fetchKnowledgeTasks, fetchMaintenancePlans, createMaintenancePlan, toggleMaintenancePlan, startKnowledgeTask, candidateSources, fetchedSource, searchKnowledgeSources, fetchCandidateSource, cancelKnowledgeTask, viewTaskUsage, retryKnowledgeTask, viewVersionImpact, loadConstructionSubjects, createManualConstructionPoint, planConstructionSubject, discardOutline, confirmConstructionOutline, loadConstructionPoints, buildConstructionPoints, fetchKnowledgeCandidates, createKnowledgeCandidate, saveCandidate, submitCandidate, reviewCandidate, loadKnowledgeVersions, compareKnowledgeVersions, compareCandidateDraft, rollbackKnowledgeVersion, startCandidateRevision, viewMaintenanceReports, publishCandidate, createHealthCheckTask, fetchManagedResources, showResource, changeResourceStatus, assignRole, fetchSubjects, fetchConfigs, syncSelectedConfigValue, updateConfig, fetchLogs, fetchPrompts, loadPrompt, savePrompt, loadPromptVersions, restorePromptVersion, fetchImageProvider, updateImageProvider, rewriteSelectedResource, applyRewrite, loadResourceSections, loadIllustrations, generateIllustration, reviewIllustration, insertIllustration, logout }
 }

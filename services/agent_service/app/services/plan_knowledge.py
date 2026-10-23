@@ -97,8 +97,16 @@ def plan_preflight(
                     # Verify their actual stored chunks even when the point name
                     # does not occur verbatim in a PDF's text; no embedding/model
                     # initialization is needed for this availability check.
+                    # The ranked results may be crowded out by other documents
+                    # that also mention the point, so fall back as soon as the
+                    # point's own published sources are absent from the hits.
+                    matched_owned = [
+                        row
+                        for row in chunks
+                        if (row.get("metadata") or {}).get("source") in sources
+                    ]
                     collection = getattr(retriever, "collection", None)
-                    if not chunks and collection is not None:
+                    if not matched_owned and collection is not None:
                         for source, version_hash in list(sources.items())[:8]:
                             stored = collection.get(
                                 where={
@@ -108,7 +116,7 @@ def plan_preflight(
                                         {"document_version": version_hash},
                                     ]
                                 },
-                                limit=1,
+                                limit=6,
                                 include=["documents", "metadatas"],
                             )
                             chunks.extend(
@@ -129,6 +137,63 @@ def plan_preflight(
                         and meta.get("subject") == catalog.code
                         and meta.get("teacher_scope", "public") == "public"
                     ]
+                    # Real external references persisted for this exact point are
+                    # usable material too. They are not reviewed versions, so the
+                    # UI still reports published_versions separately; retrieval
+                    # just stops being limited to a thin AI-written placeholder.
+                    collection = getattr(retriever, "collection", None)
+                    source_chunks: list[dict] = []
+                    if collection is not None:
+                        try:
+                            stored = collection.get(
+                                where={
+                                    "$and": [
+                                        {"subject": catalog.code},
+                                        {"knowledge_point_name": point.name},
+                                        {"source_type": "web_reference"},
+                                    ]
+                                },
+                                limit=60,
+                                include=["documents", "metadatas"],
+                            )
+                            grouped: dict[str, list[dict]] = {}
+                            for chunk_id, text, meta in zip(
+                                stored.get("ids") or [],
+                                stored.get("documents") or [],
+                                stored.get("metadatas") or [],
+                                strict=True,
+                            ):
+                                if not text or not isinstance(meta, dict):
+                                    continue
+                                if str(meta.get("teacher_scope") or "public") != "public":
+                                    continue
+                                key = str(meta.get("source") or "")
+                                grouped.setdefault(key, []).append({
+                                    "id": chunk_id,
+                                    "content": text,
+                                    "metadata": meta,
+                                    "retrieval_strategy": "web_reference",
+                                })
+                            # Several sources are more useful than eight chunks of
+                            # the first article; keep the opening chunks per source.
+                            for rows in grouped.values():
+                                rows.sort(
+                                    key=lambda row: int((row.get("metadata") or {}).get("chunk_index") or 0)
+                                )
+                                source_chunks.extend(rows[:3])
+                        except Exception:
+                            source_chunks = []
+                    source_chunks.sort(
+                        key=lambda row: int((row.get("metadata") or {}).get("chunk_index") or 0)
+                    )
+                    seen_ids = {str(row.get("id") or "") for row in result["usable_chunks"]}
+                    for row in source_chunks:
+                        chunk_id = str(row.get("id") or "")
+                        if chunk_id in seen_ids:
+                            continue
+                        result["usable_chunks"].append(row)
+                        seen_ids.add(chunk_id)
+                    result["usable_chunks"] = result["usable_chunks"][:12]
                     reason = "READY" if result["usable_chunks"] else "INDEX_STALE_OR_MISSING"
             except Exception as exc:
                 result["retrieval_error"] = type(exc).__name__

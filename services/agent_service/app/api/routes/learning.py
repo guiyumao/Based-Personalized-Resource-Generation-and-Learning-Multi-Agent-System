@@ -1,5 +1,6 @@
 """Routes for learning-path, knowledge-base, and exercise capabilities."""
 
+from datetime import timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session
 from common.config import get_settings
 from common.db.session import get_db
 from common.dependencies import get_current_user, require_role, require_self_or_admin
-from common.models.learning import LearningPath, User
+from common.models.learning import LearningPath, Resource, User
 from common.performance import set_trace_context
 from common.schemas.agent import (
     CoordinationRequest,
@@ -37,6 +38,28 @@ from services.agent_service.app.services.plan_feedback import PlanFeedbackServic
 from services.agent_service.app.services.task_feedback import TaskFeedbackService
 
 router = APIRouter()
+
+
+def _courseware_pick(candidates: list[Resource], reference) -> Resource | None:
+    """Pick the courseware that belonged to one history run.
+
+    Courseware is generated right after its path, so the latest snapshot within
+    a short window after the row is the best match. A much later regeneration
+    for the same point must not replace what an older history row shows.
+    """
+
+    if not candidates:
+        return None
+    if reference is None:
+        return candidates[0]
+    cutoff = reference + timedelta(minutes=30)
+    eligible = [
+        resource
+        for resource in candidates
+        if resource.created_at is not None and resource.created_at <= cutoff
+    ]
+    pool = eligible or candidates
+    return max(pool, key=lambda resource: resource.created_at or reference)
 
 
 class PlanPreflightRequest(BaseModel):
@@ -201,11 +224,60 @@ def list_path_history(
     )
     total = query.count()
     rows = query.offset(offset).limit(limit).all()
-    items = []
+
+    # A generated courseware belongs to the knowledge point, not to one path
+    # row: regenerating a plan for the same point reuses the same resource. Map
+    # the latest owned/visible courseware of every point in this page in one
+    # query, then attach it to each summary so the history panel can open the
+    # saved courseware instead of generating a new one.
+    parsed_rows: list[tuple[LearningPath, dict, list, list[int]]] = []
+    point_ids: set[int] = set()
     for row in rows:
         data = row.path_data_json if isinstance(row.path_data_json, dict) else {}
         stages = data.get("stages") if isinstance(data.get("stages"), list) else []
+        task_point_ids: list[int] = []
+        for stage in stages:
+            if not isinstance(stage, dict):
+                continue
+            for task in stage.get("tasks") or []:
+                if not isinstance(task, dict):
+                    continue
+                try:
+                    point_id = int(task.get("knowledge_point_id"))
+                except (TypeError, ValueError):
+                    continue
+                task_point_ids.append(point_id)
+                point_ids.add(point_id)
+        parsed_rows.append((row, data, stages, task_point_ids))
+
+    courseware_by_point: dict[int, list[Resource]] = {}
+    if point_ids:
+        owned_courseware = (
+            db.query(Resource)
+            .filter(
+                Resource.generated_for_user_id == user_id,
+                Resource.type == "courseware",
+                Resource.generation_status == "generated",
+                Resource.publish_status != "archived",
+                Resource.knowledge_point_id.in_(point_ids),
+            )
+            .order_by(Resource.id.desc())
+            .all()
+        )
+        for resource in owned_courseware:
+            courseware_by_point.setdefault(resource.knowledge_point_id, []).append(resource)
+
+    items = []
+    for row, data, stages, task_point_ids in parsed_rows:
         teacher_scope = data.get("teacher_scope") if isinstance(data.get("teacher_scope"), dict) else {}
+
+        candidates = [
+            resource
+            for point_id in task_point_ids
+            for resource in courseware_by_point.get(point_id, [])
+        ]
+        reference = row.created_at
+        courseware = _courseware_pick(candidates, reference)
         items.append(
             {
                 "id": row.id,
@@ -220,6 +292,13 @@ def list_path_history(
                     len(stage.get("tasks") or []) for stage in stages if isinstance(stage, dict)
                 ),
                 "teacher_scope_title": str(teacher_scope.get("courseware_title") or ""),
+                "courseware_resource_id": courseware.id if courseware else None,
+                "courseware_title": str(courseware.title or "") if courseware else "",
+                "courseware_created_at": (
+                    courseware.created_at.isoformat()
+                    if courseware is not None and courseware.created_at
+                    else None
+                ),
             }
         )
     return {"items": items, "total": total, "limit": limit, "offset": offset}

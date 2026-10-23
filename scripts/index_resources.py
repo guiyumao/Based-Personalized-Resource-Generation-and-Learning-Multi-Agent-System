@@ -10,9 +10,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -183,6 +183,8 @@ def _extract_source_metadata(content: str) -> dict[str, str]:
         "爬取时间": "crawl_time",
         "更新时间": "update_time",
         "内容哈希": "content_hash",
+        "知识点": "knowledge_point_name",
+        "知识点ID": "knowledge_point_id",
     }
     metadata: dict[str, str] = {}
     for line in content.splitlines()[:30]:
@@ -227,6 +229,7 @@ def index_file(
         return {"chunks": 0, "ids": [], "document_version": document_version, "index_version": index_version}
 
     tags = tag_service.analyze_tags(content, title, subject)
+    point_name = source_metadata.get("knowledge_point_name") or title
     metadatas: list[dict[str, Any]] = []
     if not dry_run:
         metadatas = [
@@ -252,8 +255,8 @@ def index_file(
                 "grade": "",
                 "chapter": title,
                 "section": "",
-                "knowledge_point_id": source_id,
-                "knowledge_point_name": title,
+                "knowledge_point_id": source_metadata.get("knowledge_point_id") or source_id,
+                "knowledge_point_name": point_name,
                 "teacher_scope": "public",
                 "version": document_version[:16],
                 "document_version": document_version,

@@ -14,10 +14,10 @@ from typing import Any, TypedDict
 from sqlalchemy.orm import Session
 
 from common.ai_errors import AIServiceError
-from common.db.session import SessionLocal
 from common.config import get_settings
-from common.models.learning import Exercise, KnowledgePoint, Resource, SystemSubject
+from common.db.session import SessionLocal
 from common.messaging.rabbitmq import RabbitMQPublisher
+from common.models.learning import Exercise, KnowledgePoint, Resource, SystemSubject
 from common.performance import get_current_trace
 from common.schemas.agent import (
     CoordinationRequest,
@@ -30,7 +30,10 @@ from services.agent_service.app.connectors.neo4j_connector import KnowledgeGraph
 from services.agent_service.app.services.exercise_generation import ExerciseGenerationService
 from services.agent_service.app.services.knowledge_base import KnowledgeBaseService
 from services.agent_service.app.services.learning_path import LearningPathService
-from services.agent_service.app.services.personalization import LearnerPersonalizationSnapshot, PersonalizationService
+from services.agent_service.app.services.personalization import (
+    LearnerPersonalizationSnapshot,
+    PersonalizationService,
+)
 from services.agent_service.app.services.qa_service import QAService
 from services.agent_service.app.services.resource_generation import (
     ResourceGenerationError,
@@ -380,10 +383,13 @@ class CoordinatorWorkflow:
                         context["subject"] = catalog.name
                         context["knowledge_point_id"] = str(matches[0].id)
             if (context.get("dynamic_knowledge") is True or selected.intersection({"resource_generation_agent", "exercise_generation_agent"})) and knowledge_point and context.get("subject") and not context.get("teaching_scope_id") and can_run():
-                from services.agent_service.app.services.knowledge_acquisition import acquire_context
+                from services.agent_service.app.services.knowledge_acquisition import (
+                    acquire_context,
+                )
                 knowledge_context = acquire_context(session, actor_user_id=payload.user_id,
                                                      subject=str(context["subject"]), knowledge_point=knowledge_point,
-                                                     allow_web=context.get("allow_web_knowledge", True) is True)
+                                                     allow_web=context.get("allow_web_knowledge", True) is True,
+                                                     enrich_sources=context.get("enrich_knowledge") is True)
                 context["retrieval_context"] = knowledge_context["retrieval_context"]
                 context["retrieval_context"]["knowledge_evidence"] = {key: value for key, value in knowledge_context.items() if key != "retrieval_context"}
                 outputs["knowledge_acquisition"] = knowledge_context

@@ -5,6 +5,7 @@ import { navigationItemForRoute } from '../config/navigation'
 import AppSidebar from '../components/AppSidebar.vue'
 import AppTopbar from '../components/AppTopbar.vue'
 import AssistantPet from '../components/AssistantPet.vue'
+import GenerationTaskPanel from '../components/GenerationTaskPanel.vue'
 import { useStudyActivity } from '../composables/useStudyActivity'
 
 useStudyActivity()
@@ -30,6 +31,7 @@ watch(navigationOpen, async (open, previous) => {
     <div class="app-main" :inert="navigationOpen">
       <AppTopbar @toggle-navigation="navigationOpen = !navigationOpen"><template #assistant><AssistantPet v-show="!navigationOpen" /></template></AppTopbar>
       <div class="app-content" :class="{'dashboard-content':route.name === 'admin'}">
+        <GenerationTaskPanel />
         <header v-if="page?.roles.includes('admin') && route.name !== 'admin'" class="admin-page-heading"><span>LEARNING OS · 管理后台</span><h1>{{ page.label }}</h1><p>{{ page.description }}</p></header>
         <router-view v-slot="{ Component, route }">
           <transition name="page" mode="out-in">

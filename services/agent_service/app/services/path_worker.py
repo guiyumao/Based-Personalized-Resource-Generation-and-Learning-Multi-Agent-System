@@ -26,20 +26,27 @@ from services.agent_service.app.services.coordination_runner import run_coordina
 LOGGER = logging.getLogger("path-worker")
 QUEUE = "path_generation"
 WORKER_ID = f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
-STALE_QUEUED_SECONDS = 25
+# The sweep is the only delivery path when RabbitMQ is not running (the local
+# Windows dev stack has no broker). The claim is a conditional UPDATE on
+# status="QUEUED", so a broker message that arrives later cannot run the task a
+# second time; waiting 25 s here used to add ~25 s of dead time to every
+# generation before the worker even started.
+STALE_QUEUED_SECONDS = 3
+SWEEP_INTERVAL_SECONDS = 2
 
 
 def execute_task(task_id: int) -> None:
     """Claim one queued task and run the coordinator workflow to completion."""
 
     with SessionLocal() as db:
-        task = db.get(CoordinationTask, task_id)
-        if task is None or task.status != "QUEUED":
-            return
-        task.status = "RUNNING"
-        task.started_at = datetime.utcnow()
-        task.worker_id = WORKER_ID
+        claimed = db.query(CoordinationTask).filter_by(id=task_id, status="QUEUED").update(
+            {"status": "RUNNING", "started_at": datetime.utcnow(), "worker_id": WORKER_ID},
+            synchronize_session=False,
+        )
         db.commit()
+        if not claimed:
+            return
+        task = db.get(CoordinationTask, task_id)
 
         try:
             payload = CoordinationRequest(**task.request_json)
@@ -91,12 +98,16 @@ def consume_forever() -> None:
         LOGGER.warning("rabbitmq_url_missing; running in database-sweep-only mode")
         while True:
             sweep_stale()
-            time.sleep(5)
+            time.sleep(SWEEP_INTERVAL_SECONDS)
 
     import pika
 
     parameters = pika.URLParameters(settings.rabbitmq_url)
+    parameters.connection_attempts = 1
+    parameters.socket_timeout = 5
+    parameters.stack_timeout = 10
     while True:
+        connection = None
         try:
             connection = pika.BlockingConnection(parameters)
             channel = connection.channel()
@@ -118,8 +129,12 @@ def consume_forever() -> None:
                 connection.process_data_events(time_limit=3)
                 sweep_stale()
         except Exception:
-            LOGGER.exception("path_worker_connection_lost; retrying in 5s")
-            time.sleep(5)
+            LOGGER.exception("path_worker_connection_lost; retrying in %ss", SWEEP_INTERVAL_SECONDS)
+            sweep_stale()
+            time.sleep(SWEEP_INTERVAL_SECONDS)
+        finally:
+            if connection is not None and connection.is_open:
+                connection.close()
 
 
 if __name__ == "__main__":

@@ -1,4 +1,54 @@
+## GitHub 上传快照验证（2026-10-23）
+
+- 用户明确要求项目上传 GitHub；沿用 origin/main，上传当前已整理的源码、迁移、测试与文档。保留本机代理笔记、生成语料、数据库、密钥和运行产物；准备快照后出现的 LoginView.vue 并行改动保留本地。
+- 本轮前端 TypeScript/Vite build 通过；后端定向 pytest 97 passed。默认 Node 的 undici 环境启动失败，切换已安装 Node 24.19.0 后前端 66 passed / 1 failed；失败位于 workspaceGeneration.spec.ts:26，恢复任务后 error 预期 offline、实际空串，未在上传任务中修改业务实现。
+- 日志：artifacts/github-upload-build.log、github-upload-backend-test.log、github-upload-frontend-test-node.log。未执行真实模型调用或数据库迁移，不声明全站验证通过。
+
 # 当前开发状态
+
+## 学习工作区离开后持续生成（2026-10-23）
+
+- 根因：Assistant Worker 已退出（原 #16/#17 PENDING）；工作区轮询随组件卸载停止，提交响应晚于离开时任务号丢失；新路径归档全部 active 计划使截图 #369 失效。
+- 新增 `stores/workspaceGeneration.ts`：用户/上下文隔离、离页轮询、本地回执、瞬时错误重试、TIMED_OUT 终态；返回/刷新由按上下文过滤的 `/assistant/tasks` 找回，无需重发生成，完成仅在打开对应工作区时跳转。路径保存只替换同学科同主题非教师计划，保留排队/运行中的计划。启动脚本在 worker 模式补启缺失 Assistant Worker。
+- 运行库在线备份 + 副本演练后仅恢复 #369 active，无迁移；重载8002/8007、path-worker，恢复assistant-worker PID27920。原#16真实生成SUCCEEDED → resource#241（10316字）→ #369新上下文；原#17也SUCCEEDED，未另提交测试生成。恢复队列执行了原任务的真实模型调用。
+- 验证：后端相关34 passed；前端全套46 passed，后补提交超时找回后定向4 passed；tsc/Vite通过，定向Ruff/PS语法通过（assistant.py原I001未重排）；模拟后端浏览器离页/刷新两例无重复POST且pageErrors空；真实demo_s01从原上下文自动进入#241课件，pageErrors空、生成POST=0。证据 `artifacts/workspace-background-20261023/`（before.sqlite、repair.json、browser/result.json、live-readback.json、live-browser.json、live-workspace.png、final-tasks.json）。不宣称正文教学质量或视频通过，运行日志提示本地视频制作失败。
+
+
+## 全站雷达图共用绘制规则（2026-10-23）
+
+- 新增共享 `components/RadarChart.vue`，学习画像的偏好量表（-1～1）与学习概览的能力指标（0～100）均复用。全站源码雷达入口已排查；三项以上已知值连线填充、两项连线、缺失值保留空并提示，零值有效，不补造维度。概览保留原数值条便于阅读；不足三维不构造雷达。支持不同维度数量、主题配色与响应式尺寸。
+- TypeScript检查及共享组件/画像页14项测试通过，覆盖3/4/5/7维、缺失与非有限值、量表映射及数据更新。只改前端，无模型调用、数据库变更或服务重启；未做当前浏览器截图级验收。
+
+## 学习画像改为模型推断（2026-10-23）
+
+- 用户截图指出画像雷达空置且只能手填。新增 `services/user_service/app/services/learning_style_inference.py`：模型读取已收集的自述维度/自述风格、真实作答知识点、资源浏览、画像对话、笔记/闪卡计数与既有分析摘要，输出四轴（-1..1）+ 每轴置信度/依据 + 总述；严格 JSON 校验（越界、非数字、全空都拒绝），证据不足保持 null，明确禁止用正确率单独推断风格。
+- 手动值仍存 `habits.learning_style_axes` 且优先；推断单独存 `habits.learning_style_inference`（含 Prompt 版本、证据指纹、模型名、时间），不污染其他智能体读取的 `profile_dimensions`。GET 合并并按轴标 `user_reported/model_inferred/missing`；`POST /users/{id}/learning-portrait/infer` 一次有界模型调用，24h + 证据指纹缓存，新增记录后标记 stale；四项全手填时跳过模型。
+- 前端画像页新增“AI 生成画像/更新画像”（`force=false`，无新证据直接复用缓存），雷达与维度条按来源着色，模型项展示依据与置信度；进入编辑时推断项默认不勾选，避免“编辑即据为己有”。空态文案改为模型生成入口。
+- 验证：`tests/unit/test_learning_insights_portrait.py` 13 passed（新增 6 项：合并/手动优先/缓存/非法输出/无证据不调用/无凭据 blocked/越权），`test_profile_analysis.py` 5 passed；3 个新前端组件用例、全套 39 passed、build 通过；Ruff 通过。8001 已重载（PID 81844），openapi 有 infer 路由；demo_s01 真实 JWT GET 返回 inference=never、跨用户 403。
+- 边界：未做真实付费模型调用（未获本轮预算授权），真实模型对 Prompt 的遵从度与推断质量未验证；辅助六维文本仍由画像对话/深度分析生成，不写入 `profile_dimensions`；未跑浏览器点击级 E2E。
+
+## 历史课件可打开 + 真实检索资料入库（2026-10-23）
+
+- 历史课件：`GET /paths/history/{user_id}` 每条记录新增 `courseware_resource_id/title/created_at`（按用户+知识点，取该路径生成后30分钟内最新的一条，没有则回退到时间最接近的一条；排除归档/他人），前端历史卡片显示“查看课件 #id”，弹窗直接读 `/resources/{id}` 原文；不依赖 sessionStorage，不触发生成。实测 167/168/169 分别命中 234/235/236，12:56/15:13 存储系统均命中 237，15:15 UDP 命中 233；老师范围旧路径无知识点ID时不强配。
+- 真实资料：新增 `services/agent_service/app/services/knowledge_sources.py`——检索到的外部正文写成 `knowledge_base/corpus/<subject>/source_<hash>.md`（带 URL/站点/授权/知识点/知识点ID 头），`scripts/index_resources.py` 识别 `知识点` 头并按点索引；`plan_preflight` 在已发布版本 chunk 之外补入 `source_type=web_reference` 的真实资料（每来源最多3块、总计≤12，`visible_chunks` 仍只对 candidate 做版本校验）；`acquire_context(enrich_sources=True)` 在无外部资料时检索一次并入库，7天 marker 防止重复搜索/失败重试。路径页请求已开 `allow_web_knowledge/enrich_knowledge`。
+- 已真实检索并入 UDP（计算机网络）3 个中文来源、存储系统（计算机组成原理）3 个来源；`acquire_context` 实测 UDP 10 chunks（9 外部）、存储系统 12 chunks（4 外部），第二轮不再搜索。未发起新的课件生成（未授权付费），公开正文/版本未被改写。
+- 验证：新增 `tests/unit/test_knowledge_sources.py` 5 项、历史挂课件 2 项（含 30 分钟窗口），后端相关 49 passed；前端 36 passed、build 通过；Ruff 通过。8002 已按 runtime.sqlite 重启（最终 PID 32732），path_worker PID 55576 载入 3s/2s 扫描（原25s队列空转）；`GET /paths/history/6` 真实 JWT 返回 25 条，167/168/169→234/235/236、367/212→237、368→233；`acquire_context` 实测 UDP 10 chunks（9 外部）、存储系统 12（4 外部），课件上下文 10 chunks/6954 字符。证据 `artifacts/history-courseware-20261022/`、`artifacts/knowledge-sources-20261023/`。
+- 边界：外部资料仅作检索参考（授权标 `external-reference`，不冒充已审核版本）；公网检索依赖 DeepSeek search key/额度；未做旧版本自动替换（UDP 的682字节占位版本仍 active，但已由真实资料补足）；未跑付费生成/浏览器点击。
+
+## 学习路径后台生成跨页面续接（2026-10-22）
+
+- 现象/根因：协调任务已由path_worker在服务端继续执行（coordination_tasks#1 SUCCEEDED、learning_paths#212、resources#237均已落库），但轮询与结果落盘只存在于LearningPathView组件内；离开页面即触发`pageDisposed`抛错，组件内的`persistCoordinatedCourseware/persistCoordinatedExercises`永不执行，任务号也随之丢失，故表现为“离开就不生成”。
+- 新增 `web-app/src/stores/pathGeneration.ts`：框架无关单例，持有排队/轮询/失败状态；任务号写入localStorage（`student-path-generation-pending:<userId>`，6小时内有效），重新进入页面、刷新甚至关闭浏览器后`resumePathGeneration`原地续接、不重复提交；成功时由store统一写入课件/练习快照与工作区上下文，失败/超时保留可续接状态，瞬时网络错误不终止轮询。公共知识PUBLIC_KNOWLEDGE_PROCESSING的3秒预检重试也迁入该模块，离开页面不再中断。
+- LearningPathView改为store驱动：`loading`由store状态派生，返回页面自动续接并直接回显路径；在后台生成期间不被历史路径覆盖表单；新增“可离开本页”提示。CoursewareView在无快照且后台任务在跑时等待该任务并采纳其课件（12分钟上限），避免另起一次付费课件生成。
+- 验证：前端`npm run test` 35项全通过（新增后台完成/持久任务续接/失败清理/瞬时错误/遗留任务过期5项，路径页原5项不变）；`npm run build`（tsc+vite）通过；5175 dev server已实际返回新模块。新增 `tests/e2e/run-path-background-resume.mjs`（后端全部拦截，零真实模型调用、零数据库写入）：A.生成中切到“学习概览”，任务完成后课件/练习快照已写入且无待续接记录，返回后路径直接回显；B.生成中整页刷新，提示条重新出现并续接（`enqueued`仍为1，未重复提交），完成后渲染路径并清理待续接记录；两例`pageErrors`均为空，证据 `artifacts/path-background-20261022/`。未跑真实付费生成；运行中的agent/worker未重启（纯前端改动）。
+
+## GitHub ac840f42 融合与本机激活（2026-10-22）
+
+- main 从66a78ec7无冲突快进至origin/main的ac840f42，合入学习路径历史、异步生成、课堂显示及公共知识截断处理；保留原本地笔记和运行数据。新增语料文件仅作为源码合入，未绕过数据库审核自动发布。
+- 补齐0042 coordination_tasks迁移；修复path_worker非原子领取与RabbitMQ连接失败时不扫描数据库的问题，连接超时有界。补充异步/历史权限、重复执行、故障回退和截断重写测试，更新上游重构后的测试接口。
+- Python相关72项+截断补测1项通过；前端原29项及含新增历史交互的路径页5项通过（共30个不同用例）；TypeScript/Vite构建、定向Ruff通过。Windows内存不足的早期中断记录不作为通过证据。
+- 在线备份及副本幂等演练后，仅新增运行库coordination_tasks表，无全量迁移/stamp。重载相关agent/teacher/assistant-worker并启动path_worker；8001–8007健康、5175可访问，两个agent入口历史读库一致、匿名401/跨用户403及任务列表共10项只读检查通过。业务表计数和模型调用数不变，worker_instances注册记录15→16属预期。
+- 证据artifacts/path-fusion-20261022-204706/（before/rehearsal.sqlite、result.json、live-readonly.json）；artifacts/github-fusion-pytest-final.log、github-fusion-python.xml、github-fusion-build-final.log。说明docs/GitHub融合-ac840f42-20261022.md。补充修复未提交/推送；未跑真实付费生成或浏览器端到端。旧桌面ZIP仍是融合前快照。
 
 ## 多角色演示教学环境与跨角色联动验收（2026-10-22）
 

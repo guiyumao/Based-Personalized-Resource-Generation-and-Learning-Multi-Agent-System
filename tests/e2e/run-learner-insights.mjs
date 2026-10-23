@@ -35,7 +35,7 @@ try {
   report.steps.push('real_statistics_heatmap_range_tabs')
   await page.goto(origin+'/student/profile')
   await page.getByRole('heading',{name:'我的学习画像',exact:true}).waitFor()
-  await page.getByText('0/4项已填写',{exact:true}).waitFor()
+  await page.getByText('0/4项已获得',{exact:true}).waitFor()
   await page.getByRole('button',{name:'编辑画像',exact:true}).click()
   await page.getByRole('checkbox',{name:'填写信息输入',exact:true}).check()
   const slider=page.getByRole('slider',{name:'信息输入倾向',exact:true})

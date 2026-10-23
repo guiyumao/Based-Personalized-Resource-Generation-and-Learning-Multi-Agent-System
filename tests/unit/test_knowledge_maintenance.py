@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from common.db.base import Base
 from common.db.session import get_db
 from common.dependencies import get_current_user
-from common.models.learning import KnowledgeBuildTask, KnowledgeMaintenancePlan, User
+from common.models.learning import KnowledgeBuildTask, KnowledgeMaintenancePlan, SystemSubject, User
 from services.agent_service.app.main import app
 from services.agent_service.app.services import knowledge_maintenance
 
@@ -23,6 +23,7 @@ def factory(tmp_path, monkeypatch):
     maker = sessionmaker(bind=engine)
     with maker() as db:
         db.add(User(id=1, username="plan-admin", password_hash="unused", role="admin"))
+        db.add(SystemSubject(name="Python", code="python", description="catalog entry for plan tests"))
         db.commit()
     monkeypatch.setattr(knowledge_maintenance, "SessionLocal", maker)
     yield maker
@@ -92,6 +93,31 @@ def test_plan_api_permission_and_pause(factory) -> None:
         plan_id = created.json()["id"]
         assert client.patch(f"/knowledge-base/maintenance-plans/{plan_id}", json={"enabled": False}).json()["enabled"] is False
         assert len(client.get("/knowledge-base/maintenance-plans").json()["items"]) == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_plan_rejects_unknown_subject(factory) -> None:
+    first = datetime.now(timezone.utc) + timedelta(hours=1)
+    with factory() as db:
+        with pytest.raises(ValueError, match="Unknown subject"):
+            knowledge_maintenance.create_plan(
+                db, actor_user_id=1, name="Typo plan", subject="python;",
+                next_run_at=first, interval_hours=168,
+            )
+
+
+def test_plan_api_rejects_unknown_subject(factory) -> None:
+    client = TestClient(app)
+    payload = {
+        "name": "Typo plan", "subject": "python;",
+        "next_run_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        "interval_hours": 168,
+    }
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, role="admin")
+    app.dependency_overrides[get_db] = lambda: factory()
+    try:
+        assert client.post("/knowledge-base/maintenance-plans", json=payload).status_code == 422
     finally:
         app.dependency_overrides.clear()
 

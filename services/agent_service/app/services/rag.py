@@ -143,7 +143,26 @@ class _LexicalIndex:
         with self._lock:
             if self._collection_id == collection_id and self._generation == generation and self._entries:
                 return
-            payload = collection.get(include=["documents", "metadatas"])
+            # Chroma caps ``get`` at 100 rows by default. Without pagination the
+            # index only ever saw the oldest chunks, so every document published
+            # later was invisible to the fast path even though it was indexed
+            # correctly -- planning then reported it as missing.
+            payload: dict[str, Any] = {"ids": [], "documents": [], "metadatas": []}
+            page_size = 500
+            offset = 0
+            while True:
+                page = collection.get(
+                    include=["documents", "metadatas"], limit=page_size, offset=offset
+                )
+                page_ids = page.get("ids", []) or []
+                if not page_ids:
+                    break
+                payload["ids"].extend(page_ids)
+                payload["documents"].extend(page.get("documents", []) or [])
+                payload["metadatas"].extend(page.get("metadatas", []) or [])
+                if len(page_ids) < page_size:
+                    break
+                offset += page_size
             ids = payload.get("ids", []) or []
             documents = payload.get("documents", []) or []
             metadatas = payload.get("metadatas", []) or []

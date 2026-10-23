@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -22,6 +23,7 @@ from common.models.learning import (
 )
 from services.evaluation_service.app.main import app as evaluation_app
 from services.user_service.app.main import app as user_app
+from services.user_service.app.services import learning_style_inference as inference_module
 
 
 @pytest.fixture
@@ -174,3 +176,163 @@ def test_endpoints_require_auth(runtime):
     user_app.dependency_overrides.pop(get_current_user)
     assert evaluation.get("/evaluation/analytics/1/insights").status_code == 401
     assert users.get("/users/1/learning-portrait").status_code == 401
+
+
+# ── Model-generated style axes ──────────────────────────────────
+
+
+def _seed_answer(db) -> None:
+    db.add(
+        AnswerRecord(
+            user_id=1,
+            exercise_id=1,
+            user_answer="A",
+            is_correct=True,
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+    )
+    db.commit()
+
+
+def _patch_model(monkeypatch, model) -> None:
+    monkeypatch.setattr(
+        inference_module,
+        "LLMFactory",
+        lambda *_: SimpleNamespace(build_chat_model=lambda **__: model),
+    )
+
+
+class _Model:
+    def __init__(self, payload):
+        self.calls = 0
+        self.payload = payload
+
+    def invoke(self, _messages):
+        self.calls += 1
+        content = (
+            self.payload
+            if isinstance(self.payload, str)
+            else json.dumps(self.payload, ensure_ascii=False)
+        )
+        return SimpleNamespace(content=content)
+
+
+def test_model_inference_fills_axes_and_manual_values_win(runtime, monkeypatch):
+    db, _, client = runtime
+    _seed_answer(db)
+    model = _Model(
+        {
+            "axes": {
+                "processing": {"value": "0.5", "confidence": "0.8", "evidence": "多次先动手试错"},
+                "perception": {"value": None, "confidence": 0.2, "evidence": "记录不足"},
+                "input": {"value": 0.6, "confidence": 0.7, "evidence": "偏好图解资源"},
+                "understanding": {"value": -0.4, "confidence": 0.5, "evidence": "先看整体框架"},
+            },
+            "summary": "偏活跃与视觉，理解偏全局",
+        }
+    )
+    _patch_model(monkeypatch, model)
+
+    original = client.get("/users/1/learning-portrait").json()
+    assert original["inference"]["status"] == "never"
+    saved = client.put(
+        "/users/1/learning-portrait",
+        json={"expected_updated_at": original["updated_at"], "axes": {"input": 0.7}},
+    )
+    assert saved.status_code == 200
+
+    result = client.post("/users/1/learning-portrait/infer", json={}).json()
+    assert result["status"] == "completed", result
+    assert model.calls == 1
+    assert result["snapshot"]["inference"]["status"] == "completed"
+
+    read = client.get("/users/1/learning-portrait").json()
+    axes = {axis["key"]: axis for axis in read["axes"]}
+    assert axes["input"]["value"] == 0.7
+    assert axes["input"]["source"] == "user_reported"
+    assert axes["processing"]["value"] == 0.5
+    assert axes["processing"]["source"] == "model_inferred"
+    assert axes["processing"]["confidence"] == 0.8
+    assert axes["processing"]["evidence"] == "多次先动手试错"
+    assert axes["perception"]["value"] is None and axes["perception"]["source"] == "missing"
+    assert axes["understanding"]["source"] == "model_inferred"
+    assert read["inference"]["status"] == "completed"
+    assert read["inference"]["stale"] is False
+    assert read["inference"]["summary"] == "偏活跃与视觉，理解偏全局"
+    assert "1 项本人自述" in read["style_source"] and "2 项由模型" in read["style_source"]
+    assert db.get(UserProfile, 1).habits["keep"] is True
+
+    cached = client.post("/users/1/learning-portrait/infer", json={}).json()
+    assert cached["status"] == "completed" and cached["cached"] is True
+    assert model.calls == 1
+
+
+def test_inference_rejects_invalid_or_out_of_range_output(runtime, monkeypatch):
+    db, _, client = runtime
+    _seed_answer(db)
+    for payload in (
+        "not json",
+        {
+            "axes": {
+                "processing": {"value": 2, "confidence": 0.8, "evidence": "超出范围"},
+                "perception": {"value": None, "confidence": 0.2, "evidence": ""},
+                "input": {"value": 0.6, "confidence": 0.7, "evidence": ""},
+                "understanding": {"value": -0.4, "confidence": 0.5, "evidence": ""},
+            }
+        },
+    ):
+        model = _Model(payload)
+        _patch_model(monkeypatch, model)
+        result = client.post("/users/1/learning-portrait/infer", json={}).json()
+        assert result["status"] == "failed"
+        read = client.get("/users/1/learning-portrait").json()
+        assert read["inference"]["status"] == "never"
+        assert all(axis["value"] is None for axis in read["axes"])
+
+
+def test_inference_without_evidence_does_not_call_the_model(runtime, monkeypatch):
+    _, _, client = runtime
+    model = _Model({"axes": {}})
+    _patch_model(monkeypatch, model)
+    result = client.post("/users/1/learning-portrait/infer", json={}).json()
+    assert result["status"] == "insufficient"
+    assert model.calls == 0
+    assert client.get("/users/1/learning-portrait").json()["inference"]["status"] == "never"
+
+
+def test_inference_without_model_credentials_is_blocked(runtime, monkeypatch):
+    db, _, client = runtime
+    _seed_answer(db)
+
+    def factory(*_args, **_kwargs):
+        raise ValueError("No LLM credentials configured.")
+
+    monkeypatch.setattr(inference_module, "LLMFactory", factory)
+    result = client.post("/users/1/learning-portrait/infer", json={}).json()
+    assert result["status"] == "blocked"
+    assert "模型服务" in result["message"]
+    assert "learning_style_inference" not in db.get(UserProfile, 1).habits
+
+
+def test_manual_complete_portrait_skips_the_model(runtime, monkeypatch):
+    _, _, client = runtime
+    model = _Model({"axes": {}})
+    _patch_model(monkeypatch, model)
+    original = client.get("/users/1/learning-portrait").json()
+    saved = client.put(
+        "/users/1/learning-portrait",
+        json={
+            "expected_updated_at": original["updated_at"],
+            "axes": {"processing": 0.2, "perception": 0.3, "input": 0.4, "understanding": 0.5},
+        },
+    )
+    assert saved.status_code == 200
+    result = client.post("/users/1/learning-portrait/infer", json={}).json()
+    assert result["status"] == "completed" and result["skipped"] is True
+    assert model.calls == 0
+
+
+def test_inference_is_scoped_to_the_owner(runtime):
+    _, _, client = runtime
+    assert client.post("/users/2/learning-portrait/infer", json={}).status_code == 403
+

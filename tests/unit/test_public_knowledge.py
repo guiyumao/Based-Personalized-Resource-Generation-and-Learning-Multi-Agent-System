@@ -33,7 +33,7 @@ def public_db(monkeypatch):
     '{"verdict":"PASS","reason":"","issues":[]}',
     '{"verdict":"PASS","reason":"ok","issues":[],"admin_approved":true}'])
 def test_invalid_review_never_approves(monkeypatch, raw):
-    monkeypatch.setattr(public, "_invoke_public_model", lambda *a, **k: raw)
+    monkeypatch.setattr(public, "_invoke_public_model", lambda *a, **k: (raw, "stop"))
     assert public.review_public_content("数学", "方程", "正文")["passed"] is False
 
 
@@ -44,7 +44,7 @@ def test_review_receives_full_exact_body_and_hash(monkeypatch):
         captured.update(data)
         assert template == "public_knowledge_review.md"
         assert kwargs["stage"] == "audit"
-        return json.dumps({"verdict": "PASS", "reason": "逐项检查通过", "issues": []})
+        return (json.dumps({"verdict": "PASS", "reason": "逐项检查通过", "issues": []}), "stop")
     monkeypatch.setattr(public, "_invoke_public_model", invoke)
     assert public.review_public_content("数学", "方程", body)["passed"]
     assert captured["content"] == body
@@ -74,7 +74,7 @@ def test_rejected_review_is_persisted_and_automatically_revised(public_db, monke
     calls = []
     def generate(template, data, **kwargs):
         calls.append(data)
-        return "实质知识正文" * 100
+        return ("实质知识正文" * 100, "stop")
     monkeypatch.setattr(public, "_invoke_public_model", generate)
     monkeypatch.setattr(bootstrap, "promote_draft_to_knowledge_base", lambda *a, **k: {
         "ok": False, "reason": "MODEL_REVIEW_REJECTED", "review": {"issues": ["案例错误"]}})
@@ -85,7 +85,7 @@ def test_rejected_review_is_persisted_and_automatically_revised(public_db, monke
     task = public_db.get(KnowledgeBuildTask, error.value.detail["task_id"])
     assert task.status == "QUEUED"
     assert task.result_json["public_body"]
-    assert task.result_json["revision_issues"] == ["案例错误"]
+    assert "案例错误" in task.result_json["revision_issues"]
     assert len(calls) == 1
     from datetime import datetime, timedelta
 
@@ -94,7 +94,7 @@ def test_rejected_review_is_persisted_and_automatically_revised(public_db, monke
     public_db.commit()
     knowledge_tasks.execute_task(task.id)
     public_db.expire_all()
-    assert calls[1]["revision_issues"] == ["案例错误"]
+    assert "案例错误" in calls[1]["revision_issues"]
     assert calls[1]["previous_content"].startswith("实质知识正文")
     assert public_db.get(KnowledgeBuildTask, task.id).status == "QUEUED"
 
@@ -103,6 +103,19 @@ def test_existing_publication_does_not_call_model(public_db, monkeypatch):
     monkeypatch.setattr(plan_knowledge, "plan_preflight", lambda *a: {"ready": True, "usable_chunks": ["public"]})
     monkeypatch.setattr(public, "_invoke_public_model", lambda *a, **k: pytest.fail("unexpected model call"))
     assert public.ensure_public_knowledge(public_db, 1, "数学", "方程")["mode"] == "public"
+
+
+def test_truncated_generation_requeues_without_review_or_publication(public_db, monkeypatch):
+    monkeypatch.setattr(plan_knowledge, "plan_preflight", lambda *a: {"ready": False, "reason": "POINT_MISSING"})
+    monkeypatch.setattr(public, "_invoke_public_model", lambda *a, **k: ("不完整正文" * 100, "length"))
+    monkeypatch.setattr(bootstrap, "promote_draft_to_knowledge_base", lambda *a, **k: pytest.fail("truncated content cannot publish"))
+    with pytest.raises(HTTPException) as response:
+        public.ensure_public_knowledge(public_db, 1, "数学", "方程", allow_web=False)
+    from common.models.learning import KnowledgeBuildTask
+    task = public_db.get(KnowledgeBuildTask, response.value.detail["task_id"])
+    assert task.status == "QUEUED"
+    assert task.result_json["truncations"] == 1
+    assert task.result_json["revision_issues"]
 
 
 def test_index_failure_does_not_regenerate(public_db, monkeypatch):
@@ -136,10 +149,10 @@ def test_model_modifies_then_publishes_without_administrator(public_db, monkeypa
         calls.append((template, data))
         reviews = sum(name == "public_knowledge_review.md" for name, _ in calls)
         if template == "public_knowledge_review.md":
-            return json.dumps({"verdict": "REJECT" if reviews == 1 else "PASS",
+            return (json.dumps({"verdict": "REJECT" if reviews == 1 else "PASS",
                                "reason": "修订案例" if reviews == 1 else "修订后核验通过",
-                               "issues": ["修正案例计算"] if reviews == 1 else []})
-        return "方程验算：定义、原理、案例、中间过程与边界。" * 50
+                               "issues": ["修正案例计算"] if reviews == 1 else []}), "stop")
+        return ("方程验算：定义、原理、案例、中间过程与边界。" * 50, "stop")
     monkeypatch.setattr(public, "_invoke_public_model", invoke)
     with pytest.raises(HTTPException) as response:
         public.ensure_public_knowledge(public_db, 1, "修订融合测试", "方程验算", allow_web=False)
@@ -156,5 +169,5 @@ def test_model_modifies_then_publishes_without_administrator(public_db, monkeypa
     assert result["mode"] == "public" and result["published_versions"]
     candidate = public_db.query(KnowledgeCandidate).filter_by(knowledge_point="方程验算").one()
     assert candidate.status == "PUBLISHED" and candidate.reviewed_by is None
-    assert calls[2][1]["revision_issues"] == ["修正案例计算"]
+    assert "修正案例计算" in calls[2][1]["revision_issues"]
     assert calls[2][1]["previous_content"]

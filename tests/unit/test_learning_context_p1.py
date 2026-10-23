@@ -149,6 +149,44 @@ def open_context(db, key="context-request", **kwargs):
     )
 
 
+def test_new_path_preserves_other_topics_and_busy_workspace(workspace):
+    from services.agent_service.app.services.learning_path import LearningPathService
+    with workspace() as db:
+        context = open_context(db)
+        plan = db.get(LearningPath, 1)
+        original = deepcopy(plan.path_data_json)
+        original["knowledge_point"] = "TCP"
+        plan.path_data_json = original
+        db.get(AssistantTask, 1).status = "PENDING"
+        db.get(AssistantTask, 1).request_json = {"learning_context_id": context.id}
+        db.commit()
+        service = LearningPathService(db)
+        service._persist_generated_path(1, {**original, "knowledge_point": "UDP"})
+        service._persist_generated_path(1, original)
+        assert db.get(LearningPath, 1).status == "active"
+        assert validate_context(db, 1, context.id)[1].id == 1
+        db.get(AssistantTask, 1).status = "SUCCEEDED"
+        db.commit()
+        service._persist_generated_path(1, original)
+        assert db.get(LearningPath, 1).status == "archived"
+        assert db.query(LearningPath).filter_by(status="active").count() == 2
+
+
+def test_workspace_task_lookup_is_context_and_owner_scoped(workspace):
+    with workspace() as db:
+        context = open_context(db)
+        task = db.get(AssistantTask, 1)
+        task.request_json = {"learning_context_id": context.id}
+        other = AssistantTask(user_id=2, session_id=1, client_request_id="foreign-task",
+                              task_type="exercise", status="SUCCEEDED", request_json=task.request_json)
+        db.add(other)
+        db.commit()
+        context_id = context.id
+    client = TestClient(app)
+    assert [t["id"] for t in client.get('/assistant/tasks', params={"learning_context_id": context_id}).json()] == [1]
+    assert client.get('/assistant/tasks', params={"learning_context_id": "missing"}).json() == []
+
+
 def test_task_catalog_keeps_resource_binding_and_exercises_when_opening_courseware(workspace):
     with workspace() as db:
         source = open_context(db, "quiz-origin")

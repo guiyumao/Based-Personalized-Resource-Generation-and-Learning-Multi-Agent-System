@@ -32,8 +32,8 @@ def public_model_stub(monkeypatch):
     monkeypatch.setattr(deepseek_search, "search_sources", lambda *a, **k: [])
     def invoke(template, data, **kwargs):
         if template == "public_knowledge_review.md":
-            return '{"verdict":"PASS","reason":"controlled test review","issues":[]}'
-        return (str(data["knowledge_point"]) + "定义、原理、案例与边界说明。") * 60
+            return ('{"verdict":"PASS","reason":"controlled test review","issues":[]}', "stop")
+        return ((str(data["knowledge_point"]) + "定义、原理、案例与边界说明。") * 60, "stop")
     monkeypatch.setattr(public_knowledge, "_invoke_public_model", invoke)
 
 

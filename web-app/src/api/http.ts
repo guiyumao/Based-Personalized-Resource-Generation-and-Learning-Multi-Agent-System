@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { useAuthStore } from '../stores/auth'
+import { beginGenerationRequest, endGenerationRequest } from '../stores/generationRequests'
 
 type ServiceKey = 'user' | 'agent' | 'resource' | 'evaluation' | 'teacher' | 'system'
 
@@ -35,6 +36,13 @@ function createHttpClient(baseURL: string) {
     baseURL,
     timeout: 120000,  // 2 min — DeepSeek LLM can take 30-60s per request
   })
+  client.interceptors.request.use((config) => {
+    if (config.method?.toLowerCase() === 'post') {
+      const key = beginGenerationRequest(useAuthStore().user?.userId ?? 0, config.url || '', config.data)
+      ;(config as typeof config & { generationKey?: string }).generationKey = key
+    }
+    return config
+  })
 
   client.interceptors.request.use((config) => {
     const token = useAuthStore().token
@@ -43,11 +51,36 @@ function createHttpClient(baseURL: string) {
   })
 
   client.interceptors.response.use(
-    (response) => response,
-    (error) => {
+    (response) => {
+      endGenerationRequest((response.config as typeof response.config & { generationKey?: string }).generationKey)
+      if (response.config.method?.toLowerCase() === 'post') window.dispatchEvent(new Event('generation-tasks-changed'))
+      return response
+    },
+    async (error) => {
+      endGenerationRequest(error?.config?.generationKey)
       const status = error?.response?.status
       const requestUrl = String(error?.config?.url ?? '')
       const isAuthRequest = requestUrl.includes('/login') || requestUrl.includes('/register')
+      const config = error?.config
+      const retryConfig = config as (typeof config & { __retried?: boolean }) | undefined
+      const method = String(config?.method ?? '').toLowerCase()
+      const isTimeout = error?.code === 'ECONNABORTED'
+      // A restarting local service or a short 5xx window must not leave the
+      // page stuck on "加载失败" until the learner manually retries. Retry one
+      // idempotent GET; never retry a timeout (it would double the wait) or a
+      // write request (it may already have been applied server-side).
+      if (
+        retryConfig &&
+        method === 'get' &&
+        !isAuthRequest &&
+        !isTimeout &&
+        !retryConfig.__retried &&
+        (!error.response || (typeof status === 'number' && status >= 500))
+      ) {
+        retryConfig.__retried = true
+        await new Promise((resolve) => setTimeout(resolve, 400))
+        return client.request(retryConfig)
+      }
       if (status === 401 && !isAuthRequest && typeof window !== 'undefined') {
         const auth = useAuthStore()
         // A request from the previous login can finish after account switching.

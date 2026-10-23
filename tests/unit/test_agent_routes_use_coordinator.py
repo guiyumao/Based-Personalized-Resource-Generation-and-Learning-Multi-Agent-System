@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from common.schemas.agent import CoordinationRequest
 from services.agent_service.app.api.routes import agents as agent_routes
 from services.agent_service.app.api.routes import learning, qa, resources
+from services.agent_service.app.services import coordination_runner
 
 _learner = SimpleNamespace(id=1, role="student")
 
@@ -187,7 +188,7 @@ def test_learning_path_route_returns_typed_model_initialization_error(monkeypatc
 def test_coordinator_route_derives_deadline_from_selected_agent_budgets(monkeypatch):
     trace_context = []
     monkeypatch.setattr(
-        agent_routes,
+        coordination_runner,
         "get_settings",
         lambda: type(
             "Settings",
@@ -202,7 +203,7 @@ def test_coordinator_route_derives_deadline_from_selected_agent_budgets(monkeypa
             },
         )(),
     )
-    monkeypatch.setattr(agent_routes, "set_trace_context", lambda **kwargs: trace_context.append(kwargs))
+    monkeypatch.setattr(coordination_runner, "set_trace_context", lambda **kwargs: trace_context.append(kwargs))
 
     class FakeCoordinatorWorkflow:
         def __init__(self, db=None):
@@ -216,7 +217,7 @@ def test_coordinator_route_derives_deadline_from_selected_agent_budgets(monkeypa
                 "outputs": {},
             }
 
-    monkeypatch.setattr(agent_routes, "CoordinatorWorkflow", FakeCoordinatorWorkflow)
+    monkeypatch.setattr(coordination_runner, "CoordinatorWorkflow", FakeCoordinatorWorkflow)
     response = agent_routes.coordinate(
         CoordinationRequest(
             user_id=1,

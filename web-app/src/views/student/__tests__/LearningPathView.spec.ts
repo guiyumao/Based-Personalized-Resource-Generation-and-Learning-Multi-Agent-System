@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../../api', () => ({
   agentApi: { post: vi.fn(), get: vi.fn() },
+  resourceApi: { get: vi.fn() },
   teacherApi: { get: vi.fn() },
   evaluationApi: { get: vi.fn(), post: vi.fn() },
 }))
@@ -25,12 +26,14 @@ vi.mock('../../../utils/studentWorkspace', () => ({
   writeStudentWorkspaceContext: vi.fn(),
 }))
 
-import { agentApi, evaluationApi, teacherApi } from '../../../api'
+import { agentApi, evaluationApi, resourceApi, teacherApi } from '../../../api'
+import { resetPathGeneration } from '../../../stores/pathGeneration'
 
 import LearningPathView from '../LearningPathView.vue'
 
 const agentPost = vi.mocked(agentApi.post)
 const agentGet = vi.mocked(agentApi.get)
+const resourceGet = vi.mocked(resourceApi.get)
 const teacherGet = vi.mocked(teacherApi.get)
 const evaluationGet = vi.mocked(evaluationApi.get)
 
@@ -67,6 +70,80 @@ async function mountView() {
 
 type Wrapper = Awaited<ReturnType<typeof mountView>>
 
+it('历史生成按需读取详情，查看时不提交生成请求', async () => {
+  const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  agentGet.mockImplementation(async (url: string) => {
+    if (url === '/paths/history/1') return { data: { items: [{ id: 21, subject: '历史数学', knowledge_point: '方程', stage_count: 1, task_count: 0 }] } }
+    if (url === '/paths/history/item/21') return { data: pathPayload({ subject: '历史数学', knowledge_point: '方程', stages: [{ stage_id: 's1', title: '基础', tasks: [] }] }) }
+    return { data: { subjects: [] } }
+  })
+  const wrapper = await mountView()
+  await flush()
+  expect(wrapper.find('.history-item').text()).toContain('历史数学')
+  expect(agentGet.mock.calls.some(([url]) => url === '/paths/history/item/21')).toBe(false)
+  await wrapper.find('.history-path-open').trigger('click')
+  await flush()
+  expect(agentGet).toHaveBeenCalledWith('/paths/history/item/21')
+  expect((wrapper.find('input[aria-label="输入学科"]').element as HTMLInputElement).value).toBe('历史数学')
+  expect(agentPost).not.toHaveBeenCalled()
+  wrapper.unmount()
+  scroll.mockRestore()
+})
+
+it('历史记录带课件时直接读取已保存课件，不重新生成', async () => {
+  const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  agentGet.mockImplementation(async (url: string) => {
+    if (url === '/paths/history/1') {
+      return {
+        data: {
+          items: [
+            {
+              id: 21,
+              subject: '计算机组成原理',
+              knowledge_point: '存储系统',
+              stage_count: 1,
+              task_count: 1,
+              courseware_resource_id: 237,
+              courseware_title: '存储系统个性化课件',
+              courseware_created_at: '2026-10-22T12:56:45',
+            },
+          ],
+        },
+      }
+    }
+    if (url === '/paths/history/item/21') {
+      return {
+        data: pathPayload({
+          subject: '计算机组成原理',
+          knowledge_point: '存储系统',
+          stages: [{ stage_id: 's1', title: '基础', tasks: [] }],
+        }),
+      }
+    }
+    return { data: { subjects: [] } }
+  })
+  resourceGet.mockResolvedValue({
+    data: { data: { id: 237, title: '存储系统个性化课件', content: '# 存储系统\n\n历史课件正文' } },
+  })
+
+  const wrapper = await mountView()
+  await flush()
+  const openButton = wrapper.find('.history-courseware-open')
+  expect(openButton.text()).toContain('查看历史课件')
+
+  await wrapper.find('.history-item').trigger('click')
+  await flush(2)
+  await wrapper.vm.$nextTick()
+
+  expect(resourceGet).toHaveBeenCalledWith('/resources/237')
+  expect(agentGet.mock.calls.some(([url]) => url === '/paths/history/item/21')).toBe(false)
+  expect(agentPost).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('历史课件正文')
+
+  wrapper.unmount()
+  scroll.mockRestore()
+})
+
 async function fillForm(wrapper: Wrapper) {
   await wrapper.find('input[aria-label="输入学科"]').setValue('数据结构')
   await wrapper.find('input[placeholder="知识点 / 主题"]').setValue('栈')
@@ -82,7 +159,17 @@ function readyPreflight() {
   return Promise.resolve({ data: { ready: true, message: '知识库已就绪', reason: 'READY' } })
 }
 
+function readyCoordination(response: { data: unknown }) {
+  agentGet.mockImplementation(async (url: string) => {
+    if (url === '/agents/coordinate/tasks/101') return { data: { status: 'SUCCEEDED', result: response.data } }
+    if (url.startsWith('/paths/history/')) return { data: { items: [] } }
+    return { data: { subjects: [] } }
+  })
+  return Promise.resolve({ data: { task_id: 101 } })
+}
+
 async function flush(times = 8) {
+  await new Promise((resolve) => setTimeout(resolve, 1600))
   // The generate flow chains several awaits (preflight, coordinate, persistence).
   for (let index = 0; index < times; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -90,11 +177,16 @@ async function flush(times = 8) {
 }
 
 beforeEach(() => {
+  // The generation module is a singleton that outlives a component on purpose.
+  resetPathGeneration()
+  window.sessionStorage.clear()
   agentPost.mockReset()
   agentGet.mockReset()
+  resourceGet.mockReset()
   teacherGet.mockReset()
   evaluationGet.mockReset()
   agentGet.mockResolvedValue({ data: { subjects: [] } })
+  resourceGet.mockResolvedValue({ data: { data: null } })
   teacherGet.mockResolvedValue({ data: { data: [] } })
   evaluationGet.mockResolvedValue({ data: { data: [] } })
 })
@@ -121,7 +213,7 @@ describe('LearningPathView 自动入库结果展示', () => {
     agentPost.mockImplementation((url: string) =>
       url === '/paths/preflight'
         ? readyPreflight()
-        : Promise.resolve({
+        : readyCoordination({
             data: {
               outputs: {
                 path_planning_agent: {
@@ -154,7 +246,7 @@ describe('LearningPathView 自动入库结果展示', () => {
     agentPost.mockImplementation((url: string) =>
       url === '/paths/preflight'
         ? readyPreflight()
-        : Promise.resolve({
+        : readyCoordination({
             data: {
               outputs: {
                 path_planning_agent: {
@@ -190,7 +282,7 @@ describe('LearningPathView 自动入库结果展示', () => {
     agentPost.mockImplementation((url: string) =>
       url === '/paths/preflight'
         ? readyPreflight()
-        : Promise.resolve({
+        : readyCoordination({
             data: {
               outputs: {
                 path_planning_agent: {

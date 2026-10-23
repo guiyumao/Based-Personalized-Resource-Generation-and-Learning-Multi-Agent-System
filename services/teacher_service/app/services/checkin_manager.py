@@ -17,7 +17,7 @@ from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.exc import IntegrityError
 
 from common.db.session import SessionLocal
@@ -1637,12 +1637,39 @@ class CheckinManager:
                 ],
             )
 
-    def list_audits(self, limit: int = 200) -> list[dict]:
+    def list_audits(
+        self,
+        limit: int = 200,
+        action: str | None = None,
+        target_type: str | None = None,
+        target_id: int | None = None,
+        actor_user_id: int | None = None,
+        keyword: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[dict]:
         with SessionLocal() as db:
+            query = db.query(CheckinAuditLog)
+            if action:
+                query = query.filter(CheckinAuditLog.action == action.strip())
+            if target_type:
+                query = query.filter(CheckinAuditLog.target_type == target_type.strip())
+            if target_id is not None:
+                query = query.filter(CheckinAuditLog.target_id == target_id)
+            if actor_user_id is not None:
+                query = query.filter(CheckinAuditLog.actor_user_id == actor_user_id)
+            if keyword:
+                like = f"%{keyword.strip()}%"
+                query = query.filter(
+                    or_(CheckinAuditLog.reason.like(like), CheckinAuditLog.action.like(like))
+                )
+            if start is not None:
+                query = query.filter(CheckinAuditLog.created_at >= start)
+            if end is not None:
+                query = query.filter(CheckinAuditLog.created_at <= end)
             rows = (
-                db.query(CheckinAuditLog)
-                .order_by(CheckinAuditLog.id.desc())
-                .limit(min(limit, 500))
+                query.order_by(CheckinAuditLog.id.desc())
+                .limit(min(max(limit, 1), 500))
                 .all()
             )
             return [

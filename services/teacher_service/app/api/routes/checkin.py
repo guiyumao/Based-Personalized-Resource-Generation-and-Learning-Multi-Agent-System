@@ -8,6 +8,8 @@ Auth classification:
 - GET  /admin/overview, /admin/audits                      : PROTECTED (admin)
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from common.dependencies import require_role
@@ -284,5 +286,26 @@ def admin_overview(_user: User = Depends(require_role("admin"))):
 
 
 @router.get("/admin/audits", response_model=ApiResponse[list[dict]])
-def admin_audits(_user: User = Depends(require_role("admin"))):
-    return ApiResponse(data=manager.list_audits())
+def admin_audits(
+    limit: int = Query(default=200, ge=1, le=500),
+    action: str | None = Query(default=None),
+    target_type: str | None = Query(default=None),
+    target_id: int | None = Query(default=None, gt=0),
+    actor_user_id: int | None = Query(default=None, gt=0),
+    keyword: str | None = Query(default=None, max_length=100),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    _user: User = Depends(require_role("admin")),
+):
+    return ApiResponse(
+        data=manager.list_audits(
+            limit=limit,
+            action=action or None,
+            target_type=target_type or None,
+            target_id=target_id,
+            actor_user_id=actor_user_id,
+            keyword=keyword or None,
+            start=start,
+            end=end,
+        )
+    )

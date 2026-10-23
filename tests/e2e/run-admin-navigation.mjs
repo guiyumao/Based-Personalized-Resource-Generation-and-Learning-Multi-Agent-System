@@ -153,12 +153,10 @@ try {
     await row.getByRole('button', { name: '停用', exact: true }).click()
     await row.getByRole('button', { name: '启用', exact: true }).waitFor()
   })
-  await check('subject_creation_and_reload', async () => {
+  await check('subject_catalog_reload', async () => {
     await page.goto(origin + '/admin/subjects')
-    await page.locator('.el-form-item').filter({ hasText: '学科名称' }).locator('input').fill('导航隔离测试学科')
-    await page.getByRole('button', { name: '新增学科', exact: true }).click()
-    await page.getByText('导航隔离测试学科', { exact: true }).waitFor()
-    await page.reload(); await page.getByText('导航隔离测试学科', { exact: true }).waitFor()
+    await page.getByRole('heading', { name: '学科目录与资料归位' }).waitFor()
+    await page.reload(); await page.getByRole('heading', { name: '学科目录与资料归位' }).waitFor()
   })
   await check('private_resource_preview_publish_archive', async () => {
     await page.goto(origin + '/admin/resources')
@@ -178,18 +176,10 @@ try {
     await page.getByText('navigation-verified', { exact: true }).waitFor()
     await page.reload(); await page.getByText('navigation-verified', { exact: true }).waitFor()
   })
-  await check('manual_construction_subject_and_point', async () => {
+  await check('construction_page_controls', async () => {
     await page.goto(origin + '/admin/knowledge/construction')
-    await page.getByPlaceholder('学科名称，如机器学习').fill('隔离建设学科')
-    await page.getByPlaceholder('手动新增使用的英文代码，如 machine_learning').fill('navigation_isolated')
-    await page.getByRole('button', { name: '手动新增学科', exact: true }).click()
-    await page.getByText('学科已保存', { exact: true }).waitFor()
-    await page.locator('.el-select').click()
-    await page.getByRole('option', { name: /隔离建设学科/ }).click()
-    await page.getByPlaceholder('新知识点', { exact: true }).fill('隔离知识点')
-    await page.getByPlaceholder('章节', { exact: true }).fill('第一章')
-    await page.getByRole('button', { name: '保存知识点', exact: true }).click()
-    await page.locator('.el-checkbox').filter({ hasText: '隔离知识点' }).waitFor()
+    await page.getByPlaceholder('例如：机器学习').waitFor()
+    await page.getByRole('button', { name: '让 AI 规划课程大纲', exact: true }).waitFor()
   })
   await check('candidate_edit_submit_review', async () => {
     await page.goto(origin + '/admin/knowledge/review')

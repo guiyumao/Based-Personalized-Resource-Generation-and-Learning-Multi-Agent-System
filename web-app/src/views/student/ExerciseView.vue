@@ -7,6 +7,7 @@ import { agentApi, evaluationApi, type ApiEnvelope, type ExerciseFavoriteNoteboo
 import { postContentWithTimeout } from '../../utils/viewHelpers'
 import { renderLearningMarkdown } from '../../utils/renderLearningMarkdown'
 import LearningContent from '../../components/LearningContent.vue'
+import GenerationProgress from '../../components/GenerationProgress.vue'
 import {
   buildPracticeSessionStorageKey,
   COURSEWARE_STORAGE_KEY,
@@ -97,6 +98,13 @@ const submissionHistory = ref<SubmissionHistoryItem[]>([])
 const mistakeNotebook = ref<MistakeNotebook | null>(null)
 const genError = ref('')
 const submitError = ref('')
+const exerciseStart = ref(0)
+const exerciseJob = computed(() => loading.value.exercises ? {
+  id: 0,
+  status: 'RUNNING',
+  current_step: '正在按学情生成练习题',
+  created_at: new Date(exerciseStart.value || Date.now()).toISOString(),
+} : null)
 const knowledgeSource = ref('')
 const favoriteIds = ref<Set<number>>(new Set())
 
@@ -327,7 +335,7 @@ async function generateExercises() {
   if (!exerciseForm.knowledge_point.trim()) { ElMessage.warning('请先在学习路径生成知识点'); return }
   exerciseForm.exercise_count = clampExerciseCount(exerciseForm.exercise_count)
   persistExerciseCount()
-  loading.value.exercises = true; genError.value = ''; exerciseSet.value = null
+  loading.value.exercises = true; genError.value = ''; exerciseSet.value = null; exerciseStart.value = Date.now()
   clearStoredExerciseSnapshots()
   try {
     exerciseForm.user_id = user.userId
@@ -589,6 +597,7 @@ function prevQuestion() {
       </button>
     </div>
 
+    <GenerationProgress v-if="loading.exercises" :job="exerciseJob" label="练习题"/>
     <div v-if="genError" style="padding:16px;border-radius:12px;background:color-mix(in srgb,var(--red) 8%,transparent);color:var(--red);margin-bottom:16px;font-size:14px">{{ genError }}</div>
     <div v-if="submitError" style="padding:16px;border-radius:12px;background:color-mix(in srgb,var(--red) 8%,transparent);color:var(--red);margin-bottom:16px;font-size:14px">{{ submitError }}</div>
 

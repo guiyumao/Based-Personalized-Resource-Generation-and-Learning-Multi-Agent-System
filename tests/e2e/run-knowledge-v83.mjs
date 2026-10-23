@@ -19,7 +19,7 @@ try {
   await page.locator('input[autocomplete="current-password"]').fill(process.env.V83_BROWSER_PASSWORD)
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.waitForURL('**/admin', { timeout: 20000 })
-  await page.getByRole('heading', { name: 'AI 学科规划与分批建设' }).waitFor()
+  await page.getByText('学科规划与知识点').first().waitFor()
   result.steps.push('real_user_service_login')
   fs.writeFileSync(path.join(runtime, 'browser-admin-snapshot.yml'), await page.locator('body').ariaSnapshot())
   let candidate = page.locator(`[data-candidate-id="${process.env.V83_BROWSER_CANDIDATE_ID}"]`)
