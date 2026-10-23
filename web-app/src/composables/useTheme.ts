@@ -12,9 +12,18 @@ const THEME_LIST: ThemeName[] = ['ocean', 'warm', 'cosmic', 'minimal', 'forest']
 const DEFAULT_THEME: ThemeName = null
 
 const currentTheme = ref<ThemeName>(DEFAULT_THEME)
+let listeningForChanges = false
 
 export function useTheme() {
   function init() {
+    if (!listeningForChanges) {
+      window.addEventListener('storage', (event) => {
+        if (event.storageArea !== localStorage || (event.key !== THEME_STORAGE_KEY && event.key !== null)) return
+        const theme = event.newValue as ThemeName
+        applyTheme(theme && THEME_LIST.includes(theme) ? theme : null)
+      })
+      listeningForChanges = true
+    }
     const stored = localStorage.getItem(THEME_STORAGE_KEY) as ThemeName | null
     if (stored && THEME_LIST.includes(stored)) {
       applyTheme(stored)
@@ -42,8 +51,13 @@ export function useTheme() {
   }
 
   function applyTheme(theme: ThemeName) {
-    if (!theme) return
     currentTheme.value = theme
+    if (!theme) {
+      document.documentElement.removeAttribute('data-theme')
+      document.body.style.background = ''
+      document.body.style.color = ''
+      return
+    }
     document.documentElement.setAttribute('data-theme', theme)
     // Let CSS variables drive body styles via the theme system
     document.body.style.background = 'var(--bg)'

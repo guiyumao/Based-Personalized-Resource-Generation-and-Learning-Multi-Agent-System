@@ -1,3 +1,9 @@
+## 产品首页重设计与内外主题联动（2026-10-23）
+
+- LandingView 使用独立“知识探索地图”插画 knowledge-landscape.webp（约169KB），不复用登录页书本图；重排首屏、功能/角色/协同区，保留导航与登录入口。ThemePicker 为首页与登录页共享外观入口；LoginView 清除固定调色，继承原全站主题变量。
+- useTheme 增加一次性 storage 监听；首页/登录/已登录工作台共用原 app-theme，跨标签同步六种外观及恢复默认，不影响账号隔离与权限。
+- 验证：build退出0；主题单元4 passed（系统Node22的undici缺zstd，改用内置Node24.19运行通过）；Chromium六主题正反同步/刷新、独立图片加载、首页导航、320/390/768/1440宽度全部通过，pageErrors空。工作台使用模拟API，无DB写入/后端服务重启/付费业务模型调用。证据 artifacts/homepage-theme-20261023/；未逐个验收全部业务子页。
+
 ## GitHub 上传快照验证（2026-10-23）
 
 - 用户明确要求项目上传 GitHub；沿用 origin/main，上传当前已整理的源码、迁移、测试与文档。保留本机代理笔记、生成语料、数据库、密钥和运行产物；准备快照后出现的 LoginView.vue 并行改动保留本地。
